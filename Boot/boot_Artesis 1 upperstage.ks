@@ -1,1 +1,0 @@
-runpath("0:/Artesis 1 launch.ks").
