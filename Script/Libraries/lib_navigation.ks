@@ -9,7 +9,7 @@ function get_geoposition_along_heading {
     }
 
     // Convert heading and lat/lng to radians
-    set vec_heading_rad to vec_heading * constant:degtorad.
+    set vec_heading_rad to vec_heading.
     set lat_rad to starting_LATLNG:lat * constant:degtorad.
     set lng_rad to starting_LATLNG:lng * constant:degtorad.
 
