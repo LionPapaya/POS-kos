@@ -39,6 +39,14 @@ function get_geoposition_along_heading {
 function get_geoposition_on_circle {
     declare parameter center_LATLNG, radius,circle_direction, circle_heading.
 
+
+     if circle_heading > 360 {
+        set circle_heading  to circle_heading  - 360.
+    } 
+    if circle_heading  < 0 {
+        set circle_heading  to circle_heading  + 360.
+    }
+
     // Convert heading and lat/lng to radians
     set heading_rad to circle_heading * constant:degtorad.
     set lat_rad to center_LATLNG:lat * constant:degtorad.
@@ -266,12 +274,24 @@ function runway_start_distance_to_centerline {
 }
 function create_HAC{
     set hac_ercl to get_geoposition_along_heading(runway_start,runway_heading+180,AVES["HacDistance"]).
-    set HAC to lex("HAC1",get_geoposition_along_heading(hac_ercl,runway_heading+180+90,AVES["HacRadius"]),"HAC2",get_geoposition_along_heading(hac_ercl,runway_heading+180-90,AVES["HacRadius"])).
+    set HAC to lex(
+    "HAC1",
+    get_geoposition_along_heading(hac_ercl,runway_heading+90,AVES["HacRadius"]),
+    "HAC2",
+    get_geoposition_along_heading(hac_ercl,runway_heading-90,AVES["HacRadius"])).
+
+
     set hac_ercl_alt to calculate_vertical_glideslope_alt(AVES["HacDistance"]). 
 }
 //Hac 1 is clockwise /HAc 2 is anticlockwise
 function choose_hac{
-    local HAC_Distance is lex("Hac1",calcdistance(ship:geoposition,get_geoposition_on_circle(HAC["Hac1"],AVES["HacRadius"],"clockwise",compass_for())),"Hac2",calcdistance(ship:geoposition,get_geoposition_on_circle(HAC["Hac2"],AVES["HacRadius"],"anticlockwise",compass_for()))).
+    local HAC_Distance is lex(
+        "Hac1",
+        calcdistance(
+        ship:geoposition,get_geoposition_on_circle(HAC["Hac1"],AVES["HacRadius"],"clockwise",compass_for())),
+        "Hac2",
+        calcdistance(
+        ship:geoposition,get_geoposition_on_circle(HAC["Hac2"],AVES["HacRadius"],"anticlockwise",compass_for()))).
     if HAC_Distance["HAC1"] < HAC_Distance["HAC2"]{
         set Active_HAC_entry to get_geoposition_on_circle(HAC["Hac1"],AVES["HacRadius"],"clockwise",compass_for()).
         set Active_HAC to "HAC1".

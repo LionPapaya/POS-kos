@@ -377,25 +377,3 @@ function aggressive_overcorrect_for_prograde {
         set aerostr_heading to runway_heading.
     }
 }
-function adjust_pitch {
-    parameter target_alt, targetdistance.
-
-    // Altitude difference between current and target altitude
-    local alt_difference is ship:altitude - target_alt.
-    
-    // Calculate the required pitch (in degrees) to adjust altitude based on distance
-    local required_pitch is arctan(alt_difference / targetdistance) * (180 / constant():pi).
-
-    // Gradual adjustment factor based on distance (similar to 0.2 in aeroturn)
-    // The factor will be higher when far from the target and lower when close to smooth the adjustment
-    local distance_factor to 0.2 * (targetdistance / 10000).  // Scales with distance, adjust 10000 as needed
-    
-    // Apply the distance factor to make pitch adjustment smoother
-    local adjusted_pitch is required_pitch * distance_factor.
-
-    // Adjust pitch based on current prograde direction
-    set aerostr_pitch to (adjusted_pitch - pitch_for_prograde()) + pitch_for().
-
-    // Call the aerodynamic control function
-    aerostr().
-}

@@ -99,7 +99,7 @@ function calc_circle_distance{
         }   
     }
   local circumference is 2*(radius)*constant:pi.
-  return (circumference/360)*degrees.
+  return (circumference/360)*abs(degrees).
 }
 
 function num_to_str {

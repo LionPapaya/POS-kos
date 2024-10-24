@@ -126,12 +126,12 @@ until running = false{
             set targetDirection to compass_for_prograde().
 
         }
-        if ship:altitude < 65000 and ship:altitude > 15000{
+        if ship:altitude < 65000{
             set Lastest_status to "reentering".
             goto_target().
             aerostr().
         }
-        if ship:altitude < 20000{
+        if ship:altitude < 25000{
             set step to "TEAM".
             set Lastest_status to "TEAM".
         }
@@ -141,60 +141,136 @@ until running = false{
         create_HAC().
         choose_hac().
         set in_hac to false.
-        pos_arrow(Active_HAC_entry).
-        pos_arrow(HAC["Hac1"]).
+        set log to 0.
+        
        }
+       if log = 10 or log > 10{
        log_status(Lastest_status).
-       
+       set log to 0.
+       }else{
+        set log to log + 1.
+       }
        
        if calcdistance(ship:geoposition,Active_HAC_entry) < old_hac_distance and in_hac = false{
-        Aeroturn(heading_to_target(Active_HAC_entry)).
-        adjust_pitch(calculate_vertical_glideslope_alt(calcdistance_m(hac_ercl,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())),calcdistance_m(ship:geoposition,Active_HAC_entry)).
-        set old_hac_distance to calcdistance(ship:geoposition,Active_HAC_entry).
-        set Lastest_status to "intercepting hac".
-        set in_hac  to false.
-        set ex_hac to false.
+            Aeroturn(heading_to_target(Active_HAC_entry)).
+        
+            set TEAM_targetalt to calculate_vertical_glideslope_alt(
+                    
+                calcdistance_m(hac_ercl,runway_start)+
+                
+                calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())+
+                
+                calcdistance_m(ship:geoposition,Active_HAC_entry)).
+
+            
+
+            set old_hac_distance to calcdistance(ship:geoposition,Active_HAC_entry).
+            set Lastest_status to "intercepting hac".
+            set in_hac  to false.
+            set ex_hac to false.
        } else{
-        set in_hac to true.
+            set in_hac to true.
         
        }
        if in_hac and not(ex_hac){
-        set Lastest_status to "entered hac".
-        if HAC_Direction = "Clockwise"{
-            aeroturn_force_dir(runway_heading,"right").
-        }
-        if HAC_Direction = "Anticlockwise"{
-            aeroturn_force_dir(runway_heading,"left").
-        }
+            set Lastest_status to "entered hac".
+            if HAC_Direction = "Clockwise"{
+                aeroturn_force_dir(runway_heading,"right").
+            }
+            if HAC_Direction = "Anticlockwise"{
+                aeroturn_force_dir(runway_heading,"left").
+            }
+            set TEAM_targetalt to calculate_vertical_glideslope_alt(
+                    
+                calcdistance_m(hac_ercl,runway_start)+
+                
+                calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())).
        }
+       
        if abs(compass_for()-runway_heading) < 5 and in_hac{
-        set ex_hac to true.
+            set ex_hac to true.
        }
        
        
        if ex_hac{
-        set Lastest_status to "completed hac".
-        aeroturn(heading_to_target(get_geoposition_along_heading(runway_start,runway_heading+180,calcdistance_m(ship:geoposition,runway_start)*0.5))).
-        CLEARVECDRAWS().
-        pos_arrow(get_geoposition_along_heading(runway_start,runway_heading+180,calcdistance_m(ship:geoposition,runway_start)*0.5)).
-        adjust_pitch(calculate_vertical_glideslope_alt(calcdistance(ship:geoposition,runway_start)),calcdistance(ship:geoposition,runway_start)).   
+            set Lastest_status to "completed hac".
+            aeroturn(heading_to_target(
+            
+            get_geoposition_along_heading(
+        
+            runway_start,
+        
+            runway_heading+180,
+        
+            (calcdistance_m(ship:geoposition,runway_start)*0.5)))).
+
+
+        
+            set TEAM_targetalt to 
+                
+                calculate_vertical_glideslope_alt(
+                    
+                calcdistance_m(ship:geoposition,runway_start)).
+
+
+
+
        }
+       set TEAM_Pitch_PID to pidloop(0.17,0.19,0.2).
+       SET TEAM_Pitch_PID:SETPOINT TO TEAM_targetalt-50.
+       set TEAM_Pitch_PID:minoutput to -25.
+       set TEAM_Pitch_PID:maxoutput to 20.
+       log("Team alt: "+TEAM_targetalt+" Team Pitch: "+ distance_pitch) to log.txt.
+       set distance_pitch to TEAM_Pitch_PID:UPDATE(TIME:SECONDS, ship:altitude).
+        set alt_ovr_runway to ship:altitude - runway_altitude.
        // Transition to landing if conditions met
-        if ship:altitude < 500 and abs(calculate_lateral_glideslope_distance()) < 10 and abs(calculate_vertical_glideslope_distance()) < 10 {
+        if alt_ovr_runway < 200 and abs(calculate_lateral_glideslope_distance()) < 10 and abs(calculate_vertical_glideslope_distance()) < 10 {
             set step to "landing".
             log_status("Transitioning to landing phase").
         }
-        else if ship:altitude < 500 and (abs(calculate_lateral_glideslope_distance()) > 10 or abs(calculate_vertical_glideslope_distance()) > 10) {
+        else if alt_ovr_runway < 200 and (abs(calculate_lateral_glideslope_distance()) > 10 or abs(calculate_vertical_glideslope_distance()) > 10) {
             set step to "landing".
             log_status("Approach failed, transitioning to landing").
         }
 
-       
+
 
     }
     
     if step = "landing"{
-        landing_phase().
+        log_status("Landing phase initiated").
+        set alt_ovr_runway to ship:altitude - runway_altitude.
+        aerostr().
+        set dapthrottle to 0.
+        gear on.
+    
+        if alt_ovr_runway > 35{// Manage brakes during landing
+        if ship:airspeed > 160 {
+            brakes on.
+            log_status("Brakes ON, airspeed above 160").
+        }
+        if ship:airspeed < 100 {
+            brakes off.
+            log_status("Brakes Off, altitude below 100").
+        }
+    
+        // Adjust pitch based on vertical glideslope distance
+        adjust_pitch_for_glideslope().
+        }else{
+            brakes on. set distance_pitch to 10.
+            aerostr().
+            aggressive_overcorrect_for_prograde(runway_heading).
+            set aerostr_roll to 0.
+        if ship:airspeed < 5 {
+            
+            log_status("Landing completed").
+        }
+        if ship:airspeed < 1 {
+            set step to "end".
+            log_status("Landing completed, switching to end phase").
+        }
+    }    
+    // Final approach adjustments
     }    
     if step = "end" {
         set running to false.

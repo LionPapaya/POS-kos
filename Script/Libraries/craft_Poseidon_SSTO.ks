@@ -223,13 +223,15 @@ function setup_reentry_script{
 set runway_heading to heading_between(runway_start, runway_end).
 log ("runway heading = "+runway_heading) to log.txt.
 
+
    
     ADDONS:TR:SETTARGET(runway_start).
     ADDONS:TR:RESETDESCENTPROFILE(20).
     set targetPitch to 5.
     set targetRole to 0.
     set targetDirection to 90.
-    reset_sys().
+    reset_sys().                                                                             
+   
 }
 function goto_target{
     set distance_between_runway_start_IMPACTPOS to calcdistance(ship:geoposition,runway_start) - calcdistance(ship:geoposition,addons:tr:impactpos).
@@ -315,42 +317,7 @@ function adjust_pitch_for_glideslope {
 
 
 // Landing phase refinement
-function landing_phase {
-    log_status("Landing phase initiated").
-    
-    aerostr().
-    set dapthrottle to 0.
-    gear on.
-    
-    if ship:altitude > 250{// Manage brakes during landing
-    if ship:airspeed > 160 {
-        brakes on.
-        log_status("Brakes ON, airspeed above 160").
-    }
-    if ship:altitude < 100 {
-        brakes off.
-        log_status("Brakes Off, altitude below 100").
-    }
-    
-    // Adjust pitch based on vertical glideslope distance
-    adjust_pitch_for_glideslope().
-    }else{
-        brakes on. set distance_pitch to 10.
-        aerostr().
-        aggressive_overcorrect_for_prograde(runway_heading).
-        set aerostr_roll to 0.
-    if ship:airspeed < 5 {
-            
-            log_status("Landing completed").
-        }
-        if ship:airspeed < 1 {
-            set step to "end".
-            log_status("Landing completed, switching to end phase").
-        }
-    }    
-    // Final approach adjustments
-    
-}
+
 function create_reentry_display {
     local location_to_runways is lexicon().
     
@@ -600,8 +567,8 @@ Poseidon_SSTO:add("MaxYaw",5).
 Poseidon_SSTO:add("Glideslope_Angle",0.2).
 Poseidon_SSTO:add("pitch_change_rate",2).
 Poseidon_SSTO:add("StationaryThrottle",240).
-Poseidon_SSTO:add("HacDistance",10000).
-Poseidon_SSTO:add("HacRadius",3000).
+Poseidon_SSTO:add("HacDistance",15000).
+Poseidon_SSTO:add("HacRadius",3500).
 
 
 
