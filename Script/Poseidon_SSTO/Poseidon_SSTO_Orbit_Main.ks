@@ -77,6 +77,9 @@ until running = false{
         if ship:airspeed < 440{
             set distance_pitch to  10.
             aeroturn((TargetInclination+90)). 
+            if ship:altitude < 200{
+                set distance_pitch to 17.
+            }
             
         }
         if airspeed > 440 and ship:altitude < 15000{set targetPitch to  15. set warp to 1.}
