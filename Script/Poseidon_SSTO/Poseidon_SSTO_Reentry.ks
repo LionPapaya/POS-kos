@@ -252,7 +252,7 @@ until running = false{
         aerostr().
         set dapthrottle to 0.
         gear on.
-    
+        aggressive_overcorrect_for_prograde(runway_heading).
         if alt_ovr_runway > 35{// Manage brakes during landing
         if ship:airspeed > 160 {
             brakes on.
