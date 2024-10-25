@@ -224,12 +224,20 @@ until running = false{
        log("Team alt: "+TEAM_targetalt+" Team Pitch: "+ distance_pitch) to log.txt.
        set distance_pitch to TEAM_Pitch_PID:UPDATE(TIME:SECONDS, ship:altitude).
         set alt_ovr_runway to ship:altitude - runway_altitude.
+        if ship:altitude < 200{
+            gear on.
+        }
+        if calcdistance_m(ship:geoposition,runway_start) < 200{
+            lock targetRole to 0.
+            lock targetDirection to runway_heading.
+
+        }
        // Transition to landing if conditions met
-        if alt_ovr_runway < 200 and abs(calculate_lateral_glideslope_distance()) < 10 and abs(calculate_vertical_glideslope_distance()) < 10 {
+        if alt_ovr_runway < 100 and abs(calculate_lateral_glideslope_distance()) < 10 and abs(calculate_vertical_glideslope_distance()) < 10 {
             set step to "landing".
             log_status("Transitioning to landing phase").
         }
-        else if alt_ovr_runway < 200 and (abs(calculate_lateral_glideslope_distance()) > 10 or abs(calculate_vertical_glideslope_distance()) > 10) {
+        else if alt_ovr_runway < 100 and (abs(calculate_lateral_glideslope_distance()) > 10 or abs(calculate_vertical_glideslope_distance()) > 10) {
             set step to "landing".
             log_status("Approach failed, transitioning to landing").
         }
@@ -255,8 +263,7 @@ until running = false{
             log_status("Brakes Off, altitude below 100").
         }
     
-        // Adjust pitch based on vertical glideslope distance
-        adjust_pitch_for_glideslope().
+        set distance_pitch to 0.
         }else{
             brakes on. set distance_pitch to 10.
             aerostr().
@@ -279,6 +286,7 @@ until running = false{
         set warp to 0.
         update_readouts().
         log_status("Script ended, system reset").
+        clearguis.
     }
     update_readouts().
 }    
