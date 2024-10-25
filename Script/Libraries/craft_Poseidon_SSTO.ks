@@ -43,7 +43,7 @@ function reset_sys{
 function get_inputs_Launch{
 
 
-RUNpath("0:/Libraries/lib_input_terminal.ks").
+
 
 CLEARSCREEN.
 SET TERMINAL:WIDTH TO 45.
@@ -51,7 +51,7 @@ SET TERMINAL:HEIGHT TO 25.
 PRINT "+-------------------------------------------+".
 PRINT "|Apoapsis>                                  |".
 PRINT "|Periapsis>                                 |".
-PRINT "|Inclination>                                |".
+PRINT "|Inclination>                               |".
 PRINT "+-------------------------------------------+".
 PRINT "|                                           |".
 PRINT "|                                           |".
@@ -66,9 +66,9 @@ PRINT "|the field to hold and press enter.         |".
 PRINT "|Type 'go' to end script.                   |".
 PRINT "|                                           |".
 PRINT "|EXAMPLE: typing 'Mode' will change         |".
-PRINT "|the prompt from ':>' to ':number0:>'       |".
+PRINT "|the prompt from ':>' to ':Mode:>'          |".
 PRINT "|and the thing that you type will go to     |".
-PRINT "|the 'Mode' field after enter is pressed.|".
+PRINT "|the 'Mode' field after enter is pressed.   |".
 PRINT "+-------------------------------------------+".
 
 LOCAL fields IS LEXICON(
@@ -283,37 +283,6 @@ function log_status {
 }
 }
 // Refined pitch adjustment function
-function adjust_pitch_for_glideslope {
-    set vertical_distance to calculate_vertical_glideslope_distance()+20.
-
-    // Adjust distance_pitch based on glideslope
-    if vertical_distance < -2000 {
-        smooth_pitch_adjustment(15).  // Gradual climb if below glideslope
-    } else if vertical_distance < -1000{
-        smooth_pitch_adjustment(10). 
-    }else if vertical_distance < -500{
-        smooth_pitch_adjustment(5). 
-    }else if vertical_distance < -100{
-        smooth_pitch_adjustment(4). 
-    }else if vertical_distance < -50{
-        smooth_pitch_adjustment(3). 
-    }else if vertical_distance > 1000 {
-        smooth_pitch_adjustment(-23).  // Gradual descent if above glideslope
-    } else if vertical_distance > 600 {
-        smooth_pitch_adjustment(-12).  // Gradual descent if above glideslope
-    }else if vertical_distance > 500 {
-        smooth_pitch_adjustment(-8).  // Gradual descent if above glideslope
-    }else if vertical_distance > 50 {
-        smooth_pitch_adjustment(-4).  // Gradual descent if above glideslope
-    }else if vertical_distance > 20 {
-        smooth_pitch_adjustment(-1).  // Gradual descent if above glideslope
-    }else {
-        smooth_pitch_adjustment(2).  // Level out near the glideslope
-    }
-
-    // Apply distance_pitch to the ship's pitch control
-    
-}
 
 
 // Landing phase refinement
@@ -374,7 +343,7 @@ function create_reentry_display {
     // GUI Setup
     local Title_BOX is reentry_gui:addhbox().
     set reentry_gui:style:hstretch to true.
-    set gui_titel to "Poseidon Operation System".
+    set gui_titel to "Poseidon Operating System".
     set titel to Title_BOX:addlabel(gui_titel).
     set titel:style:align to ("LEFT").
     set titel:text to " <size=30><b>"+gui_titel+"</b></size>".
