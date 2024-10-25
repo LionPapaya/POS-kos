@@ -187,7 +187,7 @@ until running = false{
                 calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())).
        }
        
-       if abs(compass_for()-runway_heading) < 5 and in_hac{
+       if abs(compass_for()-runway_heading) < 20 and in_hac{
             set ex_hac to true.
        }
        
