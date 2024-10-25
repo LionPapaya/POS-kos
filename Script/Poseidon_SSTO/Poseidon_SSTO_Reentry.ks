@@ -216,6 +216,7 @@ until running = false{
 
 
        }
+       aerotstr().
        set TEAM_Pitch_PID to pidloop(0.17,0.19,0.2).
        SET TEAM_Pitch_PID:SETPOINT TO TEAM_targetalt-50.
        set TEAM_Pitch_PID:minoutput to -25.
