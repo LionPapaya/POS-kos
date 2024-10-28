@@ -154,5 +154,3 @@ local function aliasing {
   }
   return didChange.
 }
-log ("loging location constants") to "log.txt".
-log (location_constants) to "log.txt".
