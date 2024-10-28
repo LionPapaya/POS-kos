@@ -6,7 +6,7 @@ RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 
-clearguis.
+
 
 
 set step to "Launch".
