@@ -537,7 +537,7 @@ Poseidon_SSTO:add("Glideslope_Angle",0.2).
 Poseidon_SSTO:add("pitch_change_rate",2).
 Poseidon_SSTO:add("StationaryThrottle",240).
 Poseidon_SSTO:add("HacDistance",15000).
-Poseidon_SSTO:add("HacRadius",3500).
+Poseidon_SSTO:add("HacRadius",8000).
 
 
 
