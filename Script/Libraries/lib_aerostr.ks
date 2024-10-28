@@ -66,13 +66,11 @@ function aeroturn {
         set roll_max to 60 - (speed - min_speed) / speed_range * 20.
         set pitch_max to 15.
     }
-    if heading_error < 0{
+    if heading_error < -5{
         set turn_side to "left".
-    }
-    if heading_error > 0{
+    }else if heading_error > 5{
         set turn_side to "right".
-    }
-    if heading_error = 0{
+    }else{
         set turn_side to "none".
         set turn_roll to 0.
     }
@@ -104,7 +102,7 @@ function aeroturn {
     
     }
     // Set turn_roll to 0 when any of the following conditions are met
-    if  abs(heading_error) < 5 or ship:altitude > AVES["MaxAeroturnalt"] or turn_side = "none" {
+    if  heading_error < -5 or heading_error > 5 or ship:altitude > AVES["MaxAeroturnalt"] or turn_side = "none" {
         set turn_roll to 0.
         set turn_pitch to 0.
         set turn_heading to desired_heading.
@@ -276,8 +274,7 @@ function calculate_vertical_glideslope_alt {
      // Adjust the altitude reference dynamically based on horizontal distance
     set altitude_reference to runway_altitude.  // Example adjustment formula
 
-    // Calculate horizontal distance between ship and runway_start (in meters)
-    set horizontal_distance to horizontal_distance * 1000.
+    
     
 
     
