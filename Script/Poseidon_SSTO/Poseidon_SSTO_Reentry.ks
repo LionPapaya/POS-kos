@@ -189,6 +189,8 @@ until running = false{
        
        if abs(compass_for()-runway_heading) < 20 and in_hac{
             set ex_hac to true.
+            set targetRole to 0.
+            
        }
        
        
@@ -216,7 +218,7 @@ until running = false{
 
 
        }
-       aerotstr().
+       aerostr().
        set TEAM_Pitch_PID to pidloop(0.17,0.19,0.2).
        SET TEAM_Pitch_PID:SETPOINT TO TEAM_targetalt-50.
        set TEAM_Pitch_PID:minoutput to -25.
@@ -249,6 +251,7 @@ until running = false{
     if step = "landing"{
         log_status("Landing phase initiated").
         set alt_ovr_runway to ship:altitude - runway_altitude.
+        
         aerostr().
         set dapthrottle to 0.
         gear on.
@@ -265,7 +268,15 @@ until running = false{
     
         set distance_pitch to 0.
         }else{
-            brakes on. set distance_pitch to 10.
+            if not(defined old_alt){
+                set old_alt to ship:altitude.
+            }
+            brakes on. 
+            if old_alt > ship:altitude{
+                set distance_pitch to 5.
+            }else{
+                set distance_pitch to 0.
+            }
             aerostr().
             aggressive_overcorrect_for_prograde(runway_heading).
             set aerostr_roll to 0.
@@ -278,6 +289,7 @@ until running = false{
             log_status("Landing completed, switching to end phase").
         }
     }    
+    set old_alt to ship:altitude.
     // Final approach adjustments
     }    
     if step = "end" {
@@ -286,7 +298,7 @@ until running = false{
         set warp to 0.
         update_readouts().
         log_status("Script ended, system reset").
-        clearguis.
+        clearGuis().
     }
     update_readouts().
 }    
