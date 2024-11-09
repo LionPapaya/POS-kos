@@ -435,6 +435,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         }
         getvoice(0):play(note(300,0.5)).
         set abort_flag to true.
+        set step to "abort".
     }
     SET abort_b:ONCLICK TO manual_abort_trigger@.
 
@@ -535,7 +536,7 @@ Poseidon_SSTO:add("MinPitch",-30).
 Poseidon_SSTO:add("MaxYaw",5).
 Poseidon_SSTO:add("Glideslope_Angle",0.2).
 Poseidon_SSTO:add("pitch_change_rate",2).
-Poseidon_SSTO:add("StationaryThrottle",240).
+Poseidon_SSTO:add("StationaryThrottle",300).
 Poseidon_SSTO:add("HacDistance",15000).
 Poseidon_SSTO:add("HacRadius",8000).
 
@@ -606,4 +607,22 @@ FUNCTION pos_arrow {
       wdh
     ).
 }
+function check_abort{
+    if abort_flag{
+        check_engines(all).
+    }
+}
+function check_engines{
+    if ship:altitude < 21000{
+        set nerv_expected to false.
 
+    }
+    if ship:altitude < 57000{
+        set rapiers_expected to true.
+        
+    }
+   set rapier_engines to ship:partstitledpattern("R.A.P.I.E.R").
+   for x in rapier_engines{
+        
+   }
+}

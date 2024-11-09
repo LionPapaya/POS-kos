@@ -223,6 +223,7 @@ until running = false{
        SET TEAM_Pitch_PID:SETPOINT TO TEAM_targetalt-50.
        set TEAM_Pitch_PID:minoutput to -25.
        set TEAM_Pitch_PID:maxoutput to 20.
+       
        log("Team alt: "+TEAM_targetalt+" Team Pitch: "+ distance_pitch) to log.txt.
        set distance_pitch to TEAM_Pitch_PID:UPDATE(TIME:SECONDS, ship:altitude).
         set alt_ovr_runway to ship:altitude - runway_altitude.
@@ -302,3 +303,4 @@ until running = false{
     }
     update_readouts().
 }    
+

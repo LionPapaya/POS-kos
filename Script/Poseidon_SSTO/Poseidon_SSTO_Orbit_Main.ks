@@ -21,7 +21,7 @@ set Lastest_status to "launching".
 set orbitcalc to false.
 
 
-//min periapsis = 75000 apoapsis > periapsis
+//min periapsis = 75000  ----->  apoapsis > periapsis
 //Inclination between 0 and 180
 get_inputs_Launch().
 set TargetPeriapsis to str_to_num(TargetPeriapsis).
@@ -39,6 +39,7 @@ set dap_mode to "auto".
 until running = false{
     update_readouts().
     dap().
+    //check_abort().
     if step = "Launch"{
          
         if ship:altitude < 85{
@@ -109,10 +110,12 @@ until running = false{
                 wait 0.5.
             }   
             set warp to 1.
+            rcs on.
         }    
         if ship:apoapsis > 57000{
             rapiersoff().
-        set targetPitch to 15.
+            set targetPitch to 15.
+            rcs off.
         } 
         if ship:altitude > 70000{
             lock dap_steering to prograde.
@@ -185,46 +188,7 @@ until running = false{
             set step to "end".
         }    
     }
-    if step = "runway_abort_watering"{
-        
-        
-        if  ship:altitude > 150{
-            set targetPitch to targetPitch - 1.
-            wait 1.
-        }
-        if  ship:altitude < 80 and ship:airspeed > 100{
-            set targetPitch to targetPitch + 1.
-            wait 0.5.
-        }  
-        if ship:airspeed < 150{
-            set targetPitch to targetPitch - 1.
-            wait 2.
-        }
-        if ship:airspeed < 70{
-            set dapthrottle to 1.
-        }
-        if ship:airspeed > 110{
-            set dapthrottle to 0.
-        }
-        if ship:altitude < 80 and ship:airspeed < 100{
-            set targetPitch to 5.
-        }
-        if ship:altitude < 5{
-            set Lastest_status to "watering".
-            set step to "end".
-        }
-        if TargetPitch < -10 or TargetPitch > 15{
-            set TargetPitch to 0.
-        }
-        if  ship:altitude < 40{
-            set targetPitch to 15.
-
-        }   
-        
-    }   
-    if step = "inflight_abort"{
-
-    }
+    
     if step = "end"{
         set running to false.
         //set Lastest_status to "ending".
