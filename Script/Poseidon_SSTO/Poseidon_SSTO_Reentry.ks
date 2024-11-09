@@ -131,6 +131,11 @@ until running = false{
             goto_target().
             aerostr().
         }
+        if ship:altitude < 36000 and ship:altitude > 27000{
+            rcs on.
+        }else{
+            rcs off.
+        }
         if ship:altitude < 25000{
             set step to "TEAM".
             set Lastest_status to "TEAM".
@@ -168,6 +173,12 @@ until running = false{
             set Lastest_status to "intercepting hac".
             set in_hac  to false.
             set ex_hac to false.
+            if ship:airspeed < 160{
+                set dapthrottle to 1.
+            }
+            if ship:airspeed > 220{
+                set dapthrottle to 0.
+            }
        } else{
             set in_hac to true.
         
@@ -185,6 +196,13 @@ until running = false{
                 calcdistance_m(hac_ercl,runway_start)+
                 
                 calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())).
+                
+            if ship:airspeed < 120{
+                set dapthrottle to 1.
+            }
+            if ship:airspeed > 150{
+                set dapthrottle to 0.
+            }
        }
        
        if abs(compass_for()-runway_heading) < 20 and in_hac{
@@ -214,7 +232,12 @@ until running = false{
                     
                 calcdistance_m(ship:geoposition,runway_start)).
 
-
+                     if ship:airspeed < 120{
+                        set dapthrottle to 1.
+                    }
+                    if ship:airspeed > 140{
+                        set dapthrottle to 0.
+                    }
 
 
        }
