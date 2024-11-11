@@ -9,7 +9,7 @@ clearScreen.
 }
 Print("|==============================================================================|") at(0,1).
 Print("|                           POSEIDON OPERATING SYSTEM                          |") at(0,2).
-Print("|                                VERSION 0.9.8.9                               |") at(0,3).
+Print("|                                VERSION 1.0.0.0                               |") at(0,3).
 Print("|                                                                              |") at(0,4).
 Print("|                        VEHICLE : "+ship:shipName+"  ")at(0,5). Print ("|") at(79,5).
 Print("|                                                                              |") at(0,6).
