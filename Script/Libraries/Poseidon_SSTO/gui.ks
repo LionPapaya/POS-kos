@@ -1,44 +1,3 @@
-function reset_sys{
-    if ship:altitude < 1000 {
-        gear on.
-        brakes on.
-    }   
-    if ship:altitude < 50000 {
-        rapierson().
-        nervsoff().
-    }  
-    else{
-    brakes off.
-    gear off.
-    }
-    set targetPitch to 0.
-        set targetRole to 0.
-        set targetDirection to 90.
-        lock dap_steering to heading(targetDirection, targetPitch, targetRole).
-    
-    set dapthrottle to 0.
-    lock throttle to dapthrottle.
-    if ship:periapsis > 70000 or ship:altitude > 300000{
-        ag5 on.
-        nervson().
-        rapiersoff().
-    }
-    else{
-        ag5 off.
-    }
-    lights on.
-    set targetPitch to 0.
-    set targetRole to 0.
-    set targetDirection to 90.
-    lock dap_steering to heading(targetDirection, targetPitch, targetRole).
-    set turn_pitch to 0.
-    set distance_pitch to 0.
-    set aerostr_roll  to 0.
-    set aerostr_heading to 90.
-    
-    
-    
-}
 
 function get_inputs_Launch{
 
@@ -144,34 +103,6 @@ function update_readouts{
   runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
 }
-
-function rapierson{
-    if rapiers = false{toggle AG1.}
-    set rapiers to true.
-
-}
-function rapiersoff{
-     if rapiers = true{toggle AG1.}
-     set rapiers to false.
-}
-function togglerapiermode{
-    toggle AG3.
-}
-function nervson{
-    if nervs = false{toggle AG2.}
-    set nervs to true.
-}
-function nervsoff{
-    if nervs = true{toggle AG2.}
-    set nervs to false.
-}
-function check_inputs{
-    if TargetApoapsis < TargetPeriapsis or TargetPeriapsis < 75000 or TargetInclination < 0 or TargetInclination > 180 or TargetApoapsis > 84159286{
-    set step to "end".
-    set Lastest_status to "wrong setup".
-    log ("apoapsis = "+TargetApoapsis+" Periapsis = "+TargetPeriapsis+" Inclination = "+TargetInclination) to log.txt.
-    }
-}
 function setup_reentry_script{
     set step to "Deorbit".
     set substep to "findStep".
@@ -191,7 +122,7 @@ function setup_reentry_script{
     set deorbit_start to false.
     set deorbit_calc to false.
     create_reentry_display().
-   if Reentry_mode = "man" or Reentry_mode = "mannual" {
+   if Reentry_mode = "Man" or Reentry_mode = "Auto" {
     local a is Location+"_runway".
     local b is Location+"_runway_"+runway_nr+"_start".
     local c is Location+"_runway_"+runway_nr+"_end".
@@ -233,59 +164,6 @@ log ("runway heading = "+runway_heading) to log.txt.
     reset_sys().                                                                             
    
 }
-function goto_target{
-    set distance_between_runway_start_IMPACTPOS to calcdistance(ship:geoposition,runway_start) - calcdistance(ship:geoposition,addons:tr:impactpos).
-    calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)).
-    aeroturn((heading_to_target(runway_start))).
-    if ship:airspeed > 700{
-    if calcdistance(ship:geoposition,addons:tr:impactpos) < calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > 2{
-        set distance_pitch to 23.
-        brakes off.
-    }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -1{
-        set distance_pitch to 20.
-        
-    }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -3{
-        brakes on.
-    }
-    if calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < 2 and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > -1{
-        set distance_pitch to 17.
-        brakes off.
-        
-    }
-    }else{
-        ADDONS:TR:RESETDESCENTPROFILE(10).
-        if calcdistance(ship:geoposition,addons:tr:impactpos) < calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > 2{
-        set distance_pitch to 10.
-        brakes off.
-    }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -1{
-        set distance_pitch to 5.
-        
-    }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -3{
-        brakes on.
-    }
-    if calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < 2 and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > -1{
-        set distance_pitch to 15.
-        brakes off.
-        
-    }
-    }
-    
-}
-
-function log_status {
-    parameter message.
-    if ship:altitude < 20000{
-    log message + " | Altitude: " + ship:altitude + "m, Airspeed: " + ship:airspeed + "m/s, inputPitch: " + distance_pitch + ", Pitch: " + pitch_for() +  ", Throttle: " + throttle + ", Glideslope(V): " + calculate_vertical_glideslope_distance() + ", Glideslope(L): " + calculate_lateral_glideslope_distance() + ",runway_start_distance(m): "+ ((calcdistance(ship:geoPosition, runway_start))*1000)to ("0:/log.txt").
-}
-}
-// Refined pitch adjustment function
-
-
-// Landing phase refinement
 
 function create_reentry_display {
     local location_to_runways is lexicon().
@@ -343,7 +221,7 @@ function create_reentry_display {
     // GUI Setup
     local Title_BOX is reentry_gui:addhbox().
     set reentry_gui:style:hstretch to true.
-    set gui_titel to "Poseidon Operating System".
+    set gui_titel to "Reentry and Landing Assistant".
     set titel to Title_BOX:addlabel(gui_titel).
     set titel:style:align to ("LEFT").
     set titel:text to " <size=30><b>"+gui_titel+"</b></size>".
@@ -526,103 +404,299 @@ function update_reentry_gui{
         
     }
 }
+function create_main_gui{
+    global poseidon_gui_main to gui(500).
+    set poseidon_gui_main:style:width to 0.
 
-global Poseidon_SSTO is lex().
-Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",120)).
-Poseidon_SSTO:add("MaxAeroturnAlt",60000).
-Poseidon_SSTO:add("MaxRoll",40).
-Poseidon_SSTO:add("MaxPitch",48).
-Poseidon_SSTO:add("MinPitch",-30).
-Poseidon_SSTO:add("MaxYaw",5).
-Poseidon_SSTO:add("Glideslope_Angle",0.2).
-Poseidon_SSTO:add("pitch_change_rate",2).
-Poseidon_SSTO:add("StationaryThrottle",300).
-Poseidon_SSTO:add("HacDistance",15000).
-Poseidon_SSTO:add("HacRadius",8000).
-
+    poseidon_gui_main:show().
+    // GUI Setup
+    local Title_BOX is poseidon_gui_main:addhbox().
+    set poseidon_gui_main:style:hstretch to true.
+    set gui_titel to "POSEIDON OPERATING SYSTEM".
+    set titel to Title_BOX:addlabel(gui_titel).
+    set titel:style:align to ("LEFT").
+    set titel:text to " <size=30><b>"+gui_titel+"</b></size>".
 
 
-global AVES is Poseidon_SSTO.
+    GLOBAL Main_toggels_box IS poseidon_gui_main:ADDHLAYOUT().
+    SET Main_toggels_box:STYLE:WIDTH TO poseidon_gui_main:style:width - 16.
 
-function dap{
-    if not(defined dap_mode){
-        set dap_mode to "auto".
-    }
-    if dap_mode = "auto"{
-       
-        lock steering to dap_steering.
-        SET SAS TO FALSE.
-        
-        lock throttle to dapthrottle.
-    }
-    if dap_mode = "css"{
-        set sas to false.
-             // Capture pilot control inputs
-        set pilot_pitch to SHIP:CONTROL:PILOTPITCH.
-        set pilot_yaw to SHIP:CONTROL:PILOTYAW.
-        set pilot_roll to SHIP:CONTROL:PILOTROLL.
-        lock steering to heading(targetDirection, targetPitch, targetRole).
-        // Convert pilot controls to target values
-        set target_pitch to SHIP:FACING:PITCH + (pilot_pitch * 10). // Adjust sensitivity as needed
-        set target_yaw to compass_for() + (pilot_yaw * 10).   // Adjust sensitivity as needed
-        set target_roll to SHIP:FACING:ROLL + (pilot_roll * 10).    // Adjust sensitivity as needed
-
-        until target_yaw <= 360 and target_yaw >=0{
-        if target_yaw > 360 {
-            set target_yaw to target_yaw- 360.
-        } 
-        if target_yaw < 0 {
-            set target_yaw to target_yaw + 360.
-        }
-        }
+    GLOBAL main_dap_mode_box IS Main_toggels_box:ADDHLAYOUT().
+    SET main_dap_mode_box:STYLE:WIDTH TO 105.
+    GLOBAL main_dap_mode_text IS main_dap_mode_box:ADDLABEL("<b>DAP</b>"). 
+    set main_dap_mode_text:style:margin:v to -3.
+    GLOBAL main_dap_mode_menu IS main_dap_mode_box:addpopupmenu().
+    set main_dap_mode_menu:style:margin:v to -3.
+    SET main_dap_mode_menu:STYLE:WIDTH TO 65.
+    SET main_dap_mode_menu:STYLE:HEIGHT TO 25.
+    SET main_dap_mode_menu:STYLE:ALIGN TO "center".
+    main_dap_mode_menu:addoption("AUTO").
+    main_dap_mode_menu:addoption("CSS").
+    main_dap_mode_menu:addoption("OFF").
+    Main_toggels_box:addspacing(8).
+    set main_dap_mode_menu:onchange to main_update_dap@.
     
-        aerostr(target_pitch, target_yaw, target_roll).
-        lock throttle to SHIP:CONTROL:PILOTMAINTHROTTLE.
-        
+    function main_update_dap {
+        parameter decoy is 1.
+        set dap_mode to main_dap_mode_menu:value.
     }
-    if dap_mode = "off"{
-        SET SAS TO TRUE.
-        UNLOCK steering.
-        lock throttle to SHIP:CONTROL:PILOTMAINTHROTTLE.
-        
+
+
+    local Programm_box is main_toggels_box:addhlayout().
+    local Programm_label is Programm_box:addlabel("<b>Programm</b> ").
+    local Programm_popup is Programm_box:addpopupmenu().
+    SET Programm_popup:STYLE:HEIGHT TO 25.
+    Programm_popup:addoption("Launch").
+    Programm_popup:addoption("Landing").
+    Programm_popup:addoption("Orbital Maneuvering").
+    Programm_popup:addoption("Docking").
+    set Programm_popup:onchange to changeProgramm@.
+
+    function changeProgramm{
+        parameter decoy is 1.
+        if Programm_popup:value = "Launch"{
+            set main_step to "POS1".
+        }
+        if Programm_popup:value = "Landing"{
+            set main_step to "POS3".
+        }
+        if Programm_popup:value = "Orbital Maneuvering"{
+            set main_step to "OM1".
+        }
+        if Programm_popup:value = "Docking"{
+            set main_step to "POS2".
+        }
     }
+
+}
+function get_inputs_OM {
+    // Initialize GUI and variables
+    local OM_gui is GUI(400, 300).
+    set OM_gui:style:width to 400.
+    set OM_gui:style:height to 300.
+
+    local confirm_in is false.
+
+    OM_gui:show().
+    
+    // Title
+    local title_box is OM_gui:addhbox().
+    set title_box:style:hstretch to true.
+    set title_box:style:margin:v to 10.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Inputs</b></size>").
+    title_box:show().
+
+    // Input Fields
+    local input_box is OM_gui:addvbox().
+    set input_box:style:margin:v to 10.
+    set input_box:style:margin:h to 10.
+
+    // Target Field
+    local target_box is input_box:addhlayout().
+    local target_label is target_box:addlabel("Target:").
+    local target_menu is target_box:addpopupmenu().
+    
+    set target_menu:onchange to {
+        parameter new_value.
+        set OM_Target to new_value.
+    }.
+    target_box:show().
+
+    // Target Type Selector
+    local target_type_box is input_box:addhlayout().
+    local target_type_label is target_type_box:addlabel("Target Type:").
+    local target_type_menu is target_type_box:addpopupmenu().
+    target_type_menu:addoption("Body").
+    target_type_menu:addoption("Vessel").
+    
+    set target_type_menu:onchange to {
+        parameter new_value.
+        set OM_Target_type to new_value.
+        update_target_options(target_type_menu:value).
+    }.
+    target_type_box:show().
+
+    // Nodes Selector
+    local nodes_box is input_box:addhlayout().
+    local nodes_label is nodes_box:addlabel("Nodes:").
+    local nodes_menu is nodes_box:addpopupmenu().
+    nodes_menu:addoption("both").
+    nodes_menu:addoption("first").
+    set nodes_menu:onchange to {
+        parameter new_value.
+        set OM_Nodes to new_value.
+    }.
+    nodes_box:show().
+
+    // Orbit Type Selector
+    local orbit_type_box is input_box:addhlayout().
+    local orbit_type_label is orbit_type_box:addlabel("Orbit Type:").
+    local orbit_type_menu is orbit_type_box:addpopupmenu().
+    orbit_type_menu:addoption("circular").
+    orbit_type_menu:addoption("elliptical").
+    orbit_type_menu:addoption("none").
+    set orbit_type_menu:onchange to {
+        parameter new_value.
+        set OM_Orbit_Type to new_value.
+    }.
+    orbit_type_box:show().
+
+    // Orbit Orientation Selector
+    local orbit_orientation_box is input_box:addhlayout().
+    local orbit_orientation_label is orbit_orientation_box:addlabel("Orbit Orientation:").
+    local orbit_orientation_menu is orbit_orientation_box:addpopupmenu().
+    orbit_orientation_menu:addoption("prograde").
+    orbit_orientation_menu:addoption("retrograde").
+
+    set orbit_orientation_menu:onchange to {
+        parameter new_value.
+        set OM_Orbit_Orientation to new_value.
+    }.
+    orbit_orientation_box:show().
+
+    input_box:show().
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is OM_gui:addhbox().
+    set ok_button_box:style:margin:v to 15.
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+        OM_gui:hide().
+    }.
+    ok_button_box:show().
+
+    // Function to dynamically update target options
+    function update_target_options {
+        parameter target_type.
+
+        target_menu:clear(). // Clear the existing options
+        
+        if target_type = "Body" {
+            // Add all celestial bodies
+            for bleh in buildlist("bodies") {
+                target_menu:addoption(bleh:name).
+            }
+        } else if target_type = "Vessel" {
+            // Add all active vessels
+            List Targets in all_vessels.
+            for vessel in all_vessels{
+                target_menu:addoption(vessel:name).
+            }
+        }
+    }
+
+    // Initialize the Target options for the default Target Type
+    update_target_options(target_type_menu:value ).
+
+    // Wait for confirmation
+    until confirm_in {
+        wait 0.01.
+    }
+
+    // Return the finalized inputs
+    set OM_Target to target_menu:value.
+    set OM_Target_type to remove_spaces(target_type_menu:value).
+    set OM_Nodes to remove_spaces(nodes_menu:value).
+    set OM_Orbit_Type to remove_spaces(orbit_type_menu:value).
+    set OM_Orbit_Orientation to remove_spaces( orbit_orientation_menu:value).
+
+    clearscreen.
 }
 
-FUNCTION pos_arrow {
-	PARAMETER pos.
-	PARAMETER lab is "deafault".
-	PARAMETER len IS 5000.
-	PARAMETER wdh IS 3.
-	
-	LOCAL start IS pos:POSITION.
-	LOCAL end IS (pos:POSITION - SHIP:ORBIT:BODY:POSITION).
-	
-	VECDRAW(
-      start,//{return start.},
-      end:NORMALIZED*len,//{return end.},
-      RGB(1,0,0),
-      lab,
-      1,
-      TRUE,
-      wdh
-    ).
-}
-function check_abort{
-    if abort_flag{
-        check_engines(all).
-    }
-}
-function check_engines{
-    if ship:altitude < 21000{
-        set nerv_expected to false.
 
-    }
-    if ship:altitude < 57000{
-        set rapiers_expected to true.
-        
-    }
-   set rapier_engines to ship:partstitledpattern("R.A.P.I.E.R").
-   for x in rapier_engines{
-        
-   }
+function check_om_nodes{
+
+
+
+
+CLEARSCREEN.
+SET TERMINAL:WIDTH TO 45.
+SET TERMINAL:HEIGHT TO 23.
+PRINT "+-------------------------------------------+".
+PRINT "|Execute>                                   |".
+PRINT "+-------------------------------------------+".
+PRINT "|                                           |".
+PRINT "|                                           |".
+PRINT "|                                           |".
+PRINT "|                                           |".
+PRINT "|                                           |".
+PRINT "|                                           |".
+PRINT "+-------------------------------------------+".
+PRINT "|Type the name of the field you want to     |".
+PRINT "|change, then type the value you want       |".
+PRINT "|the field to hold and press enter.         |".
+PRINT "|Type 'go' to end script.                   |".
+PRINT "|                                           |".
+PRINT "|EXAMPLE: typing 'Target' will change       |".
+PRINT "|the prompt from ':>' to ':Target:>'        |".
+PRINT "|and the thing that you type will go to     |".
+PRINT "|the 'Target' field after enter is pressed. |".
+PRINT "+-------------------------------------------+".
+
+LOCAL fields IS LEXICON(
+    "Execute",LEXICON("maxLength",7,"col",12,"row",1,"str","True","isNum",FALSE,"inFunction",terminal_input_string@)
+
+).
+LOCAL exitWords IS LIST(
+	"ok",
+	"start",
+	"affirmative",
+	"go",
+	"enter"
+).
+LOCAL prompt IS ":> ".
+LOCAL terminalData IS LIST(prompt).
+LOCAL terminalRowStart IS 5.
+LOCAL termPos IS 0.
+LOCAL inField IS "".
+LOCAL inFunction IS terminal_input_string@.
+LOCAL fieldStr IS "".
+LOCAL maxIn IS 45.
+FOR key IN fields:KEYS {
+	LOCAL field IS fields[key].
+	PRINT (field["str"]) AT(field["col"],field["row"]).
+}
+LOCAL quit IS FALSE.
+RCS OFF.
+UNTIL quit OR RCS {
+	SET termPos TO 0.
+	FOR line in terminalData {
+		SET termPos TO termPos + 1.
+		PRINT "|" + line:PADRIGHT(43) + "|" AT(0,terminalRowStart + termPos).
+	}
+	LOCAL indentation IS terminalData[terminalData:LENGTH - 1]:LENGTH + 1.
+	LOCAL inString IS inFunction(indentation,terminalRowStart + termPos,MIN(44 - indentation,maxIn),fieldStr).
+	SET terminalData[terminalData:LENGTH - 1] TO terminalData[terminalData:LENGTH - 1] + inString.
+	
+	IF inField <> "" {
+		LOCAL field IS fields[inField].
+		SET field["str"] TO inString.
+		PRINT (field["str"]):PADRIGHT(maxIn - 1) AT(field["col"],field["row"]).
+		terminalData:ADD(prompt).
+		SET inField TO "".
+		SET maxIn TO 45.
+		SET inFunction TO terminal_input_string@.
+		SET fieldStr TO "".
+	} ELSE IF fields:HASKEY(inString) {
+		SET inField TO inString.
+		LOCAL field IS fields[inField].
+		SET maxIn TO field["maxLength"].
+		SET inFunction TO field["inFunction"].
+		SET fieldStr TO field["str"].
+		terminalData:ADD(":" + inString + prompt).
+	} ELSE IF exitWords:CONTAINS(inString) {
+		SET quit TO TRUE.
+	} ELSE {
+		terminalData:ADD(" Not a valid field or command!").
+		terminalData:ADD(prompt).
+	}
+	UNTIL terminalData:LENGTH <= 6 {
+		terminalData:REMOVE(0).
+	} 
+}
+set OM_Execute to fields["Execute"]["str"].
+
+clearscreen.
+
 }
