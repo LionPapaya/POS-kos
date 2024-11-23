@@ -1,4 +1,5 @@
-RUNONCEPATH("0:/Libraries/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
 RUNONCEPATH("0:/Libraries/lib_navball.ks").
@@ -108,8 +109,10 @@ until running = false{
             if TargetPitch < 30{
                 set targetPitch to targetPitch + 1.
                 wait 0.5.
-            }   
-            set warp to 1.
+            }else{
+                set warp to 1.
+            }
+            
             rcs on.
         }    
         if ship:apoapsis > 57000{

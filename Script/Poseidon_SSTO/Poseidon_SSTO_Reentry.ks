@@ -1,4 +1,5 @@
-RUNONCEPATH("0:/Libraries/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
 RUNONCEPATH("0:/Libraries/lib_navball.ks").
@@ -6,7 +7,7 @@ RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
-RUNONCEPATH("0:/Libraries/lib_gui.ks").
+
 //if ship:periapsis > 70000{
 setup_reentry_script().
 //}
@@ -15,7 +16,9 @@ until running = false{
     update_readouts().
     dap().
     update_reentry_gui().
-    
+    //if not (step = "Deorbit") and ship:altitude <70000{
+    //    logTelemetry().
+    //}
     if step = "Deorbit"{
         if substep = "findStep"{
            
@@ -68,22 +71,22 @@ until running = false{
                
                 
                 if deorbit:orbit:periapsis + 1000 > -10000 and deorbit:orbit:periapsis - 1000 < -10000 and deorbit_calc = false and addons:TR:hasimpact {
-                local impact_point is ADDONS:TR:impactpos.  // Impact position
-                local runway_point is runway_start.         // Runway start position
+                local impact_point is ADDONS:TR:impactpos.  
+                local runway_point is runway_start.         
     
-                // Calculate the distance between the impact position and the runway start in kilometers
+             
                 local distance_to_runway is calcdistance(impact_point, runway_point).  // In kilometers
 
-                // Adjust time more aggressively when farther from the runway_start
-                if distance_to_runway > 10 {
-                    set deorbit:time to deorbit:time + 10.  // Larger step for larger distances (> 10 km)
-                } else if distance_to_runway <= 10 and distance_to_runway > 1.5 {
-                    set deorbit:time to deorbit:time + 1.  // Smaller step for closer distances (between 1.5 and 10 km)
+    
+                if distance_to_runway > 50 {
+                    set deorbit:time to deorbit:time + 10.  
+                } else if distance_to_runway <= 50{
+                    set deorbit:time to deorbit:time + 1.  
                 }
 
     
 
-                // Log the longitude difference for debugging purposes
+               
             set lng_difference to abs(ADDONS:TR:impactpos:LNG - runway_start:LNG).
             }
                             }
