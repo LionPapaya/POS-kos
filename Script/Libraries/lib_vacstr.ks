@@ -5,7 +5,7 @@ function execute_node{
     set Lastest_status to "Node in: " + round(nd:eta) + ", DeltaV: " + round(nd:deltav:mag).
     set max_acc to ship:maxthrust/ship:mass.
     update_readouts().
-    set burn_duration to nd:deltav:mag/max_acc+0.001.
+    set burn_duration to nd:deltav:mag/max_acc+0.00000000001.
     set Lastest_status to "Crude Estimated burn duration: " + round(burn_duration) + "s".
     update_readouts().
     until nd:eta <= (burn_duration/2 + 60){
