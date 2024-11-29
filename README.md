@@ -39,6 +39,7 @@ The system automates the key phases of the mission:
 1. **Exclusive Use**: The scripts are specifically designed for the **Poseidon SSTO**. They rely on its engine configuration, mass, and aerodynamic properties.
 2. **Input Dependency**: User inputs such as target apoapsis, inclination, or landing site must be accurate for successful execution.
 3. **Kerbal Space Program Dependencies**: Requires active installation of kOS and trajectories.
+4. The reentry doesn't work properly obove 1000km orbital alt.
 
 ---
 
