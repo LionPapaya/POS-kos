@@ -9,7 +9,7 @@ clearScreen.
 }
 Print("|==============================================================================|") at(0,1).
 Print("|                           POSEIDON OPERATING SYSTEM                          |") at(0,2).
-Print("|                                VERSION 1.0.1.0                               |") at(0,3).
+Print("|                                VERSION 1.0.2.1                               |") at(0,3).
 Print("|                                                                              |") at(0,4).
 Print("|                        VEHICLE : "+ship:shipName+"  ")at(0,5). Print ("|") at(79,5).
 Print("|                                                                              |") at(0,6).
@@ -30,7 +30,7 @@ if ship:altitude < 70000 and step = "reentry"{
     Print("| SURFACE SPEED ="+ round(ship:groundspeed)+ "") at(0,10). Print ("|") at(40,10). print ("VERTICAL SPEED ="+round(ship:verticalSpeed)+"") at(42,10). Print ("|") at(79,10). 
     Print("| AIR SPEED ="+ round(ship:airspeed)+ "") at(0,11). Print ("|") at(40,11). print ("ALTITUDE ="+round(ship:altitude)+"") at(42,11). Print ("|") at(79,11). 
     Print("|") at(0,12). Print("h_tt =" +heading_to_target(runway_start)+ "   ") at(3,12). Print ("|") at(40,12). print ("MASS ="+round(ship:mass)+"") at(42,12). Print ("|") at(79,12). 
-    Print("|") at(0,13). if defined roll_max {Print ("roll_max ="+roll_max+ "   ") at(3,13).} Print ("|") at(40,13). print ("target heading ="+targetDirection+"") at(42,13). Print ("|") at(79,13). 
+    Print("|") at(0,13). if defined roll_max {Print ("roll_max ="+roll_max+ "   ") at(3,13).} Print ("|") at(40,13).  print ("Throttle ="+throttle+"") at(42,13). Print ("|") at(79,13). 
     Print("|                                                                              |") at(0,14).
 }  
 if ship:altitude < 70000 and step = "TEAM"{
@@ -40,7 +40,7 @@ if ship:altitude < 70000 and step = "TEAM"{
     Print("| SURFACE SPEED ="+ round(ship:groundspeed)+ "") at(0,10). Print ("|") at(40,10). print ("VERTICAL SPEED ="+round(ship:verticalSpeed)+"") at(42,10). Print ("|") at(79,10). 
     Print("| AIR SPEED ="+ round(ship:airspeed)+ "") at(0,11). Print ("|") at(40,11). print ("ALTITUDE ="+round(ship:altitude)+"") at(42,11). Print ("|") at(79,11). 
     Print("|") at(0,12). Print("h_tt =" +heading_to_target(Active_HAC_entry)+ "  ")at(3,12). Print ("|") at(40,12). print ("MASS ="+round(ship:mass)+"") at(42,12). Print ("|") at(79,12). 
-    Print("|") at(0,13). if defined Active_HAC {Print ("Active_HAC ="+Active_HAC+ "   ") at(3,13).} Print ("|") at(40,13). print ("target heading ="+targetDirection+"") at(42,13). Print ("|") at(79,13). 
+    Print("|") at(0,13). if defined Active_HAC {Print ("Active_HAC ="+Active_HAC+ "   ") at(3,13).} Print ("|") at(40,13).  print ("Throttle ="+throttle+"") at(42,13). Print ("|") at(79,13). 
     Print("|                                                                              |") at(0,14).
 }  
 if ship:altitude > 70000{
