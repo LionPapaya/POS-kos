@@ -68,40 +68,47 @@ function check_inputs{
 }
 
 function goto_target{
-    set distance_between_runway_start_IMPACTPOS to calcdistance(ship:geoposition,runway_start) - calcdistance(ship:geoposition,addons:tr:impactpos).
-    calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)).
-    aeroturn((heading_to_target(runway_start))).
+    if not(defined reentry_target){
+            set ecrl_2hac to get_geoposition_along_heading(runway_start,runway_heading+180,Aves["HacDistance"]*2).
+            if calcdistance(ship:geoposition,runway_start) > calcdistance(ship:geoposition,ecrl_2hac){
+                set reentry_target to runway_start.
+            }else{set reentry_target to ecrl_2hac.}
+
+        }
+    set distance_between_reentry_target_IMPACTPOS to calcdistance(ship:geoposition,reentry_target) - calcdistance(ship:geoposition,addons:tr:impactpos).
+    calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)).
+    aeroturn((heading_to_target(reentry_target))).
     if ship:airspeed > 700{
-    if calcdistance(ship:geoposition,addons:tr:impactpos) < calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > 2{
+    if calcdistance(ship:geoposition,addons:tr:impactpos) < calcdistance(ship:geoposition,reentry_target) and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) > 2{
         set distance_pitch to 23.
         brakes off.
     }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -1{
+    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,reentry_target) and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) < -1{
         set distance_pitch to 20.
         
     }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -3{
+    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,reentry_target) and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) < -3{
         brakes on.
     }
-    if calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < 2 and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > -1{
+    if calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) < 2 and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) > -1{
         set distance_pitch to 17.
         brakes off.
         
     }
     }else{
         ADDONS:TR:RESETDESCENTPROFILE(10).
-        if calcdistance(ship:geoposition,addons:tr:impactpos) < calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > 2{
+        if calcdistance(ship:geoposition,addons:tr:impactpos) < calcdistance(ship:geoposition,reentry_target) and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) > 2{
         set distance_pitch to 10.
         brakes off.
     }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -1{
+    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,reentry_target) and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) < -1{
         set distance_pitch to 5.
         
     }
-    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,runway_start) and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < -3{
+    if calcdistance(ship:geoposition,addons:tr:impactpos) > calcdistance(ship:geoposition,reentry_target) and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) < -3{
         brakes on.
     }
-    if calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) < 2 and calc_percentage(distance_between_runway_start_IMPACTPOS,calcdistance(ship:geoposition,runway_start)) > -1{
+    if calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) < 2 and calc_percentage(distance_between_reentry_target_IMPACTPOS,calcdistance(ship:geoposition,reentry_target)) > -1{
         set distance_pitch to 15.
         brakes off.
         

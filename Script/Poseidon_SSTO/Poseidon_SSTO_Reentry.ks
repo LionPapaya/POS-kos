@@ -79,9 +79,9 @@ until running = false{
 
     
                 if distance_to_runway > 50 {
-                    set deorbit:time to deorbit:time + 10.  
-                } else if distance_to_runway <= 50{
                     set deorbit:time to deorbit:time + 1.  
+                } else if distance_to_runway <= 50{
+                    set deorbit:time to deorbit:time + 0.1.  
                 }
 
     
@@ -127,17 +127,25 @@ until running = false{
             set targetPitch to 5.
             set targetRole to 0.
             set targetDirection to compass_for_prograde().
+            set ecrl_2hac to get_geoposition_along_heading(runway_start,runway_heading+180,Aves["HacDistance"]*2).
+            if calcdistance(ship:geoposition,runway_start) > calcdistance(ship:geoposition,ecrl_2hac){
+                set reentry_target to runway_start.
+            }else{set reentry_target to ecrl_2hac.}
 
         }
+        
+        if ship:altitude > 30000 and ship:altitude < 70000{set console_mode to "TRAJ 1".}
+        if ship:altitude < 30000 and ship:altitude > 10000{set console_mode to "TRAJ 2".}
         if ship:altitude < 65000{
             set Lastest_status to "reentering".
             goto_target().
             aerostr().
         }
-        if ship:altitude < 36000 and ship:altitude > 27000{
+        if pitch_for() > targetPitch+1{
             rcs on.
         }else{
             rcs off.
+            
         }
         if ship:altitude < 25000{
             set step to "TEAM".
@@ -145,7 +153,7 @@ until running = false{
         }
     }    
     if step = "TEAM"{
-       if not(defined Active_HAC){
+       if not(defined Active_HAC) or not(defined hac_ercl){
         create_HAC().
         choose_hac().
         set in_hac to false.
@@ -169,8 +177,8 @@ until running = false{
                 calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())+
                 
                 calcdistance_m(ship:geoposition,Active_HAC_entry)).
-
-            
+           
+            global rnw_dis_display is calcdistance_m(hac_ercl,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())+calcdistance_m(ship:geoposition,Active_HAC_entry).
 
             set old_hac_distance to calcdistance(ship:geoposition,Active_HAC_entry).
             set Lastest_status to "intercepting hac".
@@ -194,6 +202,7 @@ until running = false{
             if HAC_Direction = "Anticlockwise"{
                 aeroturn_force_dir(runway_heading,"left").
             }
+            global rnw_dis_display is calcdistance_m(ship:geoposition,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for()).
             set TEAM_targetalt to calculate_vertical_glideslope_alt(
                     
                 calcdistance_m(hac_ercl,runway_start)+
@@ -214,7 +223,7 @@ until running = false{
             
        }
        
-       
+       if ship:altitude < 12000{set console_mode to "TRAJ 3".}
        if ex_hac{
             set Lastest_status to "completed hac".
             aeroturn(heading_to_target(
@@ -227,7 +236,7 @@ until running = false{
         
             (calcdistance_m(ship:geoposition,runway_start)*0.5)))).
 
-
+            global rnw_dis_display is calcdistance_m(ship:geoposition,runway_start).
         
             set TEAM_targetalt to 
                 
@@ -245,9 +254,9 @@ until running = false{
 
        }
        aerostr().
-       set TEAM_Pitch_PID to pidloop(0.17,0.19,0.2).
+       set TEAM_Pitch_PID to pidloop(0.17,0.19,0.3).
        SET TEAM_Pitch_PID:SETPOINT TO TEAM_targetalt-50.
-       set TEAM_Pitch_PID:minoutput to -25.
+       set TEAM_Pitch_PID:minoutput to -18.
        set TEAM_Pitch_PID:maxoutput to 20.
        
        log("Team alt: "+TEAM_targetalt+" Team Pitch: "+ distance_pitch) to log.txt.
