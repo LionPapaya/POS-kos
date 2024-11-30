@@ -282,6 +282,11 @@ function create_reentry_display {
     function update_dap {
         parameter decoy is 1.
         set dap_mode to dap_mode_menu:value.
+        if (dap_mode = "OFF") {
+			set dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
+		} else {
+			set dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
+		}
     }
 
 GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
@@ -393,9 +398,25 @@ function create_reentry_gui{
     set console_titel to console:addlabel("<size=20><b>"+console_mode+"</b></size>").
     set console_titel:style:align to "center".
     set console_time to console:addlabel((timestamp():clock)).
+    SET console:STYLe:HEIGHT TO 400.
     set console_time:style:align to "right".
     set console_titel:style:margin:bottom to -30.
     set console_time:style:margin:top to -30.
+    set traj_disp_mainbox to console:ADDVLAYOUT().
+	SET traj_disp_mainbox:STYLE:ALIGN TO "Center".
+    SET traj_disp_mainbox:STYLe:HEIGHT TO 380.
+    SET traj_disp_mainbox:STYLe:margin:v TO -150.
+    set traj_data to console:addvbox().
+    GLOBAL traj_disp_ssto IS console:ADDLABEL().
+	SET traj_disp_ssto:IMAGE TO "Libraries/gui_images/ssto_bug.png".
+	SET traj_disp_ssto:STYLe:WIDTH TO 22.
+    set traj_data:style:bg to"Libraries/gui_images/bg_blank.png".
+    set traj_data:style:margin:bottom to -100.
+    SET traj_data:STYLE:ALIGN TO "Left".   
+    set traj_data_pitch to traj_data:addlabel("P "+round(pitch_for())).
+    set traj_data_yaw to traj_data:addlabel("Y "+round(compass_for())).
+    set traj_data_roll to traj_data:addlabel("R "+round(roll_for())).
+
 }
 function update_reentry_gui{
     set console_titel:text to ("<size=20><b>"+console_mode+"</b></size>").
@@ -403,9 +424,76 @@ function update_reentry_gui{
         set console_time:text to ((timestamp():clock)).
         
     }
+    if console_mode = "TRAJ 1"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 60000.
+        local min_alt is 30000.
+        //local alt_c is 50000.
+        local alt_dif is ship:altitude- min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 2300.
+        local min_spd is 1200.
+        //local spd is 2300.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 2"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 26000.
+        local min_alt is 10000.
+        //local alt_c is 30000.
+        //local alt_dif is alt_c- min_alt.
+        local alt_dif is ship:altitude - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 1500.
+        local min_spd is 500.
+        //local spd is 1300.
+        //local spd_dif is spd- min_spd.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 3"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 10000.
+        local min_alt is 0.
+        //local alt_c is 80000.
+        //local alt_dif is alt_c- min_alt.
+        local alt_dif is ship:altitude - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_dis is 35000.
+        local min_dis is 0.
+        //local spd is 1300.
+        //local spd_dif is spd- min_spd.
+        local dis_dif is rnw_dis_display- min_dis.
+        set traj_disp_ssto:STYLE:margin:h to 50 + dis_dif / (max_dis-min_dis) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
 }
 function create_main_gui{
-    global poseidon_gui_main to gui(500).
+    global poseidon_gui_main to gui(400).
     set poseidon_gui_main:style:width to 0.
 
     poseidon_gui_main:show().
@@ -415,7 +503,7 @@ function create_main_gui{
     set gui_titel to "POSEIDON OPERATING SYSTEM".
     set titel to Title_BOX:addlabel(gui_titel).
     set titel:style:align to ("LEFT").
-    set titel:text to " <size=30><b>"+gui_titel+"</b></size>".
+    set titel:text to " <size=20><b>"+gui_titel+"</b></size>".
 
 
     GLOBAL Main_toggels_box IS poseidon_gui_main:ADDHLAYOUT().
@@ -439,13 +527,21 @@ function create_main_gui{
     function main_update_dap {
         parameter decoy is 1.
         set dap_mode to main_dap_mode_menu:value.
-    }
+        if (dap_mode = "OFF") {
+			set main_dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
+		} else {
+			set main_dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
+		}
+	}
+    
 
 
     local Programm_box is main_toggels_box:addhlayout().
     local Programm_label is Programm_box:addlabel("<b>Programm</b> ").
+    SET Programm_label:STYLE:width TO 80.
     local Programm_popup is Programm_box:addpopupmenu().
     SET Programm_popup:STYLE:HEIGHT TO 25.
+    SET Programm_popup:STYLE:width TO 170.
     Programm_popup:addoption("Launch").
     Programm_popup:addoption("Landing").
     Programm_popup:addoption("Orbital Maneuvering").
@@ -465,6 +561,9 @@ function create_main_gui{
         }
         if Programm_popup:value = "Docking"{
             set main_step to "POS2".
+        }
+        if Programm_popup:value = "Test"{
+            set main_step to "Test".
         }
     }
 
