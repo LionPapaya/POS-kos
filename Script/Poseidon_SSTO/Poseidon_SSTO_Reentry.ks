@@ -336,7 +336,7 @@ until running = false{
             if HAC_Direction = "Anticlockwise"{
                 aeroturn_force_dir(runway_heading,"left").
             }
-            global rnw_dis_display is calcdistance_m(hac_ecrl,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for()).
+            global rnw_dis_display is calcdistance_m(hac_ercl,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for()).
             set TEAM_targetalt to calculate_vertical_glideslope_alt(
                     
                 calcdistance_m(hac_ercl,runway_start)+
