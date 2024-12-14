@@ -71,8 +71,11 @@ until running = false{
                 } 
                  if deorbit:orbit:periapsis < deorbit_periapsis and deorbit_calc = false{
                     if  deorbit:orbit:periapsis + 10000 < deorbit_periapsis{
+                 if deorbit:orbit:periapsis < deorbit_periapsis and deorbit_calc = false{
+                    if  deorbit:orbit:periapsis + 10000 < deorbit_periapsis{
                         set deorbit:prograde to deorbit:prograde + 1.
                     }
+                    if deorbit:orbit:periapsis + 1000 < deorbit_periapsis{
                     if deorbit:orbit:periapsis + 1000 < deorbit_periapsis{
                         set deorbit:prograde to deorbit:prograde + 0.1.
                     }
@@ -82,10 +85,20 @@ until running = false{
                 }
                 if deorbit:orbit:periapsis > deorbit_periapsis and deorbit_calc = false{
                     if  deorbit:orbit:periapsis - 10000 > deorbit_periapsis{
+                    if deorbit:orbit:periapsis + 100 < deorbit_periapsis{
+                        set deorbit:prograde to deorbit:prograde + 0.01.
+                    }
+                }
+                if deorbit:orbit:periapsis > deorbit_periapsis and deorbit_calc = false{
+                    if  deorbit:orbit:periapsis - 10000 > deorbit_periapsis{
                         set deorbit:prograde to deorbit:prograde - 1.
                     }
                     if deorbit:orbit:periapsis - 1000 > deorbit_periapsis{
+                    if deorbit:orbit:periapsis - 1000 > deorbit_periapsis{
                         set deorbit:prograde to deorbit:prograde - 0.1.
+                    }
+                    if deorbit:orbit:periapsis - 100 > deorbit_periapsis{
+                        set deorbit:prograde to deorbit:prograde - 0.01.
                     }
                     if deorbit:orbit:periapsis - 100 > deorbit_periapsis{
                         set deorbit:prograde to deorbit:prograde - 0.01.
@@ -94,6 +107,7 @@ until running = false{
                 if Reentry_mode = "auto" {
                
                 
+                if deorbit:orbit:periapsis + 1000 > deorbit_periapsis and deorbit:orbit:periapsis - 1000 < deorbit_periapsis and deorbit_calc = false and addons:TR:hasimpact {
                 if deorbit:orbit:periapsis + 1000 > deorbit_periapsis and deorbit:orbit:periapsis - 1000 < deorbit_periapsis and deorbit_calc = false and addons:TR:hasimpact {
                 local impact_point is ADDONS:TR:impactpos.  
                 local runway_point is runway_start.         
@@ -350,6 +364,7 @@ until running = false{
             if HAC_Direction = "Anticlockwise"{
                 aeroturn_force_dir(runway_heading,"left").
             }
+            global rnw_dis_display is calcdistance_m(hac_ercl,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for()).
             global rnw_dis_display is calcdistance_m(hac_ercl,runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for()).
             set TEAM_targetalt to calculate_vertical_glideslope_alt(
                     
