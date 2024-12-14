@@ -16,7 +16,7 @@ function execute_node{
     sas on.
     unlock steering.
     set sasMode to "MANEUVER".
-   
+    set np to nd:deltav.
 
     //now we need to wait until the burn vector and ship's facing are aligned
     until vang(np, ship:facing:vector) < 0.25{
