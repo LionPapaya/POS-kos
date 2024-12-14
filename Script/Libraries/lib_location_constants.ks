@@ -21,10 +21,6 @@ global location_constants is lex().
   kerbinLocations:add("KSC_runway_09_overrun", Kerbin:GeoPositionLatLng(-0.0502, -74.4880)).  // runway "lip"
   kerbinLocations:add("KSC_runway_27_start", Kerbin:GeoPositionLatLng(-0.0502, -74.4925)).
   kerbinLocations:add("KSC_runway_27_overrun", Kerbin:GeoPositionLatLng(-0.0486, -74.7292)).  // runway "lip"
-  kerbinLocations:add("l1_runway_09_start", Kerbin:GeoPositionLatLng(-.0489, -74.7101)).
-  kerbinLocations:add("l1_runway_27_start", Kerbin:GeoPositionLatLng(-.0501, -74.5076)).
-  kerbinLocations:add("l2_runway_09_start", Kerbin:GeoPositionLatLng(-.0486, -74.7134)).
-  kerbinLocations:add("l2_runway_27_start", Kerbin:GeoPositionLatLng(-.0501, -74.5046)).
   kerbinLocations:add("Island_runway_09_start", Kerbin:GeoPositionLatLng(-1.5177, -71.9663)).
   kerbinLocations:add("Island_runway_27_start", Kerbin:GeoPositionLatLng(-1.5158, -71.8524)).
   kerbinLocations:add("Desert_runway_36_start", Kerbin:GeoPositionLatLng(-6.5998, -144.0409)).

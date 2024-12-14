@@ -4,12 +4,15 @@ if not (defined old_latest_status){
     set old_latest_status to "".
     set old_step to "".
 }
+if not(defined Step){
+    set step to "  ".
+}
 if not(Lastest_status = old_latest_status or step = old_step){
 clearScreen.
 }
 Print("|==============================================================================|") at(0,1).
 Print("|                           POSEIDON OPERATING SYSTEM                          |") at(0,2).
-Print("|                                VERSION 1.0.2.1                               |") at(0,3).
+Print("|                                VERSION 1.2.1.0                               |") at(0,3).
 Print("|                                                                              |") at(0,4).
 Print("|                        VEHICLE : "+ship:shipName+"  ")at(0,5). Print ("|") at(79,5).
 Print("|                                                                              |") at(0,6).
