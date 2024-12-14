@@ -63,6 +63,6 @@ until closed{
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Docking.ks").
         set main_step to "ask_Step".
     }
-    
+
 
 }

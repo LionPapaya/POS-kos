@@ -104,6 +104,8 @@ function update_readouts{
 
 }
 function setup_reentry_script{
+    set steeringManager:ROLLCONTROLANGLERANGE to 180.
+    steeringManager:resetpids().
     set step to "Deorbit".
     set substep to "findStep".
     set running to true.
@@ -424,7 +426,7 @@ function update_reentry_gui{
         set console_time:text to ((timestamp():clock)).
         
     }
-    if console_mode = "TRAJ 1"{
+    if console_mode = "TRAJ 1 low"{
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
         
@@ -436,8 +438,71 @@ function update_reentry_gui{
         //local alt_c is 50000.
         local alt_dif is ship:altitude- min_alt.
         set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
-        local max_spd is 2300.
+        local max_spd is 2500.
         local min_spd is 1200.
+        //local spd is 2300.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 1 mid"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 60000.
+        local min_alt is 30000.
+        //local alt_c is 50000.
+        local alt_dif is ship:altitude- min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 2500.
+        local min_spd is 1200.
+        //local spd is 2300.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 1 high"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 60000.
+        local min_alt is 30000.
+        //local alt_c is 50000.
+        local alt_dif is ship:altitude- min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 3000.
+        local min_spd is 1500.
+        //local spd is 2300.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 1 int"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 60000.
+        local min_alt is 30000.
+        //local alt_c is 50000.
+        local alt_dif is ship:altitude- min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 3500.
+        local min_spd is 1700.
         //local spd is 2300.
         local spd_dif is ship:airspeed- min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
@@ -459,6 +524,52 @@ function update_reentry_gui{
         local alt_dif is ship:altitude - min_alt.
         set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
         local max_spd is 1500.
+        local min_spd is 500.
+        //local spd is 1300.
+        //local spd_dif is spd- min_spd.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 2 high"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 26000.
+        local min_alt is 10000.
+        //local alt_c is 30000.
+        //local alt_dif is alt_c- min_alt.
+        local alt_dif is ship:altitude - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 1700.
+        local min_spd is 500.
+        //local spd is 1300.
+        //local spd_dif is spd- min_spd.
+        local spd_dif is ship:airspeed- min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+    }
+    if console_mode = "TRAJ 2 int"{
+        set console_time:text to ((timestamp():clock)).
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
+        
+        set traj_data_pitch:text to ("P "+round(pitch_for())).
+        set traj_data_yaw:text to ("Y "+round(compass_for())).
+        set traj_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 26000.
+        local min_alt is 10000.
+        //local alt_c is 30000.
+        //local alt_dif is alt_c- min_alt.
+        local alt_dif is ship:altitude - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 2000.
         local min_spd is 500.
         //local spd is 1300.
         //local spd_dif is spd- min_spd.
@@ -546,6 +657,7 @@ function create_main_gui{
     Programm_popup:addoption("Landing").
     Programm_popup:addoption("Orbital Maneuvering").
     Programm_popup:addoption("Docking").
+    Programm_popup:addoption("Test").
     set Programm_popup:onchange to changeProgramm@.
 
     function changeProgramm{
@@ -568,25 +680,25 @@ function create_main_gui{
     }
 
 }
-function get_inputs_OM {
+function get_inputs_rsvp {
     // Initialize GUI and variables
-    local OM_gui is GUI(400, 300).
-    set OM_gui:style:width to 400.
-    set OM_gui:style:height to 300.
+    local rsvp_gui is GUI(400, 300).
+    set rsvp_gui:style:width to 400.
+    set rsvp_gui:style:height to 300.
 
     local confirm_in is false.
 
-    OM_gui:show().
+    rsvp_gui:show().
     
     // Title
-    local title_box is OM_gui:addhbox().
+    local title_box is rsvp_gui:addhbox().
     set title_box:style:hstretch to true.
     set title_box:style:margin:v to 10.
     local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Inputs</b></size>").
     title_box:show().
 
     // Input Fields
-    local input_box is OM_gui:addvbox().
+    local input_box is rsvp_gui:addvbox().
     set input_box:style:margin:v to 10.
     set input_box:style:margin:h to 10.
 
@@ -656,12 +768,12 @@ function get_inputs_OM {
     input_box:show().
 
     // OK Button to Finalize Inputs
-    local ok_button_box is OM_gui:addhbox().
+    local ok_button_box is rsvp_gui:addhbox().
     set ok_button_box:style:margin:v to 15.
     local ok_button is ok_button_box:addbutton("OK").
     set ok_button:onclick to {
         set confirm_in to true.
-        OM_gui:hide().
+        rsvp_gui:hide().
     }.
     ok_button_box:show().
 
@@ -798,4 +910,130 @@ set OM_Execute to fields["Execute"]["str"].
 
 clearscreen.
 
+}
+function get_om_mode {
+    // Initialize GUI and variables
+    local OM_gui is GUI(400, 300).
+    set OM_gui:style:width to 400.
+    set OM_gui:style:height to 300.
+
+    local confirm_in is false.
+
+    OM_gui:show().
+    
+    // Title
+    local title_box is OM_gui:addhbox().
+    set title_box:style:hstretch to true.
+    set title_box:style:margin:v to 10.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Mode selector</b></size>").
+    title_box:show().
+
+    // Input Fields
+    local input_box is OM_gui:addvbox().
+    set input_box:style:margin:v to 10.
+    set input_box:style:margin:h to 10.
+
+    // Target Type Selector
+    local OM_MODE_box is input_box:addhlayout().
+    local OM_MODE_label is OM_MODE_box :addlabel("OM MODE:").
+    local OM_MODE_menu is OM_MODE_box :addpopupmenu().
+    OM_MODE_menu:addoption("RSVP").
+    OM_MODE_menu:addoption("execute Node").
+    OM_MODE_menu:addoption("change Apoapsis").
+    OM_MODE_menu:addoption("change Periapsis").
+    OM_MODE_menu:addoption("change Inclination").
+    OM_MODE_menu:addoption("Circluarize").
+
+
+    set OM_MODE_menu:onchange to {
+        parameter new_value.
+        set OM_Mode to new_value.
+    }.
+    OM_MODE_box :show().
+
+    input_box:show().
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is OM_gui:addhbox().
+    set ok_button_box:style:margin:v to 15.
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+        OM_gui:hide().
+    }.
+    ok_button_box:show().
+
+
+
+
+    // Wait for confirmation
+    until confirm_in {
+        wait 0.01.
+    }
+    clearscreen.
+    // Return the finalized inputs
+    return OM_MODE_menu:value.
+}
+
+function get_inputs_Apoapsis {
+    // Initialize GUI and variables
+    local Apoapsis_gui is GUI(400, 300).
+    set Apoapsis_gui:style:width to 400.
+    set Apoapsis_gui:style:height to 300.
+
+    local confirm_in is false.
+
+    Apoapsis_gui:show().
+    
+    // Title
+    local title_box is Apoapsis_gui:addhbox().
+    set title_box:style:hstretch to true.
+    set title_box:style:margin:v to 10.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Apoapsis</b></size>").
+    title_box:show().
+
+    // Input Fields
+    local input_box is Apoapsis_gui:addvbox().
+    set input_box:style:margin:v to 10.
+    set input_box:style:margin:h to 10.
+
+    // Target Type Selector
+    local Apoapsis_box is input_box:addhlayout().
+    local Apoapsis_label is Apoapsis_box :addlabel("location:").
+    local Apoapsis_menu is Apoapsis_box :addpopupmenu().
+    Apoapsis_menu:addoption("Apoapsis").
+    Apoapsis_menu:addoption("Periapsis").
+
+    // Target Type Selector
+    local Apoapsis_alt_box is input_box:addhlayout().
+    local Apoapsis_alt_label is Apoapsis_alt_box:addlabel("Apoapsis alt:").
+    local Apoapsis_alt_menu is Apoapsis_alt_box:addhslider(100000,0,ship:body:SOIRADIUS).
+ 
+    local Apoapsis_alt_label_value is Apoapsis_alt_box:addlabel(Apoapsis_alt_menu:value+"Meters").
+
+    Apoapsis_box :show().
+
+    input_box:show().
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is Apoapsis_gui:addhbox().
+    set ok_button_box:style:margin:v to 15.
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+        Apoapsis_gui:hide().
+    }.
+    ok_button_box:show().
+
+
+
+
+    // Wait for confirmation
+    until confirm_in {
+        wait 0.01.
+        set Apoapsis_alt_label_value:text to (Apoapsis_alt_menu:value+"Meters").
+    }
+    clearscreen.
+    // Return the finalized inputs
+    return list(Apoapsis_menu:value,Apoapsis_alt_menu:value).
 }
