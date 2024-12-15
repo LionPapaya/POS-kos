@@ -13,8 +13,9 @@ function execute_node{
         update_readouts().
     }
     
+
     set np to nd:deltav.
-   lock steering to np.
+    lock steering to np.
 
     //now we need to wait until the burn vector and ship's facing are aligned
     until vang(np, ship:facing:vector) < 0.25{
@@ -30,7 +31,7 @@ function execute_node{
 
     set done to False.
     //initial deltav
-    set dv0 to nd:deltav.
+    lock dv0 to nd:deltav.
     until done
     {
         //recalculate current max_acceleration, as it changes while we burn through fuel

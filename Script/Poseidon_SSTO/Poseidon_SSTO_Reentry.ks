@@ -440,7 +440,7 @@ until running = false{
         set dapthrottle to 0.
         gear on.
         aggressive_overcorrect_for_prograde(runway_heading).
-        if alt_ovr_runway > 35{// Manage brakes during landing
+        if alt_ovr_runway > 35{
         if ship:airspeed > 160 {
             brakes on.
             log_status("Brakes ON, airspeed above 160").
@@ -474,7 +474,7 @@ until running = false{
         }
     }    
     set old_alt to ship:altitude.
-    // Final approach adjustments
+
     }    
     if step = "end" {
         set running to false.

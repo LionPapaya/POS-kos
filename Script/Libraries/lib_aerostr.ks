@@ -108,7 +108,7 @@ function aeroturn {
         set turn_heading to desired_heading.
         
     }
-    
+  //set Lastest_status to  ""+turn_roll.
     aerostr().
      
     
