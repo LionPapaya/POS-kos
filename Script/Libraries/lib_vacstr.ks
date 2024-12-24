@@ -14,7 +14,7 @@ function execute_node{
     }
     
 
-    set np to nd:deltav.
+    lock np to nd:deltav.
     lock steering to np.
 
     //now we need to wait until the burn vector and ship's facing are aligned
@@ -31,7 +31,7 @@ function execute_node{
 
     set done to False.
     //initial deltav
-    lock dv0 to nd:deltav.
+    set dv0 to nd:deltav.
     until done
     {
         //recalculate current max_acceleration, as it changes while we burn through fuel
