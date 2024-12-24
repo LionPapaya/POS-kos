@@ -64,6 +64,7 @@ if OM_Execute ="true"{
     }
 }
 }
+
 function do_change_Apoapsis{
     local apoapsis_options to get_inputs_apoapsis().
 
@@ -148,6 +149,212 @@ function do_change_Apoapsis{
                     rapiersoff().
                     execute_node().
                 }
+        }
+    }
+}
+function do_change_Periapsis {
+    local periapsis_options to get_inputs_Periapsis().
+
+    if periapsis_options[0] = "Periapsis" {
+        local mnv_calc is false.
+        local mnv_start is false.
+        until mnv_calc {
+            if mnv_start = false {
+                set mnv to node(time + eta:periapsis, 0, 0, 0).
+                add mnv.
+                set mnv_start to true.
+                set mnv_periapsis to periapsis_options[1].
+            }
+            if mnv:orbit:periapsis < mnv_periapsis and mnv_calc = false {
+                if mnv:orbit:periapsis + 100000 < mnv_periapsis {
+                    set mnv:prograde to mnv:prograde + 0.1.
+                }
+                if mnv:orbit:periapsis + 10000 < mnv_periapsis {
+                    set mnv:prograde to mnv:prograde + 0.01.
+                }
+                if mnv:orbit:periapsis + 1000 < mnv_periapsis {
+                    set mnv:prograde to mnv:prograde + 0.001.
+                }
+            }
+            if mnv:orbit:periapsis > mnv_periapsis and mnv_calc = false {
+                if mnv:orbit:periapsis - 100000 > mnv_periapsis {
+                    set mnv:prograde to mnv:prograde - 0.1.
+                }
+                if mnv:orbit:periapsis - 10000 > mnv_periapsis {
+                    set mnv:prograde to mnv:prograde - 0.01.
+                }
+                if mnv:orbit:periapsis - 1000 > mnv_periapsis {
+                    set mnv:prograde to mnv:prograde - 0.001.
+                }
+            }
+            if mnv:orbit:periapsis + 1000 > mnv_periapsis and mnv:orbit:periapsis - 1000 < mnv_periapsis and mnv_calc = false {
+                set mnv_calc to true.
+            }
+            if mnv_calc = true {
+                nervson().
+                rapiersoff().
+                execute_node().
+            }
+        }
+    } else {
+        local mnv_calc is false.
+        local mnv_start is false.
+        until mnv_calc {
+            if mnv_start = false {
+                set mnv to node(time + eta:apoapsis, 0, 0, 0).
+                add mnv.
+                set mnv_start to true.
+                set mnv_periapsis to periapsis_options[1].
+            }
+            if mnv:orbit:periapsis < mnv_periapsis and mnv_calc = false {
+                if mnv:orbit:periapsis + 10000 < mnv_periapsis {
+                    set mnv:prograde to mnv:prograde + 1.
+                }
+                if mnv:orbit:periapsis + 1000 < mnv_periapsis {
+                    set mnv:prograde to mnv:prograde + 0.1.
+                }
+                if mnv:orbit:periapsis + 100 < mnv_periapsis {
+                    set mnv:prograde to mnv:prograde + 0.01.
+                }
+            }
+            if mnv:orbit:periapsis > mnv_periapsis and mnv_calc = false {
+                if mnv:orbit:periapsis - 10000 > mnv_periapsis {
+                    set mnv:prograde to mnv:prograde - 1.
+                }
+                if mnv:orbit:periapsis - 1000 > mnv_periapsis {
+                    set mnv:prograde to mnv:prograde - 0.1.
+                }
+                if mnv:orbit:periapsis - 100 > mnv_periapsis {
+                    set mnv:prograde to mnv:prograde - 0.01.
+                }
+            }
+            if mnv:orbit:periapsis + 1000 > mnv_periapsis and mnv:orbit:periapsis - 1000 < mnv_periapsis and mnv_calc = false {
+                set mnv_calc to true.
+            }
+            if mnv_calc = true {
+                nervson().
+                rapiersoff().
+                execute_node().
+            }
+        }
+    }
+}
+function do_change_Inclination {
+    local inclination_options to get_inputs_Inclination().
+    local target_type is inclination_options[0].
+    local target_inclination is inclination_options[1]:tonumber().
+
+    local mnv_calc is false.
+    local mnv_start is false.
+
+    function time_to_next_node {
+        parameter node_type.
+        local next_node_time is 0.
+        local current_time is time:seconds.
+        local orbit_period is ship:orbit:period.
+        local node_longitude is 0.
+
+        if node_type = "Ascending" {
+            set node_longitude to ship:orbit:lan.
+        } else {
+            set node_longitude to ship:orbit:lan + 180.
+            if node_longitude >= 360 {
+                set node_longitude to node_longitude - 360.
+            }
+        }
+
+        until next_node_time > current_time {
+            set next_node_time to next_node_time + orbit_period.
+        }
+
+        return next_node_time.
+    }
+
+    until mnv_calc {
+        if mnv_start = false {
+            local node_time is time_to_next_node(target_type).
+            set mnv to node(node_time, 0, 0, 0).
+            add mnv.
+            set mnv_start to true.
+        }
+
+        local current_inclination is ship:orbit:inclination.
+        local inclination_diff is target_inclination - current_inclination.
+
+        if abs(inclination_diff) > 0.1 {
+            if inclination_diff > 0 {
+                set mnv:normal to mnv:normal + 0.01.
+            } else {
+                set mnv:antinormal to mnv:antinormal + 0.01.
+            }
+        } else {
+            set mnv_calc to true.
+        }
+
+        if mnv_calc = true {
+            nervson().
+            rapiersoff().
+            execute_node().
+        }
+    }
+}
+function do_circularization {
+    local circularization_location to get_inputs_circliurisation().
+
+    local mnv_calc is false.
+    local mnv_start is false.
+
+    until mnv_calc {
+        if mnv_start = false {
+            if circularization_location = "Periapsis" {
+                set mnv to node(time + eta:periapsis, 0, 0, 0).
+            } else {
+                set mnv to node(time + eta:apoapsis, 0, 0, 0).
+            }
+            add mnv.
+            set mnv_start to true.
+        }
+
+        local current_apoapsis is ship:orbit:apoapsis.
+        local current_periapsis is ship:orbit:periapsis.
+        local target_altitude is 0.
+
+        if circularization_location = "Periapsis" {
+            set target_altitude to current_apoapsis.
+        } else {
+            set target_altitude to current_periapsis.
+        }
+
+        if mnv:orbit:apoapsis < target_altitude and mnv_calc = false {
+            if mnv:orbit:apoapsis + 10000 < target_altitude {
+                set mnv:prograde to mnv:prograde + 1.
+            }
+            if mnv:orbit:apoapsis + 1000 < target_altitude {
+                set mnv:prograde to mnv:prograde + 0.1.
+            }
+            if mnv:orbit:apoapsis + 100 < target_altitude {
+                set mnv:prograde to mnv:prograde + 0.01.
+            }
+        }
+        if mnv:orbit:apoapsis > target_altitude and mnv_calc = false {
+            if mnv:orbit:apoapsis - 10000 > target_altitude {
+                set mnv:prograde to mnv:prograde - 1.
+            }
+            if mnv:orbit:apoapsis - 1000 > target_altitude {
+                set mnv:prograde to mnv:prograde - 0.1.
+            }
+            if mnv:orbit:apoapsis - 100 > target_altitude {
+                set mnv:prograde to mnv:prograde - 0.01.
+            }
+        }
+        if mnv:orbit:apoapsis + 1000 > target_altitude and mnv:orbit:apoapsis - 1000 < target_altitude and mnv_calc = false {
+            set mnv_calc to true.
+        }
+
+        if mnv_calc = true {
+            nervson().
+            rapiersoff().
+            execute_node().
         }
     }
 }
