@@ -302,4 +302,30 @@ function choose_hac{
         set HAC_Direction to "Anticlockwise".
     }
 }
-
+function geoposition_at_altitude {
+    parameter input_orbit, target_altitude.
+    
+    // Check if the altitude is within the orbit's range
+    if target_altitude > input_orbit:apoapsis or target_altitude < input_orbit:periapsis {
+        return 0.
+    }
+    
+    // Calculate the time to reach the specified altitude
+    local time_to_altitude is 0.
+    local current_altitude is ship:altitude.
+    local current_time is time:seconds.
+    
+    // Iterate to find the time to reach the altitude
+    until abs(current_altitude - target_altitude) < 100 {
+        set current_time to current_time + 1.
+        set current_altitude to input_orbit:positionat(current_time):altitude.
+        if current_time > time:seconds + 3600 { // Limit the iteration to 1 hour
+            return 0.
+        }
+    }
+    
+    // Get the geoposition at the specified altitude
+    local geoposition_ is input_orbit:positionat(current_time):geoposition.
+    
+    return geoposition_.
+}
