@@ -21,6 +21,17 @@ function compass_for_prograde {
     return result.
   }
 }
+function calc_aoa {
+    // Get the ship's velocity vector and forward vector
+    local velocity_vector is ship:velocity:surface.
+    local forward_vector is ship:facing:vector.
+
+    // Calculate the angle between the velocity vector and the forward vector
+    local aoa is vang(velocity_vector, forward_vector).
+
+    return aoa.
+}
+
 function pitch_for_prograde {
   parameter ves is ship,thing is "default".
 
