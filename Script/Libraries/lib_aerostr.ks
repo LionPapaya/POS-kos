@@ -353,13 +353,13 @@ function aggressive_overcorrect_for_prograde {
     parameter target_heading. // Target heading for runway_start alignment
 
     // Monitor the current prograde vector heading
-    set prograde_heading to compass_for_prograde().
+    local prograde_heading is compass_for_prograde().
 
     // Calculate the difference between current heading and prograde
-    set heading_difference to target_heading - prograde_heading.
+    local heading_difference is target_heading - prograde_heading.
 
     // More aggressive overcorrection if the prograde is not aligned with the target heading
-    if abs(heading_difference) > 2 {
+    if abs(heading_difference) > 1 {
         // If the prograde is significantly to the left, turn right more aggressively
         if heading_difference > 0 {
             set aerostr_heading to compass_for() + 10.  // Larger adjustment
@@ -373,4 +373,19 @@ function aggressive_overcorrect_for_prograde {
         // If the heading difference is small, maintain the target heading
         set aerostr_heading to runway_heading.
     }
+}
+function aoa_bank_management {
+    parameter target_aoa, target_bank.
+
+    // Normalize the bank angle to a range [-1, +1]
+    set normalized_bank to target_bank / 90. // -1 for -90, 0 for 0, +1 for +90
+
+    // Calculate the desired pitch using linear interpolation
+    set aoa_pitch to pitch_for_prograde() + (target_aoa * (1 - abs(normalized_bank))).
+
+    // Calculate the desired direction using linear interpolation
+    set aoa_yaw to compass_for_prograde() - (target_aoa * normalized_bank).
+
+    // Set the role directly to the target bank
+    set aoa_roll to target_bank.
 }
