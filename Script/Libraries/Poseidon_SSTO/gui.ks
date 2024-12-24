@@ -129,9 +129,7 @@ function setup_reentry_script{
     local b is Location+"_runway_"+runway_nr+"_start".
     local c is Location+"_runway_"+runway_nr+"_end".
     set runway_altitude to KerbinRunwayalt[a].
-    LOG "Constructed keys: a=" + a + ", b=" + b + ", c=" + c TO "log.txt".
-    LOG ("Keys of Location_constants "+Location_constants:keys) TO "log.txt".
-    LOG ("Values of Location_constants "+Location_constants:values) TO "log.txt".
+
     
     // Check if the "kerbin" lexicon contains the runway data
     if Location_constants:HASKEY("kerbin") {
@@ -386,10 +384,49 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
 
 
     
-    until confirm_in or step= "end"{
+    until confirm_in or step = "end" {
         wait 0.0001.
         update_reentry_gui().
+        
+        // Automatically select landing site and runway if vessel is under 72,000 meters
+        if ship:altitude < 72000 {
+            local closest_distance is 9999999999.
+            local best_location is "".
+            local best_runway is "".
+            local best_heading_diff is 180.
+            
+            for loc in location_to_runways:keys {
+                for runway in location_to_runways[loc] {
+                    local runway_start_key is loc + "_runway_" + runway + "_start".
+                    local runway_end_key is loc + "_runway_" + runway + "_end".
+                    local runway_start_pos is Location_constants["kerbin"][runway_start_key].
+                    local runway_end_pos is Location_constants["kerbin"][runway_end_key].
+                    local distance_to_runway is calcdistance(ADDONS:TR:IMPACTPOS, runway_start_pos).
+                    local runway_heading is heading_between(runway_start_pos, runway_end_pos).
+                    local heading_diff is abs(compass_for() - runway_heading).
+                    
+                    if distance_to_runway < closest_distance - 5 or (distance_to_runway < 5 and heading_diff < best_heading_diff) {
+                        set closest_distance to distance_to_runway.
+                        set best_location to loc.
+                        set best_runway to runway.
+                        set best_heading_diff to heading_diff.
+                    }
+                }
+            }
+            
+            set Location to best_location.
+            set runway_nr to best_runway.
+            set Reentry_mode to Reentry_mode_menu:value.
+            set confirm_in to true.
+            log "Auto-selected Location: " + Location + ", Runway: " + runway_nr to "0:/log.txt".
+        }
     }
+
+    // Replace input buttons with labels displaying the selected target and runway number
+    location_box:clear().
+    runway_box:clear().
+    location_box:addlabel("<b>Location:</b> " + Location).
+    runway_box:addlabel("<b>Runway:</b> " + runway_nr).
 }
 function create_reentry_gui{
       // Add the image to the vbox
@@ -424,7 +461,11 @@ function update_reentry_gui{
     set console_titel:text to ("<size=20><b>"+console_mode+"</b></size>").
     if console_mode = "DATA"{
         set console_time:text to ((timestamp():clock)).
-        
+        set traj_disp_ssto:visible to false.
+        traj_data:hide().
+    }else{
+        set traj_disp_ssto:visible to true.
+        traj_data:show().
     }
     if console_mode = "TRAJ 1 low"{
         set console_time:text to ((timestamp():clock)).
@@ -449,7 +490,7 @@ function update_reentry_gui{
     }
     if console_mode = "TRAJ 1 mid"{
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
         
         set traj_data_pitch:text to ("P "+round(pitch_for())).
         set traj_data_yaw:text to ("Y "+round(compass_for())).
@@ -459,8 +500,8 @@ function update_reentry_gui{
         //local alt_c is 50000.
         local alt_dif is ship:altitude- min_alt.
         set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
-        local max_spd is 2500.
-        local min_spd is 1200.
+        local max_spd is 2800.
+        local min_spd is 1400.
         //local spd is 2300.
         local spd_dif is ship:airspeed- min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
@@ -470,7 +511,7 @@ function update_reentry_gui{
     }
     if console_mode = "TRAJ 1 high"{
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
         
         set traj_data_pitch:text to ("P "+round(pitch_for())).
         set traj_data_yaw:text to ("Y "+round(compass_for())).
@@ -480,7 +521,7 @@ function update_reentry_gui{
         //local alt_c is 50000.
         local alt_dif is ship:altitude- min_alt.
         set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
-        local max_spd is 3000.
+        local max_spd is 3300.
         local min_spd is 1500.
         //local spd is 2300.
         local spd_dif is ship:airspeed- min_spd.
@@ -491,7 +532,7 @@ function update_reentry_gui{
     }
     if console_mode = "TRAJ 1 int"{
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
         
         set traj_data_pitch:text to ("P "+round(pitch_for())).
         set traj_data_yaw:text to ("Y "+round(compass_for())).
@@ -974,7 +1015,126 @@ function get_om_mode {
     // Return the finalized inputs
     return OM_MODE_menu:value.
 }
+function get_inputs_Periapsis {
+    // Initialize GUI and variables
+    local Periapsis_gui is GUI(400, 300).
+    set Periapsis_gui:style:width to 400.
+    set Periapsis_gui:style:height to 300.
 
+    local confirm_in is false.
+
+    Periapsis_gui:show().
+    
+    // Title
+    local title_box is Periapsis_gui:addhbox().
+    set title_box:style:hstretch to true.
+    set title_box:style:margin:v to 10.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Periapsis</b></size>").
+    title_box:show().
+
+    // Input Fields
+    local input_box is Periapsis_gui:addvbox().
+    set input_box:style:margin:v to 10.
+    set input_box:style:margin:h to 10.
+
+    // Target Type Selector
+    local Periapsis_box is input_box:addhlayout().
+    local Periapsis_label is Periapsis_box :addlabel("location:").
+    local Periapsis_menu is Periapsis_box :addpopupmenu().
+    Periapsis_menu:addoption("Apoapsis").
+    Periapsis_menu:addoption("Periapsis").
+
+    // Target Type Selector
+    local Periapsis_alt_box is input_box:addhlayout().
+    local Periapsis_alt_label is Periapsis_alt_box:addlabel("Periapsis alt:").
+    local Periapsis_alt_menu is Periapsis_alt_box:addtextfield().
+ 
+    local Periapsis_alt_label_value is Periapsis_alt_box:addlabel(Periapsis_alt_menu:text+"Meters").
+
+    Periapsis_box :show().
+
+    input_box:show().
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is Periapsis_gui:addhbox().
+    set ok_button_box:style:margin:v to 15.
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+        Periapsis_gui:hide().
+    }.
+    ok_button_box:show().
+
+
+
+
+    // Wait for confirmation
+    until confirm_in {
+        wait 0.01.
+        set Periapsis_alt_label_value:text to (Periapsis_alt_menu:text+"Meters").
+    }
+    clearscreen.
+    // Return the finalized inputs
+    return list(Periapsis_menu:value,Periapsis_alt_menu:text).
+}
+function get_inputs_circliurisation {
+    // Initialize GUI and variables
+    local circliurisation_gui is GUI(400, 300).
+    set circliurisation_gui:style:width to 400.
+    set circliurisation_gui:style:height to 300.
+
+    local confirm_in is false.
+
+    circliurisation_gui:show().
+    
+    // Title
+    local title_box is circliurisation_gui:addhbox().
+    set title_box:style:hstretch to true.
+    set title_box:style:margin:v to 10.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering circliurisation</b></size>").
+    title_box:show().
+
+    // Input Fields
+    local input_box is circliurisation_gui:addvbox().
+    set input_box:style:margin:v to 10.
+    set input_box:style:margin:h to 10.
+
+    // Target Type Selector
+    local circliurisation_box is input_box:addhlayout().
+    local circliurisation_label is circliurisation_box :addlabel("location:").
+    local circliurisation_menu is circliurisation_box :addpopupmenu().
+    circliurisation_menu:addoption("Periapsis").
+    circliurisation_menu:addoption("Apoapsis").
+
+
+
+
+    circliurisation_box :show().
+
+    input_box:show().
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is circliurisation_gui:addhbox().
+    set ok_button_box:style:margin:v to 15.
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+        circliurisation_gui:hide().
+    }.
+    ok_button_box:show().
+
+
+
+
+    // Wait for confirmation
+    until confirm_in {
+        wait 0.01.
+        
+    }
+    clearscreen.
+    // Return the finalized inputs
+    return circliurisation_menu:value.
+}
 function get_inputs_Apoapsis {
     // Initialize GUI and variables
     local Apoapsis_gui is GUI(400, 300).
@@ -1001,15 +1161,16 @@ function get_inputs_Apoapsis {
     local Apoapsis_box is input_box:addhlayout().
     local Apoapsis_label is Apoapsis_box :addlabel("location:").
     local Apoapsis_menu is Apoapsis_box :addpopupmenu().
-    Apoapsis_menu:addoption("Apoapsis").
     Apoapsis_menu:addoption("Periapsis").
+    Apoapsis_menu:addoption("Apoapsis").
+
 
     // Target Type Selector
     local Apoapsis_alt_box is input_box:addhlayout().
     local Apoapsis_alt_label is Apoapsis_alt_box:addlabel("Apoapsis alt:").
-    local Apoapsis_alt_menu is Apoapsis_alt_box:addhslider(100000,0,ship:body:SOIRADIUS).
+    local Apoapsis_alt_menu is Apoapsis_alt_box:addtextfield().
  
-    local Apoapsis_alt_label_value is Apoapsis_alt_box:addlabel(Apoapsis_alt_menu:value+"Meters").
+    local Apoapsis_alt_label_value is Apoapsis_alt_box:addlabel(Apoapsis_alt_menu:text+"Meters").
 
     Apoapsis_box :show().
 
@@ -1031,9 +1192,241 @@ function get_inputs_Apoapsis {
     // Wait for confirmation
     until confirm_in {
         wait 0.01.
-        set Apoapsis_alt_label_value:text to (Apoapsis_alt_menu:value+"Meters").
+        set Apoapsis_alt_label_value:text to (Apoapsis_alt_menu:text+"Meters").
     }
     clearscreen.
     // Return the finalized inputs
-    return list(Apoapsis_menu:value,Apoapsis_alt_menu:value).
+    return list(Apoapsis_menu:value,Apoapsis_alt_menu:text).
+}
+function get_inputs_Inclination {
+    // Initialize GUI and variables
+    local Inclination_gui is GUI(400, 300).
+    set Inclination_gui:style:width to 400.
+    set Inclination_gui:style:height to 300.
+
+    local confirm_in is false.
+
+    Inclination_gui:show().
+    
+    // Title
+    local title_box is Inclination_gui:addhbox().
+    set title_box:style:hstretch to true.
+    set title_box:style:margin:v to 10.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Inclination</b></size>").
+    title_box:show().
+
+    // Input Fields
+    local input_box is Inclination_gui:addvbox().
+    set input_box:style:margin:v to 10.
+    set input_box:style:margin:h to 10.
+
+    // Target Type Selector
+    local Inclination_box is input_box:addhlayout().
+    local Inclination_label is Inclination_box :addlabel("location:").
+    local Inclination_menu is Inclination_box :addpopupmenu().
+    Inclination_menu:addoption("Descending").
+    Inclination_menu:addoption("Ascending").
+
+
+    // Target Type Selector
+    local Inclination_alt_box is input_box:addhlayout().
+    local Inclination_alt_label is Inclination_alt_box:addlabel("Inclination Deg:").
+    local Inclination_alt_menu is Inclination_alt_box:addtextfield().
+ 
+    local Inclination_alt_label_value is Inclination_alt_box:addlabel(Inclination_alt_menu:text+"Degrees").
+
+    Inclination_box :show().
+
+    input_box:show().
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is Inclination_gui:addhbox().
+    set ok_button_box:style:margin:v to 15.
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+        Inclination_gui:hide().
+    }.
+    ok_button_box:show().
+
+
+
+
+    // Wait for confirmation
+    until confirm_in {
+        wait 0.01.
+        set Inclination_alt_label_value:text to (Inclination_alt_menu:text+"Degrees").
+    }
+    clearscreen.
+    // Return the finalized inputs
+    return list(Inclination_menu:value,Inclination_alt_menu:text).
+}
+function create_assent_gui{
+        global assent_gui to gui(800).
+    set assent_gui:style:width to 800.
+
+    assent_gui:show().
+    // GUI Setup
+    local Title_BOX is assent_gui:addhbox().
+    set assent_gui:style:hstretch to true.
+    set gui_titel to "Poseidon Assent Manager".
+    set titel to Title_BOX:addlabel(gui_titel).
+    set titel:style:align to ("LEFT").
+    set titel:text to " <size=30><b>"+gui_titel+"</b></size>".
+
+    GLOBAL assent_minb IS title_box:ADDBUTTON("-").
+    set assent_minb:style:margin:h to 7.
+    set assent_minb:style:margin:v to 7.
+    set assent_minb:style:width to 20.
+    set assent_minb:style:height to 20.
+    set assent_minb:TOGGLE to TRUE.
+
+    function minimizecheck {
+        set pressed to assent_minb:pressed.
+
+        IF pressed {
+            assent_gui:SHOWONLY(title_box).
+            SET assent_gui:STYLE:HEIGHT TO 50.
+        } ELSE {
+            SET assent_gui:STYLE:HEIGHT TO 0.
+            for w in assent_gui:WIDGETS {
+                w:SHOW().
+            }
+        }
+    }
+    set assent_minb:onclick to minimizecheck@.
+
+    GLOBAL assent_quitb IS title_box:ADDBUTTON("X").
+    set assent_quitb:style:margin:h to 7.
+    set assent_quitb:style:margin:v to 7.
+    set assent_quitb:style:width to 20.
+    set assent_quitb:style:height to 20.
+    SET quit_program TO false.
+
+    function quitcheck {
+        SET step to "end".
+        
+    }
+    SET assent_quitb:ONCLICK TO quitcheck@.
+
+    GLOBAL assent_toggels_box IS assent_gui:ADDHLAYOUT().
+    SET assent_toggels_box:STYLE:WIDTH TO assent_gui:style:width - 16.
+
+    GLOBAL assent_dap_mode_box IS assent_toggels_box:ADDHLAYOUT().
+    SET assent_dap_mode_box:STYLE:WIDTH TO 105.
+    GLOBAL assent_dap_mode_text IS assent_dap_mode_box:ADDLABEL("<b>DAP</b>"). 
+    set assent_dap_mode_text:style:margin:v to -3.
+    GLOBAL assent_dap_mode_menu IS assent_dap_mode_box:addpopupmenu().
+    set assent_dap_mode_menu:style:margin:v to -3.
+    SET assent_dap_mode_menu:STYLE:WIDTH TO 65.
+    SET assent_dap_mode_menu:STYLE:HEIGHT TO 25.
+    SET assent_dap_mode_menu:STYLE:ALIGN TO "center".
+    assent_dap_mode_menu:addoption("AUTO").
+    assent_dap_mode_menu:addoption("CSS").
+    assent_dap_mode_menu:addoption("OFF").
+    assent_toggels_box:addspacing(8).
+    set assent_dap_mode_menu:onchange to update_dap@.
+    
+    function update_dap {
+        parameter decoy is 1.
+        set dap_mode to assent_dap_mode_menu:value.
+        if (dap_mode = "OFF") {
+			set assent_dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
+		} else {
+			set assent_dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
+		}
+    }
+    GLOBAL assent_apoapsis_box IS assent_toggels_box:ADDHLAYOUT().
+    GLOBAL assent_apoapsis_text IS assent_apoapsis_box:ADDLABEL("<b>APOAPSIS:</b>"). 
+    set assent_apoapsis_text:style:margin:v to -3.
+    Global assent_apoapsis_input is assent_apoapsis_box:addtextfield("80000").
+
+    GLOBAL assent_periapsis_box IS assent_toggels_box:ADDHLAYOUT().
+    GLOBAL assent_periapsis_text IS assent_periapsis_box:ADDLABEL("<b>PERIAPSIS:</b>"). 
+    set assent_periapsis_text:style:margin:v to -3.
+    Global assent_periapsis_input is assent_periapsis_box:addtextfield("80000").
+
+    GLOBAL assent_inclination_box IS assent_toggels_box:ADDHLAYOUT().
+    GLOBAL assent_inclination_text IS assent_inclination_box:ADDLABEL("<b>INCLINATION:</b>"). 
+    set assent_inclination_text:style:margin:v to -3.
+    Global assent_inclination_input is assent_inclination_box:addtextfield("0").
+
+    // OK Button to Finalize Inputs
+    local ok_button_box is assent_toggels_box:addhbox().
+    local ok_button is ok_button_box:addbutton("OK").
+    set ok_button:onclick to {
+        set confirm_in to true.
+    }.
+    ok_button_box:show().
+
+
+    // Add the image to the vbox
+    set console to assent_gui:addvbox().
+    set console:style:height to 300.
+    set console:STYLE:BG to "Libraries/gui_images/console.png".
+    set console_mode to "SETUP".
+    set console_titel to console:addlabel("<size=20><b>"+console_mode+"</b></size>").
+    set console_titel:style:align to "center".
+    set console_time to console:addlabel((timestamp():clock)).
+    SET console:STYLe:HEIGHT TO 400.
+    set console_time:style:align to "right".
+    set console_titel:style:margin:bottom to -30.
+    set console_time:style:margin:top to -30.
+    set assent_disp_mainbox to console:ADDVLAYOUT().
+	SET assent_disp_mainbox:STYLE:ALIGN TO "Center".
+    SET assent_disp_mainbox:STYLe:HEIGHT TO 380.
+    SET assent_disp_mainbox:STYLe:margin:v TO -150.
+    set assent_data to console:addvbox().
+    GLOBAL assent_disp_ssto IS console:ADDLABEL().
+	SET assent_disp_ssto:IMAGE TO "Libraries/gui_images/ssto_bug mirrored.png".
+	SET assent_disp_ssto:STYLe:WIDTH TO 22.
+    set assent_data:style:bg to"Libraries/gui_images/bg_blank.png".
+    set assent_data:style:margin:bottom to -100.
+    SET assent_data:STYLE:ALIGN TO "Left".   
+    set assent_data_pitch to assent_data:addlabel("P "+round(pitch_for())).
+    set assent_data_yaw to assent_data:addlabel("Y "+round(compass_for())).
+    set assent_data_roll to assent_data:addlabel("R "+round(roll_for())).
+
+    if not( defined confirm_in){
+        set confirm_in to false.
+    }
+    until confirm_in{
+        wait 0.001.
+    }
+    set assent_apoapsis_input:enabled to false.
+    set assent_periapsis_input:enabled to false.
+    set assent_inclination_input:enabled to false.
+
+    return lex("Apoapsis",str_to_num(assent_apoapsis_input:text),"Periapsis",str_to_num(assent_periapsis_input:text),"Inclination",str_to_num(assent_inclination_input:text)).
+
+}
+function update_assent_gui{
+        set console_titel:text to ("<size=20><b>"+console_mode+"</b></size>").
+    if console_mode = "DATA"{
+        set console_time:text to ((timestamp():clock)).
+        set assent_disp_ssto:visible to false.
+    }else{
+        set assent_disp_ssto:visible to true.
+    }
+    if console_mode = "Assent"{
+        set console_time:text to ((timestamp():clock)).
+        set assent_disp_mainbox:style:BG to "Libraries/gui_images/Assent_Traj.png".
+        
+        set  assent_data_pitch:text to ("P "+round(pitch_for())).
+        set  assent_data_yaw:text to ("Y "+round(compass_for())).
+        set  assent_data_roll:text to ("R "+round(roll_for())).
+        local max_alt is 70000.
+        local min_alt is 00000.
+        //local alt_c is 50000.
+        local alt_dif is ship:altitude- min_alt.
+        set assent_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local max_spd is 2000.
+        local min_spd is 0000.
+        //local spd is 2300.
+        local spd_dif is ship:airspeed- min_spd.
+        set assent_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
+        // min = 50
+        // max = 500
+	    //SET assent_disp_ssto:STYLE:margin:h to 700.
+    }
 }
