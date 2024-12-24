@@ -24,10 +24,10 @@ set orbitcalc to false.
 
 //min periapsis = 75000  ----->  apoapsis > periapsis
 //Inclination between 0 and 180
-get_inputs_Launch().
-set TargetPeriapsis to str_to_num(TargetPeriapsis).
-set TargetApoapsis to str_to_num(TargetApoapsis).
-set TargetInclination to str_to_num(TargetInclination).
+local Target_orbit is create_assent_gui().
+set TargetPeriapsis to Target_orbit["Periapsis"].
+set TargetApoapsis to Target_orbit["Apoapsis"].
+set TargetInclination to Target_orbit["inclination"].
 log("targetperiapsis: "+TargetPeriapsis) to (log.txt).
 log("targetapoapsis: "+Targetapoapsis) to (log.txt).
 log("targetInclination: "+TargetInclination) to (log.txt).
@@ -40,7 +40,13 @@ set dap_mode to "auto".
 until running = false{
     update_readouts().
     dap().
+    update_assent_gui().
     //check_abort().
+    if ship:altitude < 70000 and ship:airspeed < 2100{
+        set console_mode to "assent".
+    }else{
+         set console_mode to "Data".
+    }
     if step = "Launch"{
          
         if ship:altitude < 85{
@@ -129,6 +135,7 @@ until running = false{
             set Step to "circ".
             rapiersoff().
             set dapthrottle to 0.
+            wait 2.
         
 
             
@@ -198,5 +205,7 @@ until running = false{
         reset_sys().
         set warp to 0.
         update_readouts().
+        assent_gui:hide().
     }
+    check_abort().
 }
