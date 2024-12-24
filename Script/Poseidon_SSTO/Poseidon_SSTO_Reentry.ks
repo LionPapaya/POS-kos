@@ -55,13 +55,13 @@ until running = false{
                 }else if ship:apoapsis < 200000{
                     set deorbit_periapsis to 10000.
                 }else if ship:apoapsis < 500000{
-                    set deorbit_periapsis to 15000.
+                    set deorbit_periapsis to 12000.
                 }else if ship:apoapsis < 1000000{
-                    set deorbit_periapsis to 20000.
+                    set deorbit_periapsis to 15000.
                 }else if ship:apoapsis < 10000000{
-                    set deorbit_periapsis to 25000.
+                    set deorbit_periapsis to 18000.
                 }else{
-                    set deorbit_periapsis to 30000.
+                    set deorbit_periapsis to 20000.
                 }
 
                 if deorbit_start = false{
@@ -173,17 +173,21 @@ until running = false{
         if ship:altitude < 65000{
             set Lastest_status to "reentering".
             goto_target().
-            aerostr().
+            set str_mode to "aoa".
+           
+           
         }
-        if pitch_for() > targetPitch+1 and ship:altitude < 55000{
+        if calc_aoa() > smooth_target_aoa+1 and ship:altitude < 55000{
             rcs on.
         }else{
             rcs off.
             
         }
         if ship:altitude < 25000{
+            reset_sys().
             set step to "TEAM".
             set Lastest_status to "TEAM".
+            
         }
     }  
         if step = "reentry_mid"{
@@ -211,9 +215,9 @@ until running = false{
         if ship:altitude < 65000{
             set Lastest_status to "reentering".
             goto_target().
-            aerostr().
+            set str_mode to "aoa".
         }
-        if pitch_for() > targetPitch+1 and ship:altitude < 55000{
+        if calc_aoa() > smooth_target_aoa+1 and ship:altitude < 55000{
             rcs on.
         }else{
             rcs off.
@@ -249,9 +253,9 @@ until running = false{
         if ship:altitude < 65000{
             set Lastest_status to "reentering".
             goto_target().
-            aerostr().
+            set str_mode to "aoa".
         }
-        if pitch_for() > targetPitch+1 and ship:altitude < 55000{
+        if calc_aoa() > smooth_target_aoa+1 and ship:altitude < 55000{
             rcs on.
         }else{
             rcs off.
@@ -301,6 +305,7 @@ until running = false{
         }
     } 
     if step = "TEAM"{
+        set str_mode to "aerostr".
        if not(defined Active_HAC) or not(defined hac_ercl){
         create_HAC().
         choose_hac().
