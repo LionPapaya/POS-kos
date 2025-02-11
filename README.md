@@ -50,5 +50,6 @@ Please report any issues in the issues page of the github
 
 
 ## Credits 
-The KS lib for some functions in the input_lib and the navball_lib and the framework for the location constants
-Giulio dondi for the ferram addon and some aero force functions
+1. The KS lib for some functions in the input_lib and the navball_lib and the framework for the location constants.            
+2. Giulio dondi for the ferram addon and some aero force functions
+   
