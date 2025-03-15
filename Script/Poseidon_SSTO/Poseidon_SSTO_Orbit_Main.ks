@@ -6,6 +6,7 @@ RUNONCEPATH("0:/Libraries/lib_navball.ks").
 RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
+RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 
 
 
@@ -35,13 +36,14 @@ log("targetInclination: "+TargetInclination) to (log.txt).
 check_inputs().
 
 reset_sys().
-
+dap:setup().
+set t0 to -1.
 set dap_mode to "auto".
 until running = false{
     update_readouts().
-    dap().
+    dap:update().
     update_assent_gui().
-    //check_abort().
+
     if ship:altitude < 70000 and ship:airspeed < 2100{
         set console_mode to "assent".
     }else{
@@ -56,6 +58,9 @@ until running = false{
         }   
         if ship:thrust > AVES["StationaryThrottle"]{
             brakes off.
+            if t0 = -1{
+                set t0 to time:seconds.
+            }
                 
                 
                 if ship:airspeed > AVES["Speed"]["Rotate"]{
@@ -65,8 +70,9 @@ until running = false{
                     Set warpmode to "physics".
                     
                 }
+            //decide_abort_mode().
         }
-               
+
         
     if ship:altitude > 85{
         set Lastest_status to "not in lift off conditon".
@@ -74,46 +80,59 @@ until running = false{
     }
     }
     if step = "rotate"{
-        set targetPitch to 15.
+        set dap["aerostr"]["targetPitch"] to 15.
+        //decide_abort_mode().
         if ship:altitude > 90{
             gear off.
             set step to "assent".
             set warp to 0.
+            //set assent_heading to calculate_heading(TargetInclination, ship:latitude).
+            SET ASSENT_HEADING TO TargetInclination + 90.
+            
         }
     }
     if step = "assent"{
+        //decide_abort_mode().
         if ship:airspeed < 440{
-            set distance_pitch to  10.
-            aeroturn((TargetInclination+90)). 
-            if ship:altitude < 200{
-                set distance_pitch to 17.
+            
+            IF SHIP:AIRSPEED > 400{
+                SET STEP TO "ATI".
             }
-            
+            if ship:altitude < 200{
+                set aoa_pitch to 17.
+            }else{
+                set aoa_pitch to 10.
+            }
+            set dap["str_mode"] to "aoa".
+            set base_pitch to -1.
+            aeroturn(assent_heading,"calc",aoa_pitch).
+        }else{
+            set dap["str_mode"] to "aerostr".
+            set dap["aerostr"]["targetDirection"] to assent_heading.
         }
-        if airspeed > 440 and ship:altitude < 15000{set targetPitch to  15. set warp to 1.}
+        if airspeed > 440 and ship:altitude < 15000{set dap["aerostr"]["targetPitch"] to  15. set warp to 1.}
         
-        if ship:altitude > 15000 and ship:altitude < 20000 and targetPitch > 2{
+        if ship:altitude > 15000 and ship:altitude < 20000 and dap["aerostr"]["targetPitch"] > 2{
             
-            set targetPitch to targetPitch - 0.4.
+            set dap["aerostr"]["targetPitch"] to dap["aerostr"]["targetPitch"] - 0.4.
             wait 0.55.
             if not (ship:apoapsis > ship:altitude + 500){
-                set targetPitch to 7.
+                set dap["aerostr"]["targetPitch"] to 7.
             }
             }
         if ship:altitude > 20000 and ship:altitude < 23000{   
-        set targetPitch to 10.
+        set dap["aerostr"]["targetPitch"] to 10.
         set warp to 0.
         nervson().
         set Lastest_status to "nervs on".
         }
         if ship:altitude > 23000 and ship:altitude < 57000{
             if rapier_mode = "air"{
-                togglerapiermode().
-                set rapier_mode to "closed".
+                togglerapiermode("CLOSED").
             }   
             set Lastest_status to "rapiers in closed cycle".
-            if TargetPitch < 30{
-                set targetPitch to targetPitch + 1.
+            if dap["aerostr"]["targetPitch"] < 30{
+                set dap["aerostr"]["targetPitch"] to dap["aerostr"]["targetPitch"] + 1.
                 wait 0.5.
             }else{
                 set warp to 1.
@@ -123,7 +142,7 @@ until running = false{
         }    
         if ship:apoapsis > 57000{
             rapiersoff().
-            set targetPitch to 15.
+            set dap["aerostr"]["targetPitch"] to 15.
             rcs off.
         } 
         if ship:altitude > 70000{
@@ -184,21 +203,23 @@ until running = false{
         
 
     }
-    if step = "abort"{
-
-    }
     if step = "runway_abort"{
         set Lastest_status to "Runway abort".
         brakes on.
         set dapthrottle to 0.
         rapiersoff().
-        set targetPitch to -5.
+        set dap["aerostr"]["targetPitch"] to -5.
         if ship:airspeed < 1{
             set Lastest_status to "abort complete".
             set step to "end".
         }    
     }
-    
+    if step = "ati"{
+        set Lastest_status to "ati".
+        set warp to 0.
+        RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex("force",TRUE,"Location","Kola-Island","Runway","20")).
+        SET step to "end".
+    }
     if step = "end"{
         set running to false.
         //set Lastest_status to "ending".
@@ -207,5 +228,6 @@ until running = false{
         update_readouts().
         assent_gui:hide().
     }
+    wait 0.
     check_abort().
 }
