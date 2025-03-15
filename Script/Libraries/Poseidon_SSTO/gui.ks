@@ -1,109 +1,10 @@
-
-function get_inputs_Launch{
-
-
-
-
-CLEARSCREEN.
-SET TERMINAL:WIDTH TO 45.
-SET TERMINAL:HEIGHT TO 25.
-PRINT "+-------------------------------------------+".
-PRINT "|Apoapsis>                                  |".
-PRINT "|Periapsis>                                 |".
-PRINT "|Inclination>                               |".
-PRINT "+-------------------------------------------+".
-PRINT "|                                           |".
-PRINT "|                                           |".
-PRINT "|                                           |".
-PRINT "|                                           |".
-PRINT "|                                           |".
-PRINT "|                                           |".
-PRINT "+-------------------------------------------+".
-PRINT "|Type the name of the field you want to     |".
-PRINT "|change, then type the value you want       |".
-PRINT "|the field to hold and press enter.         |".
-PRINT "|Type 'go' to end script.                   |".
-PRINT "|                                           |".
-PRINT "|EXAMPLE: typing 'Mode' will change         |".
-PRINT "|the prompt from ':>' to ':Mode:>'          |".
-PRINT "|and the thing that you type will go to     |".
-PRINT "|the 'Mode' field after enter is pressed.   |".
-PRINT "+-------------------------------------------+".
-
-LOCAL fields IS LEXICON(
-	"Apoapsis",LEXICON("maxLength",9,"col",15,"row",1,"str","80000","isNum",True,"inFunction",terminal_input_number@),
-	"Inclination",LEXICON("maxLength",3,"col",15,"row",3,"str","0","isNum",TRUE,"inFunction",terminal_input_number@),
-	"Periapsis",LEXICON("maxLength",30,"col",15,"row",2,"str","80000","isNum",True,"inFunction",terminal_input_number@)
-	
-).
-LOCAL exitWords IS LIST(
-	"ok",
-	"start",
-	"affirmative",
-	"go",
-	"enter"
-).
-LOCAL prompt IS ":> ".
-LOCAL terminalData IS LIST(prompt).
-LOCAL terminalRowStart IS 5.
-LOCAL termPos IS 0.
-LOCAL inField IS "".
-LOCAL inFunction IS terminal_input_string@.
-LOCAL fieldStr IS "".
-LOCAL maxIn IS 45.
-FOR key IN fields:KEYS {
-	LOCAL field IS fields[key].
-	PRINT (field["str"]) AT(field["col"],field["row"]).
-}
-LOCAL quit IS FALSE.
-RCS OFF.
-UNTIL quit OR RCS {
-	SET termPos TO 0.
-	FOR line in terminalData {
-		SET termPos TO termPos + 1.
-		PRINT "|" + line:PADRIGHT(43) + "|" AT(0,terminalRowStart + termPos).
-	}
-	LOCAL indentation IS terminalData[terminalData:LENGTH - 1]:LENGTH + 1.
-	LOCAL inString IS inFunction(indentation,terminalRowStart + termPos,MIN(44 - indentation,maxIn),fieldStr).
-	SET terminalData[terminalData:LENGTH - 1] TO terminalData[terminalData:LENGTH - 1] + inString.
-	
-	IF inField <> "" {
-		LOCAL field IS fields[inField].
-		SET field["str"] TO inString.
-		PRINT (field["str"]):PADRIGHT(maxIn - 1) AT(field["col"],field["row"]).
-		terminalData:ADD(prompt).
-		SET inField TO "".
-		SET maxIn TO 45.
-		SET inFunction TO terminal_input_string@.
-		SET fieldStr TO "".
-	} ELSE IF fields:HASKEY(inString) {
-		SET inField TO inString.
-		LOCAL field IS fields[inField].
-		SET maxIn TO field["maxLength"].
-		SET inFunction TO field["inFunction"].
-		SET fieldStr TO field["str"].
-		terminalData:ADD(":" + inString + prompt).
-	} ELSE IF exitWords:CONTAINS(inString) {
-		SET quit TO TRUE.
-	} ELSE {
-		terminalData:ADD(" Not a valid field or command!").
-		terminalData:ADD(prompt).
-	}
-	UNTIL terminalData:LENGTH <= 6 {
-		terminalData:REMOVE(0).
-	} 
-}
-SET TargetPeriapsis TO fields["Periapsis"]["str"].
-SET TargetApoapsis TO fields["Apoapsis"]["str"].
-SET TargetInclination TO fields["Inclination"]["str"].
-clearscreen.
-
-}
 function update_readouts{
   runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
 }
 function setup_reentry_script{
+    parameter Location_ is "".
+    parameter runway_nr_ is "".
     set steeringManager:ROLLCONTROLANGLERANGE to 180.
     steeringManager:resetpids().
     set step to "Deorbit".
@@ -123,8 +24,15 @@ function setup_reentry_script{
     set Lastest_status to "Inizializing Script".
     set deorbit_start to false.
     set deorbit_calc to false.
-    create_reentry_display().
-   if Reentry_mode = "Man" or Reentry_mode = "Auto" {
+    dap:setup().
+
+    if Location_ = "" or runway_nr_ = ""{
+        create_reentry_display().
+    }else{
+        create_reentry_display(false,Location_,runway_nr_).
+        set Reentry_mode to "Auto".
+    }
+   if Reentry_mode = "Man" or Reentry_mode = "Auto" or Reentry_mode = "Ex"{
     local a is Location+"_runway".
     local b is Location+"_runway_"+runway_nr+"_start".
     local c is Location+"_runway_"+runway_nr+"_end".
@@ -158,14 +66,14 @@ log ("runway heading = "+runway_heading) to log.txt.
    
     ADDONS:TR:SETTARGET(runway_start).
     ADDONS:TR:RESETDESCENTPROFILE(20).
-    set targetPitch to 5.
-    set targetRole to 0.
-    set targetDirection to 90.
     reset_sys().                                                                             
    
 }
 
 function create_reentry_display {
+    parameter wait_for_confirm is true.
+    parameter force_loaction is "".
+    parameter force_runway is "".
     local location_to_runways is lexicon().
     
     
@@ -281,8 +189,8 @@ function create_reentry_display {
     
     function update_dap {
         parameter decoy is 1.
-        set dap_mode to dap_mode_menu:value.
-        if (dap_mode = "OFF") {
+        set dap["dap_mode"] to dap_mode_menu:value.
+        if (dap["dap_mode"] = "OFF") {
 			set dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
 		} else {
 			set dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
@@ -384,7 +292,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
 
 
     
-    until confirm_in or step = "end" {
+    until confirm_in or step = "end" or not(wait_for_confirm) {
         wait 0.0001.
         update_reentry_gui().
         
@@ -421,13 +329,19 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
             log "Auto-selected Location: " + Location + ", Runway: " + runway_nr to "0:/log.txt".
         }
     }
-
+    
     // Replace input buttons with labels displaying the selected target and runway number
     location_box:clear().
     runway_box:clear().
-    location_box:addlabel("<b>Location:</b> " + Location).
-    runway_box:addlabel("<b>Runway:</b> " + runway_nr).
+    if not (wait_for_confirm){
+        set Location to force_loaction.
+        set runway_nr to force_runway.
+    }
+    set reentry_gui_location_label to location_box:addlabel("<b>Location:</b> " + Location).
+    set reentry_gui_runway_label to runway_box:addlabel("<b>Runway:</b> " + runway_nr).
+    
 }
+
 function create_reentry_gui{
       // Add the image to the vbox
     set console to reentry_gui:addvbox().
@@ -455,193 +369,182 @@ function create_reentry_gui{
     set traj_data_pitch to traj_data:addlabel("P "+round(pitch_for())).
     set traj_data_yaw to traj_data:addlabel("Y "+round(compass_for())).
     set traj_data_roll to traj_data:addlabel("R "+round(roll_for())).
+    set traj_data_mach to traj_data:addlabel("Mach "+round(ADDONS:FAR:mach)).
+    set traj_data_aoa to traj_data:addlabel("AOA "+round(calc_aoa())).
+    set traj_data_ld to traj_data:addlabel("L/D "+round(0)).
 
 }
-function update_reentry_gui{
-    set console_titel:text to ("<size=20><b>"+console_mode+"</b></size>").
-    if console_mode = "DATA"{
+
+function update_reentry_gui {
+    parameter inputs is lex(
+        "mode", console_mode,
+        "alt", ship:altitude,
+        "spd", ship:airspeed,
+        "pitch", pitch_for(),
+        "yaw", compass_for(),
+        "roll", roll_for(),
+        "mach", ADDONS:FAR:mach,
+        "aoa", calc_aoa(),
+        "l/d", 0
+    ).
+
+    set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
+    if inputs["mode"] = "DATA" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_ssto:visible to false.
         traj_data:hide().
-    }else{
+    } else {
         set traj_disp_ssto:visible to true.
         traj_data:show().
     }
-    if console_mode = "TRAJ 1 low"{
+    if inputs["mode"] = "TRAJ 1 low" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 60000.
         local min_alt is 30000.
-        //local alt_c is 50000.
-        local alt_dif is ship:altitude- min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 2500.
         local min_spd is 1200.
-        //local spd is 2300.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 1 mid"{
+    if inputs["mode"] = "TRAJ 1 mid" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 60000.
         local min_alt is 30000.
-        //local alt_c is 50000.
-        local alt_dif is ship:altitude- min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 2800.
         local min_spd is 1400.
-        //local spd is 2300.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 1 high"{
+    if inputs["mode"] = "TRAJ 1 high" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 60000.
         local min_alt is 30000.
-        //local alt_c is 50000.
-        local alt_dif is ship:altitude- min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 3300.
         local min_spd is 1500.
-        //local spd is 2300.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 1 int"{
+    if inputs["mode"] = "TRAJ 1 int" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 60000.
         local min_alt is 30000.
-        //local alt_c is 50000.
-        local alt_dif is ship:altitude- min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 3500.
         local min_spd is 1700.
-        //local spd is 2300.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 2"{
+    if inputs["mode"] = "TRAJ 2" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 26000.
         local min_alt is 10000.
-        //local alt_c is 30000.
-        //local alt_dif is alt_c- min_alt.
-        local alt_dif is ship:altitude - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 1500.
         local min_spd is 500.
-        //local spd is 1300.
-        //local spd_dif is spd- min_spd.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 2 high"{
+    if inputs["mode"] = "TRAJ 2 high" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 26000.
         local min_alt is 10000.
-        //local alt_c is 30000.
-        //local alt_dif is alt_c- min_alt.
-        local alt_dif is ship:altitude - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 1700.
         local min_spd is 500.
-        //local spd is 1300.
-        //local spd_dif is spd- min_spd.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 2 int"{
+    if inputs["mode"] = "TRAJ 2 int" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
         local max_alt is 26000.
         local min_alt is 10000.
-        //local alt_c is 30000.
-        //local alt_dif is alt_c- min_alt.
-        local alt_dif is ship:altitude - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_spd is 2000.
         local min_spd is 500.
-        //local spd is 1300.
-        //local spd_dif is spd- min_spd.
-        local spd_dif is ship:airspeed- min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd-min_spd) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local spd_dif is inputs["spd"] - min_spd.
+        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
     }
-    if console_mode = "TRAJ 3"{
+    if inputs["mode"] = "TRAJ 3" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_bg.png".
         
-        set traj_data_pitch:text to ("P "+round(pitch_for())).
-        set traj_data_yaw:text to ("Y "+round(compass_for())).
-        set traj_data_roll:text to ("R "+round(roll_for())).
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
+        set traj_data_roll:text to ("R "+round(inputs["roll"])).
         local max_alt is 10000.
         local min_alt is 0.
-        //local alt_c is 80000.
-        //local alt_dif is alt_c- min_alt.
-        local alt_dif is ship:altitude - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 220 - alt_dif / (max_alt-min_alt) * 220.
+        local alt_dif is inputs["alt"] - min_alt.
+        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_dis is 35000.
         local min_dis is 0.
-        //local spd is 1300.
-        //local spd_dif is spd- min_spd.
-        local dis_dif is rnw_dis_display- min_dis.
-        set traj_disp_ssto:STYLE:margin:h to 50 + dis_dif / (max_dis-min_dis) * 650.
-        // min = 50
-        // max = 500
-	    //SET traj_disp_ssto:STYLE:margin:h to 700.
+        local dis_dif is rnw_dis_display - min_dis.
+        set traj_disp_ssto:STYLE:margin:h to 50 + dis_dif / (max_dis - min_dis) * 650.
     }
 }
 function create_main_gui{
@@ -678,8 +581,8 @@ function create_main_gui{
     
     function main_update_dap {
         parameter decoy is 1.
-        set dap_mode to main_dap_mode_menu:value.
-        if (dap_mode = "OFF") {
+        set dap["dap_mode"] to main_dap_mode_menu:value.
+        if (dap["dap_mode"] = "OFF") {
 			set main_dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
 		} else {
 			set main_dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
@@ -1329,8 +1232,8 @@ function create_assent_gui{
     
     function update_dap {
         parameter decoy is 1.
-        set dap_mode to assent_dap_mode_menu:value.
-        if (dap_mode = "OFF") {
+        set dap["dap_mode"] to assent_dap_mode_menu:value.
+        if (dap["dap_mode"] = "OFF") {
 			set assent_dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
 		} else {
 			set assent_dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
@@ -1428,5 +1331,58 @@ function update_assent_gui{
         // min = 50
         // max = 500
 	    //SET assent_disp_ssto:STYLE:margin:h to 700.
+    }
+}
+function map_flightpath {
+    parameter simstates.
+    parameter corridor_width is 10.
+    parameter line_distance is 15.
+    // Calculate max/min speed and altitude from the dataset
+    local max_alt is 0.
+    local min_alt is 999999.
+    local max_spd is 0.
+    local min_spd is 999999.
+
+    for simstate in simstates {
+        if simstate["altitude"] > max_alt {
+            set max_alt to simstate["altitude"].
+        }
+        if simstate["altitude"] < min_alt {
+            set min_alt to simstate["altitude"].
+        }
+        if simstate["velocity"]:mag > max_spd {
+            set max_spd to simstate["velocity"]:mag.
+        }
+        if simstate["velocity"]:mag < min_spd {
+            set min_spd to simstate["velocity"]:mag.
+        }
+    }
+
+    local labels is lexicon().
+
+    // Iterate over the timesteps
+    for i in range(0, simstates:length, line_distance) {
+        local simstate is simstates[closest_simstate(simstates,i)].
+        local alt_dif is simstate["altitude"] - min_alt.
+        local spd_dif is simstate["velocity"]:mag - min_spd.
+
+        local v_margin is 220 - alt_dif / (max_alt - min_alt) * 220.
+        local h_margin is 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        // Determine the orientation of the image
+        local angle is round(simstate["velocity"]:heading).
+        if angle >= 180 {
+            set angle to angle - 180.
+        }
+
+        // Draw the corridor
+        for j in range(-corridor_width/2, corridor_width/2) {
+            local img_name is "Libraries/gui_images/TRAJ_lines/line_" + angle + "°.png".
+            local label_name is "traj_disp_ssto_" + i + "_" + j.
+            set labels[label_name] to console:addlabel().
+            set labels[label_name]:IMAGE to img_name.
+            set labels[label_name]:STYLE:margin:v to v_margin + j.
+            set labels[label_name]:STYLE:margin:h to h_margin.
+        }
     }
 }

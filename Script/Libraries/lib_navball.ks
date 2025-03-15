@@ -48,7 +48,6 @@ function east_for {
 
   return vcrs(ves:up:vector, ves:north:vector).
 }
-
 function compass_for {
   parameter ves is ship,thing is "default".
 
@@ -69,6 +68,11 @@ function compass_for {
   } else {
     return result.
   }
+}
+function compass_for_simstate{
+    parameter simstate.
+    local a is update_simstate(simstate).
+    return heading_between(simstate["latlong"],a["latlong"]).
 }
 
 function pitch_for {

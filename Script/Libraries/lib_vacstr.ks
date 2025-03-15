@@ -76,6 +76,7 @@ function execute_node{
 
     //set throttle to 0 just in case.
     SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
+    dap:setup().
 }
 function doHoverslam {
   lock dap_steering to srfRetrograde.
