@@ -13,7 +13,7 @@ if om_mode_ = "rsvp"{
 } else if om_mode_ = "change Inclination"{
     do_change_Inclination().
 } else if om_mode_ = "Circluarize"{
-    do_Circluarize().
+    do_circularization().
 }
 function do_rsvp{
 get_inputs_rsvp().
@@ -66,7 +66,13 @@ if OM_Execute ="true"{
 }
 
 function do_change_Apoapsis{
-    local apoapsis_options to get_inputs_apoapsis().
+    parameter apoapsis_options_force is "ASK".
+    LOCAL apoapsis_options to 0.
+    if apoapsis_options_force = "ASK"{
+        SET apoapsis_options to get_inputs_apoapsis().
+    }else{
+        SET apoapsis_options to apoapsis_options_force.
+    }
 
     if apoapsis_options[0]= "Apoapsis"{
         local mnv_calc is false.
@@ -153,7 +159,14 @@ function do_change_Apoapsis{
     }
 }
 function do_change_Periapsis {
-    local periapsis_options to get_inputs_Periapsis().
+    parameter PERIAPSIS_options_force is "ASK".
+    local PERIAPSIS_options to 0.
+    if PERIAPSIS_options_force = "ASK"{
+        SET PERIAPSIS_options to get_inputs_PERIAPSIS().
+    }else{
+        SET PERIAPSIS_options to PERIAPSIS_options_force.
+    }
+
 
     if periapsis_options[0] = "Periapsis" {
         local mnv_calc is false.
@@ -240,7 +253,14 @@ function do_change_Periapsis {
     }
 }
 function do_change_Inclination {
-    local inclination_options to get_inputs_Inclination().
+    local inclination_options_force is "ASK".
+    local inclination_options to 0.
+    if inclination_options_force = "ASK" {
+        set inclination_options to get_inputs_Inclination().
+    } else {
+        set inclination_options to inclination_options_force.
+    }
+
     local target_type is inclination_options[0].
     local target_inclination is inclination_options[1]:tonumber().
 
@@ -285,7 +305,7 @@ function do_change_Inclination {
             if inclination_diff > 0 {
                 set mnv:normal to mnv:normal + 0.01.
             } else {
-                set mnv:antinormal to mnv:antinormal + 0.01.
+                set mnv:normal to mnv:normal - 0.01.
             }
         } else {
             set mnv_calc to true.
@@ -299,7 +319,14 @@ function do_change_Inclination {
     }
 }
 function do_circularization {
-    local circularization_location to get_inputs_circliurisation().
+    parameter circularization_location_force is "ASK".
+    local circularization_location to 0.
+    if circularization_location_force = "ASK" {
+        set circularization_location to get_inputs_circliurisation().
+    } else {
+        set circularization_location to circularization_location_force.
+    }
+
 
     local mnv_calc is false.
     local mnv_start is false.
@@ -315,41 +342,14 @@ function do_circularization {
             set mnv_start to true.
         }
 
-        local current_apoapsis is ship:orbit:apoapsis.
-        local current_periapsis is ship:orbit:periapsis.
-        local target_altitude is 0.
+
 
         if circularization_location = "Periapsis" {
-            set target_altitude to current_apoapsis.
+            do_change_Apoapsis(list("PERIAPSIS",SHIP:periapsis)).
         } else {
-            set target_altitude to current_periapsis.
+            do_change_Periapsis(list("APOAPSIS",SHIP:apoapsis)).
         }
 
-        if mnv:orbit:apoapsis < target_altitude and mnv_calc = false {
-            if mnv:orbit:apoapsis + 10000 < target_altitude {
-                set mnv:prograde to mnv:prograde + 1.
-            }
-            if mnv:orbit:apoapsis + 1000 < target_altitude {
-                set mnv:prograde to mnv:prograde + 0.1.
-            }
-            if mnv:orbit:apoapsis + 100 < target_altitude {
-                set mnv:prograde to mnv:prograde + 0.01.
-            }
-        }
-        if mnv:orbit:apoapsis > target_altitude and mnv_calc = false {
-            if mnv:orbit:apoapsis - 10000 > target_altitude {
-                set mnv:prograde to mnv:prograde - 1.
-            }
-            if mnv:orbit:apoapsis - 1000 > target_altitude {
-                set mnv:prograde to mnv:prograde - 0.1.
-            }
-            if mnv:orbit:apoapsis - 100 > target_altitude {
-                set mnv:prograde to mnv:prograde - 0.01.
-            }
-        }
-        if mnv:orbit:apoapsis + 1000 > target_altitude and mnv:orbit:apoapsis - 1000 < target_altitude and mnv_calc = false {
-            set mnv_calc to true.
-        }
 
         if mnv_calc = true {
             nervson().
