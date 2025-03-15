@@ -1,5 +1,6 @@
 RUNONCEPATH("0:/Libraries/rsvp/main.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
@@ -8,7 +9,7 @@ RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
-
+RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 
 
 set main_step to "findstep".
@@ -19,9 +20,10 @@ set rapiers to false.
 create_main_gui().
 
 reset_sys().
+dap:setup().
 
 until closed{
-    DAP().
+    DAP:update().
     if main_step = "findstep"{
         
         if ship:body:atm:exists{
@@ -63,6 +65,6 @@ until closed{
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Docking.ks").
         set main_step to "ask_Step".
     }
-
+    wait 0.
 
 }
