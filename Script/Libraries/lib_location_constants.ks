@@ -83,7 +83,7 @@ global location_constants is lex().
   KerbinRunwayalt:add("Harvester_runway", 3956).
   KerbinRunwayalt:add("Hazard-Shallows_runway", 24).
   KerbinRunwayalt:add("Jeb's-Junkyard_runway", 761).
-  KerbinRunwayalt:add("Kamerwick_runway", 623).
+  KerbinRunwayalt:add("Kamberwick_runway", 623).
   KerbinRunwayalt:add("Kerman-Atol_runway", 207).
   KerbinRunwayalt:add("Kojave-Sands_runway", 766).
   KerbinRunwayalt:add("Kola-Island_runway", 28).
