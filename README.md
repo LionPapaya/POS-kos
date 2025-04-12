@@ -5,7 +5,7 @@ This repository contains scripts for controlling the **Poseidon SSTO**, a Single
 
 The system automates the key phases of the mission:
 1. **Launch**: Automatic ascent to orbit.
-2. **Orbital Maneuvering **: Maneuvers such as orbital transfers or orbital adjustmants.
+2. **Orbital Maneuvering**: Maneuvers such as orbital transfers or orbital adjustmants.
 3. **Reentry**: Guided atmospheric descent and runway landing.
 
 ---
