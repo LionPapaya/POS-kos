@@ -4,7 +4,7 @@
 
 if not (defined location_constants) {
 global location_constants is lex().
-//runways should be added in this pattern "name_runway_##_start" where name is the name of the runway and ## is the runway number
+//runways should be added in this pattern "name_runway_##_start" where name is the name of the runway and ## is the runway number, name cannot have a "_", rather use "-" for spaces
 //  If not added with this pattern then the automatic alias creation that add an end position based on the start of the same name but opposite number will fail
 
 

@@ -13,9 +13,13 @@ function reset_sys{
     gear off.
     }
 
-    
+
     set dapthrottle to 0.
-    lock throttle to dapthrottle.
+    if dap:haskey("envelope") {
+        lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
+    } else {
+        lock throttle to dapthrottle.
+    }
     if ship:periapsis > 70000 or ship:altitude > 300000{
         ag5 on.
         nervson().
@@ -295,6 +299,45 @@ Poseidon_SSTO:add("ERCLSpeed",150).
 Poseidon_SSTO:add("TEAM_v_margin",20).
 Poseidon_SSTO:add("TEAMAltitude",25000).
 Poseidon_SSTO:add("TEAM_vvdot_t",5).
+Poseidon_SSTO:add("Envelope",lex(
+    "low_speed",115,
+    "minimum_safe_speed",110,
+    "low_speed_throttle",0.65,
+    "high_speed",800,
+    "entry_speed",1350,
+    "max_aoa_low_speed",10,
+    "max_aoa_normal",30,
+    "max_aoa_high_speed",25,
+    "max_aoa_entry",20,
+    "max_aoa_recovery",8,
+    "max_bank_low_speed",25,
+    "max_bank_normal",90,
+    "max_bank_high_speed",120,
+    "max_bank_entry",120,
+    "max_bank_recovery",0,
+    "rcs_error_aoa",0.75,
+    "rcs_error_general",1.5,
+    "rcs_pitchdown_confirm_time",0.25,
+    "rcs_general_confirm_time",0.5,
+    "rcs_release_time",1.0,
+    "upset_aoa",35,
+    "upset_confirm_time",0.75,
+    "recovery_safe_aoa",15,
+    "recovery_exit_pitch",-30
+)).
+Poseidon_SSTO:add("TerminalRoute",lex(
+    "final_distance",6500,
+    "base_offset",4200,
+    "downwind_extension",6000,
+    "hold_radius",2500,
+    "target_speed",145,
+    "minimum_speed",125,
+    "final_brake_speed",175,
+    "low_energy_margin",200,
+    "brake_energy",150,
+    "hold_exit_energy",250,
+    "rehold_energy",900
+)).
 Poseidon_SSTO:add("EG_rev°",5).
 Poseidon_SSTO:add("EG_am_range",20).
 Poseidon_SSTO:add("EGAOA",20). //Entry Guidance Angle of Attack

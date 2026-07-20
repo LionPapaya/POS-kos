@@ -20,7 +20,6 @@ FUNCTION clone_simstate {
         "altitude",simstate["altitude"],
         "latlong",simstate["latlong"]
     ).
-
 }
 
 function gravitacc {

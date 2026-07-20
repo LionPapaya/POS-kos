@@ -48,7 +48,25 @@ if not (dap:haskey("setup")) {
         css:add("last_roll",0).
         css:add("last_aoa",0).
         dap:add("css", css).
-        
+
+    }
+
+    if not (dap:haskey("envelope")) {
+        local envelope is lexicon().
+        envelope:add("state", "normal").
+        envelope:add("max_aoa", 30).
+        envelope:add("max_bank", 90).
+        envelope:add("min_throttle", 0).
+        envelope:add("last_aoa", calc_aoa()).
+        envelope:add("last_speed", ship:airspeed).
+        envelope:add("last_pitch_error", 0).
+        envelope:add("pitchdown_timer", 0).
+        envelope:add("authority_timer", 0).
+        envelope:add("upset_timer", 0).
+        envelope:add("stable_timer", 0).
+        envelope:add("rcs_assist", false).
+        envelope:add("restore_steering", false).
+        dap:add("envelope", envelope).
     }
 
     if not (dap:haskey("dap_mode")) {
@@ -76,11 +94,162 @@ if not (dap:haskey("setup")) {
     
     lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]).
     lock steering to dap_steering.
-    lock throttle to dapthrottle.
+    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
 
     set dap["setup_done"] to true.
 }).
 }
+
+function envelope_clamp {
+    parameter value, lower, upper.
+    return max(lower,min(value,upper)).
+}
+
+function envelope_refresh {
+    local envelope is dap["envelope"].
+    local config is AVES["Envelope"].
+    local dt is max(dap["dt"],0.01).
+    local actual_aoa is calc_aoa().
+    local aoa_rate is (actual_aoa - envelope["last_aoa"]) / dt.
+    local speed_deceleration is max((envelope["last_speed"] - ship:airspeed) / dt,0).
+    local requested_aoa is dap["aoa"]["target_aoa"].
+    local requested_pitch is dap["aerostr"]["targetPitch"].
+
+    if dap["dap_mode"] = "css" and dap["str_mode"] = "aoa" {
+        set requested_aoa to dap["css"]["last_aoa"].
+    }
+    if dap["dap_mode"] = "css" and dap["str_mode"] = "aerostr" {
+        set requested_pitch to dap["css"]["pitch_out"].
+    }
+
+    set envelope["max_aoa"] to config["max_aoa_normal"].
+    set envelope["max_bank"] to config["max_bank_normal"].
+    set envelope["regime"] to "normal".
+    if ship:airspeed < config["entry_speed"] {
+        if ship:airspeed >= config["high_speed"] {
+            set envelope["max_aoa"] to config["max_aoa_high_speed"].
+            set envelope["max_bank"] to config["max_bank_high_speed"].
+            set envelope["regime"] to "high_speed".
+        }
+    } else {
+        set envelope["max_aoa"] to config["max_aoa_entry"].
+        set envelope["max_bank"] to config["max_bank_entry"].
+        set envelope["regime"] to "entry".
+    }
+    if ship:airspeed < config["low_speed"] {
+        set envelope["max_aoa"] to config["max_aoa_low_speed"].
+        set envelope["max_bank"] to config["max_bank_low_speed"].
+        set envelope["regime"] to "low_speed".
+    }
+
+    set envelope["min_throttle"] to 0.
+    if ship:airspeed < config["low_speed"] {
+        local speed_deficit is envelope_clamp((config["low_speed"] - ship:airspeed) / max(config["low_speed"] - config["minimum_safe_speed"],1),0,1).
+        local deceleration_demand is envelope_clamp(speed_deceleration / 10,0,1).
+        set envelope["min_throttle"] to min(1,config["low_speed_throttle"] + speed_deficit * 0.25 + deceleration_demand * 0.10).
+    }
+
+    // RCS is reserved for the thin-atmosphere portion of flight.  The
+    // pitch-down detector is deliberately very sensitive: a rising AoA while
+    // the controller is commanding down can become unrecoverable quickly.
+    local rcs_available is ship:body:atm:exists and ship:altitude >= AVES["TEAMAltitude"].
+    local aoa_error is actual_aoa - requested_aoa.
+    local pitch_error is requested_pitch - pitch_for().
+    local pitchdown_failure is rcs_available and requested_aoa < actual_aoa and aoa_error > config["rcs_error_aoa"] and aoa_rate > 0.
+    if pitchdown_failure {
+        set envelope["pitchdown_timer"] to envelope["pitchdown_timer"] + dt.
+    } else {
+        set envelope["pitchdown_timer"] to 0.
+    }
+
+    local general_failure is rcs_available and dap["str_mode"] = "aerostr" and abs(pitch_error) > config["rcs_error_general"] and abs(pitch_error) >= abs(envelope["last_pitch_error"]).
+    if general_failure {
+        set envelope["authority_timer"] to envelope["authority_timer"] + dt.
+    } else {
+        set envelope["authority_timer"] to 0.
+    }
+
+    local upset_candidate is actual_aoa > config["upset_aoa"] and requested_aoa < actual_aoa - config["rcs_error_aoa"].
+    if upset_candidate or (abs(roll_for()) > 135 and envelope["max_bank"] < 135) {
+        set envelope["upset_timer"] to envelope["upset_timer"] + dt.
+    } else if envelope["state"] = "normal" or envelope["state"] = "authority_assist" {
+        set envelope["upset_timer"] to 0.
+    }
+
+    if (envelope["state"] = "normal" or envelope["state"] = "authority_assist") and envelope["upset_timer"] >= config["upset_confirm_time"] {
+        set envelope["state"] to "upset_zero_aoa".
+        set envelope["rcs_assist"] to rcs_available.
+    }
+
+    if envelope["state"] = "upset_zero_aoa" {
+        set envelope["min_throttle"] to 1.
+        set envelope["rcs_assist"] to rcs_available.
+        if actual_aoa <= config["recovery_safe_aoa"] and aoa_rate <= 0 {
+            set envelope["state"] to "upset_pullup".
+        }
+    } else if envelope["state"] = "upset_pullup" {
+        set envelope["min_throttle"] to 1.
+        set envelope["rcs_assist"] to rcs_available.
+        if pitch_for() <= config["recovery_exit_pitch"] and actual_aoa <= envelope["max_aoa"] {
+            set envelope["state"] to "normal".
+            set envelope["restore_steering"] to true.
+            set envelope["stable_timer"] to 0.
+        }
+    } else {
+        if envelope["pitchdown_timer"] >= config["rcs_pitchdown_confirm_time"] or envelope["authority_timer"] >= config["rcs_general_confirm_time"] {
+            set envelope["rcs_assist"] to true.
+            set envelope["state"] to "authority_assist".
+        }
+
+        if envelope["rcs_assist"] {
+            if actual_aoa <= requested_aoa + 0.25 and aoa_rate <= 0 {
+                set envelope["stable_timer"] to envelope["stable_timer"] + dt.
+                if envelope["stable_timer"] >= config["rcs_release_time"] {
+                    set envelope["rcs_assist"] to false.
+                    set envelope["state"] to "normal".
+                }
+            } else {
+                set envelope["stable_timer"] to 0.
+            }
+        }
+    }
+
+    if not rcs_available and not(envelope["state"] = "upset_zero_aoa" or envelope["state"] = "upset_pullup") {
+        set envelope["rcs_assist"] to false.
+        if envelope["state"] = "authority_assist" {
+            set envelope["state"] to "normal".
+        }
+    }
+    if envelope["rcs_assist"] {
+        rcs on.
+    } else {
+        rcs off.
+    }
+
+    set envelope["last_aoa"] to actual_aoa.
+    set envelope["last_speed"] to ship:airspeed.
+    set envelope["last_pitch_error"] to pitch_error.
+}
+
+function envelope_apply_aoa_limits {
+    set dap["aoa"]["target_aoa"] to min(dap["aoa"]["target_aoa"],dap["envelope"]["max_aoa"]).
+    set dap["aoa"]["target_bank"] to envelope_clamp(dap["aoa"]["target_bank"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
+}
+
+function envelope_apply_aerostr_limits {
+    set dap["aerostr"]["targetPitch"] to envelope_clamp(dap["aerostr"]["targetPitch"],AVES["MinPitch"],AVES["MaxPitch"]).
+    set dap["aerostr"]["targetRoll"] to envelope_clamp(dap["aerostr"]["targetRoll"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
+}
+
+function envelope_run_recovery {
+    if dap["envelope"]["state"] = "upset_zero_aoa" {
+        aoa_bank_management(0,0).
+    } else {
+        aoa_bank_management(dap["envelope"]["max_aoa"],0).
+    }
+    lock steering to heading(dap["aoa"]["aoa_yaw"],dap["aoa"]["aoa_pitch"],dap["aoa"]["aoa_roll"]).
+}
+
 if not (dap:haskey("update")) {
     dap:add("update", {
     if not dap["setup_done"]{
@@ -88,6 +257,7 @@ if not (dap:haskey("update")) {
     }
     set dap["dt"] to time:seconds - dap["l_t"].
     set dap["l_t"] to time:seconds.
+    envelope_refresh().
     if not(dap["dap_mode_set"]["dapmode"] = dap["dap_mode"] and dap["dap_mode_set"]["str_mode"] = dap["str_mode"]){
         if dap["dap_mode"] = "auto" and dap["str_mode"] = "aerostr"{
             dap:set_aerostr_auto().
@@ -108,8 +278,10 @@ if not (dap:haskey("update")) {
                 set dap["aerostr"]["targetDirection"] to dap["aerostr"]["turn_heading"].
                 set dap["aerostr"]["targetPitch"] to dap["aerostr"]["turn_pitch"]+dap["aerostr"]["distance_pitch"].
                 set dap["aerostr"]["targetRoll"] to dap["aerostr"]["turn_roll"].
+                envelope_apply_aerostr_limits().
         }
-        if dap["str_mode"] = "aoa"{           
+        if dap["str_mode"] = "aoa"{
+            envelope_apply_aoa_limits().
             if ship:altitude > aves["teamALTITUDE"] {
                 set dap["aoa"]["smooth_target_aoa"] to changeRate(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["target_aoa"],dap["dt"], AVES["Pitch_rate"]["high"]).
                 set dap["aoa"]["smooth_target_bank"] to changeRate(dap["aoa"]["smooth_target_bank"], dap["aoa"]["target_bank"],dap["dt"], AVES["Rotation_rate"]["high"]).
@@ -117,6 +289,8 @@ if not (dap:haskey("update")) {
                 set dap["aoa"]["smooth_target_aoa"] to changeRate(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["target_aoa"],dap["dt"], AVES["Pitch_rate"]["low"]).
                 set dap["aoa"]["smooth_target_bank"] to changeRate(dap["aoa"]["smooth_target_bank"], dap["aoa"]["target_bank"],dap["dt"], AVES["Rotation_rate"]["low"]).
             }
+            set dap["aoa"]["smooth_target_aoa"] to min(dap["aoa"]["smooth_target_aoa"],dap["envelope"]["max_aoa"]).
+            set dap["aoa"]["smooth_target_bank"] to envelope_clamp(dap["aoa"]["smooth_target_bank"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
             if dap["aoa"]["base_pitch"] = 0 {
                 aoa_bank_management(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["smooth_target_bank"]).
             } else {
@@ -174,6 +348,8 @@ if not (dap:haskey("update")) {
             }else{
                 set bank to dap["css"]["last_roll"].
             }
+            set aoa to min(aoa,dap["envelope"]["max_aoa"]).
+            set bank to envelope_clamp(bank,-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
             set dap["css"]["last_roll"] to bank.
             set dap["css"]["last_aoa"] to aoa.
             aoa_bank_management(aoa,bank,0,true).
@@ -188,9 +364,17 @@ if not (dap:haskey("update")) {
             SET dap["css"]["pitch_out"] TO css_in["pitch"] * 5 + pitch_for().
             SET dap["css"]["YAW_out"] TO css_in["yaw"] * 5 + compass_for().
             SET dap["css"]["roll_out"] TO css_in["roll"] * 5 + roll_for().
+            SET dap["css"]["pitch_out"] TO envelope_clamp(dap["css"]["pitch_out"],AVES["MinPitch"],AVES["MaxPitch"]).
+            SET dap["css"]["roll_out"] TO envelope_clamp(dap["css"]["roll_out"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
 
 
         }
+    }
+    if dap["envelope"]["state"] = "upset_zero_aoa" or dap["envelope"]["state"] = "upset_pullup" {
+        envelope_run_recovery().
+    } else if dap["envelope"]["restore_steering"] {
+        lock steering to dap_steering.
+        set dap["envelope"]["restore_steering"] to false.
     }
 }).
 }
@@ -200,7 +384,7 @@ if not (dap:haskey("set_aoa_auto")) {
         setup_dap().
     }
     lock dap_steering to heading(dap["aoa"]["aoa_yaw"], dap["aoa"]["aoa_pitch"], dap["aoa"]["aoa_roll"]). 
-    lock throttle to dapthrottle.
+    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aoa".
     set dap["dap_mode_set"]["dapmode"] to "auto".
@@ -215,7 +399,7 @@ if not (dap:haskey("set_aerostr_auto")) {
         setup_dap().
     }
     lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]). 
-    lock throttle to dapthrottle.
+    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aerostr".
     set dap["dap_mode_set"]["dapmode"] to "auto".
@@ -249,7 +433,7 @@ if not(dap:haskey("set_css")) {
     set dap["css"]["last_roll"] to -roll_for().
     set dap["css"]["last_aoa"] to calc_aoa().
     lock dap_steering to heading(dap["css"]["yaw_out"], dap["css"]["pitch_out"], dap["css"]["roll_out"]).
-    lock throttle to SHIP:CONTROL:PILOTMAINTHROTTLE.
+    lock throttle to max(SHIP:CONTROL:PILOTMAINTHROTTLE,dap["envelope"]["min_throttle"]).
     set dap["dap_mode_set"]["dapmode"] to "css".
     set dap["dap_mode_set"]["str_mode"] to dap["str_mode"].
 }).
