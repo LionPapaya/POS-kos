@@ -21,13 +21,13 @@ function reset_sys{
         lock throttle to dapthrottle.
     }
     if ship:periapsis > 70000 or ship:altitude > 300000{
-        ag5 on.
+        //ag5 on.
         nervson().
         rapiersoff().
         toggleRapierMode("AIR").
     }
     else{
-        ag5 off.
+        //ag5 off.
     }
     lights on.
 
@@ -283,19 +283,20 @@ function setup_landing_script{
 }
 
 local Poseidon_SSTO is lex().
-Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",120)).
+Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",100)).
 Poseidon_SSTO:add("MaxAeroturnAlt",60000).
 Poseidon_SSTO:add("MaxRoll",40).
 Poseidon_SSTO:add("MaxPitch",48).
 Poseidon_SSTO:add("MinPitch",-30).
 Poseidon_SSTO:add("MaxYaw",40).
-Poseidon_SSTO:add("Rotation_rate",lex("high",12,"low",20)).
-Poseidon_SSTO:add("Pitch_rate",lex("high",5,"low",10)).
+Poseidon_SSTO:add("Rotation_rate",lex("high",10,"low",18)).
+Poseidon_SSTO:add("Pitch_rate",lex("high",4,"low",9)).
 Poseidon_SSTO:add("Glideslope",lex("angle1",0.268,"angle2",0.0875,"target1",450,"switch12",700)).
 Poseidon_SSTO:add("StationaryThrottle",300).
-Poseidon_SSTO:add("HacDistance",5000).
+Poseidon_SSTO:add("HacDistance",10000).
 Poseidon_SSTO:add("HacRadius",1500).
 Poseidon_SSTO:add("ERCLSpeed",150).
+Poseidon_SSTO:add("Aeroturn_Radius",20000).
 Poseidon_SSTO:add("TEAM_v_margin",20).
 Poseidon_SSTO:add("TEAMAltitude",25000).
 Poseidon_SSTO:add("TEAM_vvdot_t",5).

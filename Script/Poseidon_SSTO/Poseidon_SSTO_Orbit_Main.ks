@@ -1,3 +1,8 @@
+
+// Poseidon_SSTO/Poseidon_SSTO_Orbit_Main.ks
+// Purpose: ascent and orbital insertion script for Poseidon SSTO.
+// - Loads the Poseidon libraries and runs the ascent/circularization flow (Launch -> rotate -> assent -> circ).
+// Notes: header comments only, no code changes.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
@@ -80,7 +85,7 @@ until running = false{
     }
     }
     if step = "rotate"{
-        set dap["aerostr"]["targetPitch"] to 15.
+        set dap["aerostr"]["targetPitch"] to 20.
         //decide_abort_mode().
         if ship:altitude > 90{
             gear off.
@@ -93,7 +98,7 @@ until running = false{
     }
     if step = "assent"{
         //decide_abort_mode().
-        if ship:airspeed < 440{
+        if ship:airspeed < 440 or abs(compass_for() - assent_heading) < 5{
             
             IF SHIP:AIRSPEED > 400{
                 SET STEP TO "ATI".
@@ -108,6 +113,7 @@ until running = false{
             aeroturn(assent_heading,"calc",aoa_pitch).
         }else{
             set dap["str_mode"] to "aerostr".
+            set dap["aerostr"]["targetPitch"] to  15.
             set dap["aerostr"]["targetDirection"] to assent_heading.
         }
         if airspeed > 440 and ship:altitude < 15000{set dap["aerostr"]["targetPitch"] to  15. set warp to 1.}

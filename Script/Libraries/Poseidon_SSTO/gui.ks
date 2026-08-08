@@ -1,5 +1,10 @@
+// Libraries/Poseidon_SSTO/gui.ks
+// Purpose: UI and HUD for the Poseidon reentry/landing assistant.
+// - Provides GUI creation/update functions used by `Poseidon_SSTO_Reentry.ks`.
+// - Contains logic for selecting landing location/runway and visual trajectory elements.
+// Notes: only comments added.
 function update_readouts{
-  runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
+    runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
 }
 function setup_reentry_script{
@@ -11,7 +16,6 @@ function setup_reentry_script{
     set substep to "findStep".
     set running to true.
     clearScreen.  
-    set old_hac_distance to 9999999999.
     if maxThrust > 110{
         set nervs to true.
     } 
@@ -80,8 +84,7 @@ function create_reentry_display {
         set confirm_in to false.
     
     
-    // DEBUG: Log all keys in location_constants to ensure they are structured as expected
-    
+
     local kerbin_runways is Location_constants["kerbin"].
     for key in kerbin_runways:keys {
         
@@ -113,11 +116,7 @@ function create_reentry_display {
         }
     }
 
-    // DEBUG: Log final contents of location_to_runways to verify population
-    
-    for loc in location_to_runways:keys {
-        
-    }
+
 
     set abort_flag to false.
     set end to false.
@@ -226,7 +225,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         }
         getvoice(0):play(note(300,0.5)).
         set abort_flag to true.
-        set step to "abort".
+        
     }
     SET abort_b:ONCLICK TO manual_abort_trigger@.
 
@@ -331,6 +330,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     }
     
     // Replace input buttons with labels displaying the selected target and runway number
+    if false{
     location_box:clear().
     runway_box:clear().
     if not (wait_for_confirm){
@@ -339,7 +339,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     }
     set reentry_gui_location_label to location_box:addlabel("<b>Location:</b> " + Location).
     set reentry_gui_runway_label to runway_box:addlabel("<b>Runway:</b> " + runway_nr).
-    
+    }    
 }
 
 function create_reentry_gui{
@@ -360,9 +360,15 @@ function create_reentry_gui{
     SET traj_disp_mainbox:STYLe:HEIGHT TO 380.
     SET traj_disp_mainbox:STYLe:margin:v TO -150.
     set traj_data to console:addvbox().
+
     GLOBAL traj_disp_ssto IS console:ADDLABEL().
 	SET traj_disp_ssto:IMAGE TO "Libraries/gui_images/ssto_bug.png".
 	SET traj_disp_ssto:STYLe:WIDTH TO 22.
+
+    Global traj_disp_pred is console:ADDLABEL().
+    SET traj_disp_pred:IMAGE TO "Libraries/gui_images/guid_pred_bug.png".
+    SET traj_disp_pred:STYLe:WIDTH TO 8.
+
     set traj_data:style:bg to"Libraries/gui_images/bg_blank.png".
     set traj_data:style:margin:bottom to -100.
     SET traj_data:STYLE:ALIGN TO "Left".   
@@ -380,6 +386,8 @@ function update_reentry_gui {
         "mode", console_mode,
         "alt", ship:altitude,
         "spd", ship:airspeed,
+        "guid_spd", 0,
+        "guid_alt", 0,
         "pitch", pitch_for(),
         "yaw", compass_for(),
         "roll", roll_for(),
@@ -392,155 +400,323 @@ function update_reentry_gui {
     if inputs["mode"] = "DATA" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_ssto:visible to false.
+        set traj_disp_pred:visible to false.
         traj_data:hide().
+        return.
     } else {
         set traj_disp_ssto:visible to true.
+        set traj_disp_pred:visible to true.
         traj_data:show().
     }
+
+    // TRAJ 1 low
     if inputs["mode"] = "TRAJ 1 low" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 60000.
         local min_alt is 30000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 2500.
         local min_spd is 1200.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 {
+                set ratio to (inputs["guid_alt"] - min_alt) / range_.
+            }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 1 mid
     if inputs["mode"] = "TRAJ 1 mid" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 60000.
         local min_alt is 30000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 2800.
         local min_spd is 1400.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 {
+                set ratio to (inputs["guid_alt"] - min_alt) / range_.
+            }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 1 high
     if inputs["mode"] = "TRAJ 1 high" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 60000.
         local min_alt is 30000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 3300.
         local min_spd is 1500.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 {
+                set ratio to (inputs["guid_alt"] - min_alt) / range_.
+            }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 1 int
     if inputs["mode"] = "TRAJ 1 int" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 60000.
         local min_alt is 30000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 3500.
         local min_spd is 1700.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 {
+                set ratio to (inputs["guid_alt"] - min_alt) / range_.
+            }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 2
     if inputs["mode"] = "TRAJ 2" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 26000.
         local min_alt is 10000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 130 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 1500.
         local min_spd is 500.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 { set ratio to (inputs["guid_alt"] - min_alt) / range_. }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 2 high
     if inputs["mode"] = "TRAJ 2 high" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 26000.
         local min_alt is 10000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 130 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 1700.
         local min_spd is 500.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 { set ratio to (inputs["guid_alt"] - min_alt) / range_. }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 2 int
     if inputs["mode"] = "TRAJ 2 int" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+
         local max_alt is 26000.
         local min_alt is 10000.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        local ssto_margin_v is 130 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+
         local max_spd is 2000.
         local min_spd is 500.
         local spd_dif is inputs["spd"] - min_spd.
         set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
+
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
+            local range_ is max_alt - min_alt.
+            local ratio is 0.
+            if range_ <> 0 { set ratio to (inputs["guid_alt"] - min_alt) / range_. }
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+
+            local pred_margin_v is 116 - ratio * 220.
+            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
+
+            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
+            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+            set traj_disp_pred:visible to true.
+        } else {
+            set traj_disp_pred:visible to false.
+        }
     }
+
+    // TRAJ 3 (unchanged)
     if inputs["mode"] = "TRAJ 3" {
+        set traj_disp_pred:visible to false.
         set console_time:text to ((timestamp():clock)).
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_bg.png".
-        
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])).
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])).
-        set traj_data_roll:text to ("R "+round(inputs["roll"])).
+
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         local max_alt is 10000.
         local min_alt is 0.
         local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:v to 130 - alt_dif / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:STYLE:margin:top to 130 - alt_dif / (max_alt - min_alt) * 220.
         local max_dis is 35000.
         local min_dis is 0.
         local dis_dif is rnw_dis_display - min_dis.
