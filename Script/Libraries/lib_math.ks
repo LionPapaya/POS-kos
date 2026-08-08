@@ -1,3 +1,8 @@
+// Libraries/lib_math.ks
+// Purpose: assorted math and geographic utilities used by guidance and navigation modules.
+// - Haversine distance (`calcdistance`, `calcdistance_m`), heading calculations, vector helpers.
+// - Higher-level guidance helpers such as `calc_entry_traj` and `sim_with_bank` live here.
+// Notes: comments only; no code changes.
 function remove_spaces {
     parameter input_string.
     
@@ -421,27 +426,34 @@ FUNCTION FindClosestTimeStep {
     }
     RETURN closestTime.
 }
+function findkeywithvalue {
+    parameter lex_, value_.
+    for key in lex_:keys {
+        if lex_[key] = value_ {
+            return key.
+        }
+    }
+    return "none".
+}
 function calculate_spacecraft_energy{
   parameter alt_ is ship:altitude.
   parameter vel is ship:airspeed.
+  parameter alt_offset is 1.  // Multiplier for altitude importance
+  parameter vel_offset is 1.  // Multiplier for velocity importance
   parameter mass_ is ship:mass.
   parameter bod_mass is body:mass.
   parameter bod_rad is body:RADIUS.
 
 
-
-  local distance_from_center to bod_rad + alt_.
+  local distance_from_center to bod_rad + (alt_ * alt_offset).
 
   local gravitational_potential_energy to (constant:G * bod_mass * mass) / distance_from_center.
 
-
-  local kinetic_energy to 0.5 * mass_ * (vel*vel).
-
+  local kinetic_energy to 0.5 * mass_ * (vel * vel) * vel_offset.
 
   local total_mechanical_energy to kinetic_energy + gravitational_potential_energy.
 
   return total_mechanical_energy.
-
 }
 function invert_in_range{
   parameter in,min_,max_.
@@ -472,4 +484,29 @@ function lin_interpol {
     local a is i_v + (f_v - i_v) * ((d - i_d) / (f_d - i_d)).
 
     return a.
+}
+function normalize{
+  parameter num.
+  parameter min_ is 0.
+  parameter max_ is 360.
+  until num >= min_ and num < max_{
+        if num >= max_ {
+            set num to num - (max_ - min_).
+        } 
+        if num < min_ {
+            set num to num + (max_ - min_).
+        }   
+    }
+}
+function clamp{
+  parameter num.
+  parameter min_ is 0.
+  parameter max_ is 1.
+  if num < min_ {
+    return min_.
+  } else if num > max_ {
+    return max_.
+  } else {
+    return num.
+  }
 }

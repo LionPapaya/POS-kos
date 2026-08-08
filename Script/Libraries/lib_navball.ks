@@ -1,3 +1,7 @@
+// Libraries/lib_navball.ks
+// Purpose: navball and attitude helpers returning human-friendly heading/pitch/roll values.
+// - Provides `compass_for`, `compass_for_prograde`, `pitch_for`, `roll_for` and helpers.
+// Notes: comments added only; no code changed.
 function compass_for_prograde {
   parameter ves is ship,thing is "default".
 

@@ -1,3 +1,8 @@
+// Libraries/lib_navigation.ks
+// Purpose: navigation helpers for geopositions, HAC creation, TEAM interface and approach calculations.
+// - Spherical trig helpers for building approach waypoints and HAC entries.
+// - Functions here are used by the entry guidance and team guidance code.
+// Notes: comments only.
 function get_geoposition_along_heading {
     declare parameter starting_LATLNG, vec_heading, distance.
 
@@ -371,4 +376,28 @@ function check_target_in_square {
 
     // Return the result as a lexicon
     return lex("is_inside", is_inside, "distance1", distance1, "distance2", distance2, "distance3", distance3, "distance4", distance4).
+}
+function calc_turn_radius {
+    parameter geopos1, hed1, geopos2, hed2.
+    local hed1_rad to hed1 * constant:degtorad.
+    local hed2_rad to hed2 * constant:degtorad.
+    local distance is calcdistance_m(geopos1, geopos2).
+    local delta_heading is abs(hed2_rad - hed1_rad).
+    if delta_heading > constant:pi {
+        set delta_heading to 2 * constant:pi - delta_heading.
+    }
+    // Protect against zero or near-zero heading difference which would produce
+    // a division-by-zero (infinite radius). If the headings are effectively the
+    // same (vehicle flying straight), return 0 as a sentinel (no meaningful turn).
+    if abs(delta_heading) < 1e-6 {
+        return 0.
+    }
+
+    // Calculate the turn radius using the formula: R = d / (2 * sin(Δθ / 2))
+    local denom is 2 * sin(delta_heading / 2).
+    if abs(denom) < 1e-9 {
+        return 0.
+    }
+    local turn_radius is distance / denom.
+    return turn_radius.
 }

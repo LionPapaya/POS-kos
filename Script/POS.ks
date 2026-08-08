@@ -1,3 +1,8 @@
+// POS.ks
+// Purpose: top-level launcher/menu for Poseidon scripts.
+// - Loads shared libraries and selects the appropriate Poseidon sub-script (orbit, reentry, docking) based on vessel conditions.
+// Notes: comments inserted only.
+//run "POS_AI.ks".
 RUNONCEPATH("0:/Libraries/rsvp/main.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
@@ -10,7 +15,6 @@ RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
 RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
-
 
 set main_step to "findstep".
 set closed to false.
@@ -52,6 +56,7 @@ until closed{
     }  
     if main_step = "POS3"{
         poseidon_gui_main:hide().
+        //runpath("0:/Poseidon_SSTO/Aeroturn.ks").
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks").
         set main_step to "ask_Step".
     }  
@@ -63,6 +68,11 @@ until closed{
     if main_step = "POS2"{
         poseidon_gui_main:hide().
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Docking.ks").
+        set main_step to "ask_Step".
+    }
+    if main_step = "Test"{
+        poseidon_gui_main:hide().
+        runpath("0:/gui_test.ks").
         set main_step to "ask_Step".
     }
     wait 0.

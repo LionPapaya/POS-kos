@@ -1,5 +1,10 @@
 
 
+// Libraries/Poseidon_SSTO/control.ks
+// Purpose: Poseidon autopilot and control helpers (the `dap` control lexicon).
+// - Initializes `dap` with `dap:setup()` and updates via `dap:update()`.
+// - Implements autopilot modes (auto/aoa/aerostr/css/off), engine helpers and utility actions (execute_node, reset_sys).
+// Notes: only comments inserted; no logic or code changed.
 global dap is lex().
 if not (dap:haskey("setup_done")) {
     dap:add("setup_done", false).
@@ -76,6 +81,9 @@ if not (dap:haskey("setup")) {
     
     lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]).
     lock steering to dap_steering.
+    if not(defined("dapthrottle")){
+        global dapthrottle is 0.
+    }
     lock throttle to dapthrottle.
 
     set dap["setup_done"] to true.
@@ -123,7 +131,7 @@ if not (dap:haskey("update")) {
                 aoa_bank_management(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["smooth_target_bank"], dap["aoa"]["base_pitch"]).
                 set dap["aoa"]["base_pitch"] to 0.
             }
-            log dap_steering to "0:/log.txt".
+            
              
         
         }

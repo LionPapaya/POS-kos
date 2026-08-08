@@ -1,3 +1,9 @@
+// Libraries/lib_aerosim.ks
+// Purpose: simple simulation helpers and aerodynamic wrappers used by guidance and control code.
+// - Provides simstate creation/cloning (`current_simstate`, `clone_simstate`).
+// - Simple physics helpers: `gravitacc`, `update_simstate` (Euler integration).
+// - Trajectory simulators (`simulate_trajectory*`) which use aerodynamic sampling via `aeroforce_ld`.
+// Notes: Comments added only — no behavior changes.
 FUNCTION current_simstate {
     RETURN  LEXICON(
         "simtime",0,
