@@ -115,7 +115,7 @@ function envelope_clamp {
 
 function envelope_refresh {
     local envelope is dap["envelope"].
-    local config is AVES["Envelope"].
+    local config_envelope is AVES["Envelope"].
     local dt is max(dap["dt"],0.01).
     local actual_aoa is calc_aoa().
     local aoa_rate is (actual_aoa - envelope["last_aoa"]) / dt.
@@ -130,31 +130,48 @@ function envelope_refresh {
         set requested_pitch to dap["css"]["pitch_out"].
     }
 
-    set envelope["max_aoa"] to config["max_aoa_normal"].
-    set envelope["max_bank"] to config["max_bank_normal"].
+    if ship:altitude > 70000 {
+        set envelope["max_aoa"] to config_envelope["max_aoa_normal"].
+        set envelope["max_bank"] to config_envelope["max_bank_normal"].
+        set envelope["regime"] to "normal".
+        set envelope["min_throttle"] to 0.
+        set envelope["state"] to "normal".
+        set envelope["rcs_assist"] to false.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        set envelope["last_aoa"] to actual_aoa.
+        set envelope["last_speed"] to ship:airspeed.
+        set envelope["last_pitch_error"] to (requested_pitch - pitch_for()).
+        return.
+    }
+
+    set envelope["max_aoa"] to config_envelope["max_aoa_normal"].
+    set envelope["max_bank"] to config_envelope["max_bank_normal"].
     set envelope["regime"] to "normal".
-    if ship:airspeed < config["entry_speed"] {
-        if ship:airspeed >= config["high_speed"] {
-            set envelope["max_aoa"] to config["max_aoa_high_speed"].
-            set envelope["max_bank"] to config["max_bank_high_speed"].
+    if ship:airspeed < config_envelope["entry_speed"] {
+        if ship:airspeed >= config_envelope["high_speed"] {
+            set envelope["max_aoa"] to config_envelope["max_aoa_high_speed"].
+            set envelope["max_bank"] to config_envelope["max_bank_high_speed"].
             set envelope["regime"] to "high_speed".
         }
     } else {
-        set envelope["max_aoa"] to config["max_aoa_entry"].
-        set envelope["max_bank"] to config["max_bank_entry"].
+        set envelope["max_aoa"] to config_envelope["max_aoa_entry"].
+        set envelope["max_bank"] to config_envelope["max_bank_entry"].
         set envelope["regime"] to "entry".
     }
-    if ship:airspeed < config["low_speed"] {
-        set envelope["max_aoa"] to config["max_aoa_low_speed"].
-        set envelope["max_bank"] to config["max_bank_low_speed"].
+    if ship:airspeed < config_envelope["low_speed"] {
+        set envelope["max_aoa"] to config_envelope["max_aoa_low_speed"].
+        set envelope["max_bank"] to config_envelope["max_bank_low_speed"].
         set envelope["regime"] to "low_speed".
     }
 
     set envelope["min_throttle"] to 0.
-    if ship:airspeed < config["low_speed"] {
-        local speed_deficit is envelope_clamp((config["low_speed"] - ship:airspeed) / max(config["low_speed"] - config["minimum_safe_speed"],1),0,1).
+    if ship:status = "FLYING" and ship:airspeed < config_envelope["low_speed"] {
+        local speed_deficit is envelope_clamp((config_envelope["low_speed"] - ship:airspeed) / max(config_envelope["low_speed"] - config_envelope["minimum_safe_speed"],1),0,1).
         local deceleration_demand is envelope_clamp(speed_deceleration / 10,0,1).
-        set envelope["min_throttle"] to min(1,config["low_speed_throttle"] + speed_deficit * 0.25 + deceleration_demand * 0.10).
+        set envelope["min_throttle"] to min(1,config_envelope["low_speed_throttle"] + speed_deficit * 0.25 + deceleration_demand * 0.10).
     }
 
     // RCS is reserved for the thin-atmosphere portion of flight.  The
@@ -163,28 +180,28 @@ function envelope_refresh {
     local rcs_available is ship:body:atm:exists and ship:altitude >= AVES["TEAMAltitude"].
     local aoa_error is actual_aoa - requested_aoa.
     local pitch_error is requested_pitch - pitch_for().
-    local pitchdown_failure is rcs_available and requested_aoa < actual_aoa and aoa_error > config["rcs_error_aoa"] and aoa_rate > 0.
+    local pitchdown_failure is rcs_available and requested_aoa < actual_aoa and aoa_error > config_envelope["rcs_error_aoa"] and aoa_rate > 0.
     if pitchdown_failure {
         set envelope["pitchdown_timer"] to envelope["pitchdown_timer"] + dt.
     } else {
         set envelope["pitchdown_timer"] to 0.
     }
 
-    local general_failure is rcs_available and dap["str_mode"] = "aerostr" and abs(pitch_error) > config["rcs_error_general"] and abs(pitch_error) >= abs(envelope["last_pitch_error"]).
+    local general_failure is rcs_available and dap["str_mode"] = "aerostr" and abs(pitch_error) > config_envelope["rcs_error_general"] and abs(pitch_error) >= abs(envelope["last_pitch_error"]).
     if general_failure {
         set envelope["authority_timer"] to envelope["authority_timer"] + dt.
     } else {
         set envelope["authority_timer"] to 0.
     }
 
-    local upset_candidate is actual_aoa > config["upset_aoa"] and requested_aoa < actual_aoa - config["rcs_error_aoa"].
+    local upset_candidate is actual_aoa > config_envelope["upset_aoa"] and requested_aoa < actual_aoa - config_envelope["rcs_error_aoa"].
     if upset_candidate or (abs(roll_for()) > 135 and envelope["max_bank"] < 135) {
         set envelope["upset_timer"] to envelope["upset_timer"] + dt.
     } else if envelope["state"] = "normal" or envelope["state"] = "authority_assist" {
         set envelope["upset_timer"] to 0.
     }
 
-    if (envelope["state"] = "normal" or envelope["state"] = "authority_assist") and envelope["upset_timer"] >= config["upset_confirm_time"] {
+    if (envelope["state"] = "normal" or envelope["state"] = "authority_assist") and envelope["upset_timer"] >= config_envelope["upset_confirm_time"] {
         set envelope["state"] to "upset_zero_aoa".
         set envelope["rcs_assist"] to rcs_available.
     }
@@ -192,19 +209,19 @@ function envelope_refresh {
     if envelope["state"] = "upset_zero_aoa" {
         set envelope["min_throttle"] to 1.
         set envelope["rcs_assist"] to rcs_available.
-        if actual_aoa <= config["recovery_safe_aoa"] and aoa_rate <= 0 {
+        if actual_aoa <= config_envelope["recovery_safe_aoa"] and aoa_rate <= 0 {
             set envelope["state"] to "upset_pullup".
         }
     } else if envelope["state"] = "upset_pullup" {
         set envelope["min_throttle"] to 1.
         set envelope["rcs_assist"] to rcs_available.
-        if pitch_for() <= config["recovery_exit_pitch"] and actual_aoa <= envelope["max_aoa"] {
+        if pitch_for() >= config_envelope["recovery_exit_pitch"] and actual_aoa <= envelope["max_aoa"] {
             set envelope["state"] to "normal".
             set envelope["restore_steering"] to true.
             set envelope["stable_timer"] to 0.
         }
     } else {
-        if envelope["pitchdown_timer"] >= config["rcs_pitchdown_confirm_time"] or envelope["authority_timer"] >= config["rcs_general_confirm_time"] {
+        if envelope["pitchdown_timer"] >= config_envelope["rcs_pitchdown_confirm_time"] or envelope["authority_timer"] >= config_envelope["rcs_general_confirm_time"] {
             set envelope["rcs_assist"] to true.
             set envelope["state"] to "authority_assist".
         }
@@ -212,7 +229,7 @@ function envelope_refresh {
         if envelope["rcs_assist"] {
             if actual_aoa <= requested_aoa + 0.25 and aoa_rate <= 0 {
                 set envelope["stable_timer"] to envelope["stable_timer"] + dt.
-                if envelope["stable_timer"] >= config["rcs_release_time"] {
+                if envelope["stable_timer"] >= config_envelope["rcs_release_time"] {
                     set envelope["rcs_assist"] to false.
                     set envelope["state"] to "normal".
                 }
