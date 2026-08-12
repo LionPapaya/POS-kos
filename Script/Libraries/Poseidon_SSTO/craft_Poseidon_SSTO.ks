@@ -55,7 +55,7 @@ function goto_target{
         }
     local sim is current_simstate().
     
-    set dap["aoa"]["target_aoa"] to AVES["EGAOA"].
+    set dap["aoa"]["target_aoa"] to AVES["EGAOA"](ship:altitude).
     local y is sim_with_bank(sim,0,0,reentry_target).
     local x is y["final_state"]["latlong"].
 
@@ -324,24 +324,71 @@ Poseidon_SSTO:add("Envelope",lex(
     "upset_aoa",35,
     "upset_confirm_time",0.75,
     "recovery_safe_aoa",15,
-    "recovery_exit_pitch",-30
+    "recovery_exit_pitch",30
 )).
 Poseidon_SSTO:add("TerminalRoute",lex(
-    "final_distance",6500,
-    "base_offset",4200,
-    "downwind_extension",6000,
+    "final_distance",10000,
+    "base_offset",3000,
+    "downwind_extension",8000,
     "hold_radius",2500,
-    "target_speed",145,
-    "minimum_speed",125,
-    "final_brake_speed",175,
-    "low_energy_margin",200,
+    "target_speed",132,
+    "minimum_speed",112,
+    "final_brake_speed",140,
+    "low_energy_margin",220,
     "brake_energy",150,
     "hold_exit_energy",250,
-    "rehold_energy",900
+    "rehold_energy",99999,
+    "phase_change_delay",12,
+    "hold_descent_rate",24,
+    "downwind_descent_rate",20,
+    "final_descent_rate",28,
+    "final_vs_distance_factor",0.7,
+    "early_descent_margin",250,
+    "hold_aoa_max",22,
+    "bank_deadband",4,
+    "bank_full_error",30,
+    "bank_max",40,
+    "intercept_hold_distance",1500,
+    "downwind_to_base_distance",6000,
+    "base_to_final_distance",6000,
+    "final_lead_fraction",0.5,
+    "final_lead_min",1500,
+    "final_lead_max",8000,
+    "pitch_bias_min",-18,
+    "pitch_bias_max",12,
+    "descent_min_aoa",5,
+    "descent_aoa_max",12,
+    "descent_aoa_gain",0.4
 )).
 Poseidon_SSTO:add("EG_rev°",5).
 Poseidon_SSTO:add("EG_am_range",20).
-Poseidon_SSTO:add("EGAOA",20). //Entry Guidance Angle of Attack
+Poseidon_SSTO:add("EGAOA",{
+parameter alt_ is ship:altitude.
+    if alt_ <= 20000 {
+        return 10.
+    }
+
+    if alt_ >= 60000 {
+        return 20.
+    }
+
+    if alt_ < 35000 {
+        local x is (alt_ - 30000) / 5000.
+    
+    return 7.716203
+        + 10.098967 * alt_ / 100000
+        + 4.1949411
+        + 6.63635039 * x
+        - 2.33703759 * x * x
+        - 6.10762857 * x * x * x
+        + 1.61617832 * x * x * x * x
+        + 2.77708547 * x * x * x * x * x.
+    }   
+
+    return 7.716203
+        + 10.098967 * alt_ / 100000
+        + 6.632180.
+    }).
 Poseidon_SSTO:add("simulation",lex("timestep",5,"entry_ref_alt",60000,"max_iterations",10,"dist_tolerance",5000)).
 local abort_modes is lex().
 abort_modes:add("runway_abort", Lexicon(

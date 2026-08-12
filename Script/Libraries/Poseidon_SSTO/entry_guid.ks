@@ -132,9 +132,9 @@ function check_if_entry_possible{
     }
     local check is 0.
     if not(c){
-    local max_distance is simulate_trajectory(simstate, 0, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep).
-    local right_distance is simulate_trajectory(simstate, 45, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep).
-    local left_distance is simulate_trajectory(simstate, 45, "left", AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep).
+    local max_distance is simulate_trajectory(simstate, 0, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
+    local right_distance is simulate_trajectory(simstate, 45, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
+    local left_distance is simulate_trajectory(simstate, 45, "left", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
     local left_distance_t to left_distance["latlong"].
     local right_distance_t to right_distance["latlong"].
     set check to check_target_in_triangle(target_latlong,max_distance["latlong"],right_distance_t,left_distance_t).
@@ -148,8 +148,8 @@ function check_if_entry_possible{
 
     }else{
         local min_distance is sim_with_bank(simstate, 90 , AVES["TEAMAltitude"],target_latlong)["final_state"].
-        local right_distance is simulate_trajectory(simstate, 45, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep).
-        local left_distance is simulate_trajectory(simstate, 45, "left", AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep).
+        local right_distance is simulate_trajectory(simstate, 45, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
+        local left_distance is simulate_trajectory(simstate, 45, "left", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
         local left_distance_t to left_distance["latlong"].
         local right_distance_t to right_distance["latlong"].
         local hed is heading_between(left_distance_t,right_distance_t).
@@ -176,10 +176,10 @@ function entry_possible_square{
     parameter timestep is AVES["simulation"]["timestep"].
    
     local out is list(
-        simulate_trajectory(simstate, 0, "right",   AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep),
-        simulate_trajectory(simstate, 45, "right",   AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep),
-        simulate_trajectory(simstate, 45, "left",   AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep),
-        simulate_trajectory(simstate, 90, "left",  AVES["TEAMAltitude"],simstate["altitude"]+100,AVES["egaoa"],timestep)
+        simulate_trajectory(simstate, 0, "right",   AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep),
+        simulate_trajectory(simstate, 45, "right",   AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep),
+        simulate_trajectory(simstate, 45, "left",   AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep),
+        simulate_trajectory(simstate, 90, "left",  AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep)
 
     ). 
     return out.
@@ -303,9 +303,9 @@ function calc_entry_traj {
     set AVES["simulation"]["timestep"] to 1.
     local start_sim is 0.
     if wait_mode = "ALT"{
-        set start_sim to simulate_trajectory(input_simstate, AVES["egaoa"], "left", wait_value,input_simstate["altitude"]+100).
+        set start_sim to simulate_trajectory(input_simstate, 0, "left", wait_value,input_simstate["altitude"]+100).
     }else{
-        set start_sim to simulate_trajectory_time(input_simstate, AVES["egaoa"], "left", wait_value).
+        set start_sim to simulate_trajectory_time(input_simstate, 0, "left", wait_value).
     }
     //log start_sim to log.txt.
     set AVES["simulation"]["timestep"] to org_timestep.
@@ -319,6 +319,10 @@ function calc_entry_traj {
         output:add("error",lex("str","Target not reachable", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong,"min_bank", is_eg_pos["min"])).
 
         set output:converged to false.
+        log "Target not reachable" to entry_guid_fail.log.
+        log "is_eg_pos"+is_eg_pos to entry_guid_fail.log.
+        log "Target: "+target_latlong to entry_guid_fail.log.
+        log "start_sim: "+start_sim to entry_guid_fail.log.
         return output.
     }else{
         if is_eg_pos["distance2"] < is_eg_pos["distance3"]{
@@ -390,8 +394,12 @@ function calc_entry_traj {
         set output["iterations"] to output["iterations"] + 1.
 
     }
-     output:add("error",lex("str","To many iteration", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong)).
+    output:add("error",lex("str","To many iteration", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong)).
     set output:converged to false.
+    //log as much as possible to entry_guid_fail.log to help debug why the solver failed.
+    log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to entry_guid_fail.log.
+    //log the is_eg_pos locations to entry_guid_fail.log to help debug why the solver failed.
+    log "is_eg_pos"+is_eg_pos to entry_guid_fail.log.
 
     return output.
 }

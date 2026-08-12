@@ -199,7 +199,7 @@ until running = false{
             nervsoff().
             rapierson().
             set dap["str_mode"] to "aoa". 
-            set dap["aoa"]["target_aoa"]  to AVES["EGAOA"].
+            set dap["aoa"]["target_aoa"]  to AVES["EGAOA"](ship:altitude).
             set dap["aoa"]["target_bank"] to 0.
             set ecrl_2hac to get_geoposition_along_heading(runway_start,runway_heading+180,Aves["HacDistance"]*2).
             if calcdistance(ship:geoposition,runway_start) > calcdistance(ship:geoposition,ecrl_2hac){
@@ -368,7 +368,7 @@ until running = false{
                     
                 }
                 set dap["str_mode"] to "aoa". 
-                set dap["aoa"]["target_aoa"]  to AVES["EGAOA"].
+                set dap["aoa"]["target_aoa"]  to AVES["EGAOA"](ship:altitude).
                 set dap["aoa"]["target_bank"] to 0.
                 dap:update().
                 }
@@ -443,7 +443,7 @@ until running = false{
                 
                 Global d_e to (e_ref - e_dot) / e_ref.
 
-                set dap["aoa"]["target_aoa"]  to AVES["EGAOA"].
+                set dap["aoa"]["target_aoa"]  to AVES["EGAOA"](ship:altitude).
                 //local d_dot is 0.
                 //local cur_d_dot is cur_aeroforce_ld()["drag"].         
                 //set d_dot to aeroforce_ld(s_step["position"],s_step["surfvel"],list(AVES["EGAOA"],ba))["drag"].
@@ -516,7 +516,7 @@ until running = false{
             rcs off.
             
         }
-        if ship:altitude < AVES["TEAMAltitude"]{
+        if ship:altitude < AVES["TEAMAltitude"] and ship:airspeed < 1500{
             reset_sys().
             set step to "TEAM".
             set Lastest_status to "TEAM".
@@ -534,7 +534,11 @@ until running = false{
         }
         set terminal_route to terminal_route_update(terminal_route).
         terminal_route_fly(terminal_route).
-
+        update_team_dap_gui().
+        update_terminal_route_gui().
+        if ship:altitude > 22000{
+            rcs on.
+        }
         if terminal_route["gear"]{
             gear on.
         }else{
@@ -548,308 +552,15 @@ until running = false{
 
         set TEAM_dist to terminal_route["remaining_distance"].
         set TEAM_targetalt to terminal_route["target_altitude"].
-        set hud_vvdot to (TEAM_targetalt - ship:altitude) / max(TEAM_dist / max(ship:airspeed,80),5).
+        set hud_vvdot to (TEAM_targetalt - ship:altitude) / max(TEAM_dist / max(ship:airspeed,120),5).
         if terminal_route["landing_ready"]{
             set step to "landing".
             set dap["str_mode"] to "aerostr".
         }
     }
-    if step = "TEAM_TEST"{
-        local hac is create_hac().
-        if not(defined TEAM_in){
-            set TEAM_in to lex(
-            "step","bef",
-            "enmgt",true,
-            "active_hac",hac[choose_hac()["active_hac"]],
-            "active_hac_dir",choose_hac()["HAC_Direction"],
-            "apch_mode","ovh"
-            ).
-        }
-        //log TEAM_in to log.txt.
-        local Active_HAC is choose_hac().
 
-        log "log_team" to log_team_sim.txt.
-        local TEAM_guid_out is TEAM_guid(Team_in).
-        if TEAM_guid_out["gear_cmd"]{
-            gear on.
-        }else{
-            gear off.
-        }
-        if TEAM_guid_out["airbrake_cmd"]{
-            brakes on.
-        }else{
-            brakes off.
-        }
-
-        set TEAM_in to TEAM_guid_out["team_input"].
-        if TEAM_guid_out["team_input"]["step"]  = "bef"{
-            set dap["str_mode"] to "aoa".
-            local pid is pidloop(0.39,0.33,0.5).
-            set pid:maxoutput to 20.
-            set pid:minoutput to 0.
-            set TEAM_dist to calcdistance_m(hac["hac_ercl"],runway_start)+calc_circle_distance(AVES["HacRadius"],runway_heading-compass_for())+calcdistance_m(ship:geoposition,get_geoposition_on_circle(TEAM_guid_out["active_hac"],AVES["hacRadius"],TEAM_guid_out["active_hac_dir"],heading_to_target(TEAM_guid_out["team_input"]["active_hac"]))).
-            Aeroturn(heading_to_target(TEAM_guid_out["hac_entry_pos"]),"calc",5).
-            set TEAM_targetalt to calculate_glideslope_alt(TEAM_dist/0.5).
-            local vvdot is calc_vvdot(TEAM_dist/0.5,SHIP:AIRSPEED,TEAM_targetalt,SHIP:ALTITUDE).
-            set pid:setpoint to vvdot.
-            set dap["aoa"]["base_pitch"] to PID:UPDATE(TIME:SECONDS, SHIP:verticalspeed).
-
-        }ELSE IF TEAM_guid_out["team_input"]["step"]  = "in"{
-            set dap["str_mode"] to "aoa".
-            local pos is 0.
-            local rad is 0.
-            if TEAM_guid_out["active_hac_dir"] = "clockwise"{
-                set pos to get_geoposition_on_circle(TEAM_guid_out["active_hac"],AVES["hacRadius"],TEAM_guid_out["active_hac_dir"],min(compass_for_prograde()-20,runway_heading)).
-                set rad to calc_turn_radius(ship:geoposition,compass_for_prograde(),pos,min(compass_for_prograde()-20,runway_heading)).
-            }else{
-                set pos to get_geoposition_on_circle(TEAM_guid_out["active_hac"],AVES["hacRadius"],TEAM_guid_out["active_hac_dir"],max(compass_for_prograde()+20,runway_heading)).
-                set rad to calc_turn_radius(ship:geoposition,compass_for_prograde(),pos,max(compass_for_prograde()+20,runway_heading)).
-            }            
-            Aeroturn(heading_to_target(TEAM_guid_out["ercl_hac_latlong"]),TEAM_guid_out["team_input"]["active_hac_dir"],10,rad).
-        }else if TEAM_guid_out["team_input"]["step"]  = "ex"{
-            set dap["str_mode"] to "aoa".
-            local pid is pidloop(0.31,0.33,0.3).
-            set pid:maxoutput to 20.
-            set pid:minoutput to -20.
-            set TEAM_dist to calcdistance_m(ship:geoposition,runway_start).
-            Aeroturn(heading_to_target(TEAM_guid_out["algn_pos"]),"calc",5).
-            set TEAM_targetalt to calculate_glideslope_alt(TEAM_dist).
-            local vvdot is calc_vvdot(TEAM_dist,SHIP:AIRSPEED,TEAM_targetalt,SHIP:ALTITUDE).
-            set pid:setpoint to vvdot.
-            set dap["aoa"]["base_pitch"] to PID:UPDATE(TIME:SECONDS, SHIP:verticalspeed).
-
-        }else if TEAM_guid_out["team_input"]["step"] = "fla"{
-           
-
-            if TEAM_guid_out["gs"]{
-                local pid is pidloop(0.29,0.3,0.4).
-                set pid:maxoutput to 20.
-                set pid:minoutput to -10.
-                set TEAM_dist to calcdistance_m(ship:geoposition,runway_start).
-                Aeroturn(heading_to_target(TEAM_guid_out["algn_pos"]),"calc",5).
-                set TEAM_targetalt to calculate_glideslope_alt(TEAM_dist).
-                local vvdot is calc_vvdot(TEAM_dist,SHIP:AIRSPEED,TEAM_targetalt,SHIP:ALTITUDE).
-                set pid:setpoint to vvdot.
-                set dap["aoa"]["base_pitch"] to PID:UPDATE(TIME:SECONDS, SHIP:verticalspeed).
-            }else{
-                set dap["strmode"] to "aerostr".
-                set dap["aerostr"]["aerostr_Roll"] to 0.
-                set dap["aerostr"]["targetDirection"] to runway_heading.
-                local t_t_a is time_to_alt(ship:altitude,ship:verticalspeed,runway_altitude).
-                if t_t_a > 3{
-                    local pid is pidloop(0.29,0.3,0.4).
-                    set pid:maxoutput to 10.
-                    set pid:minoutput to 0.
-
-                    local vvdot is -10.
-                    set pid:setpoint to vvdot.
-                    set dap["aerostr"]["distance_pitch"] to PID:UPDATE(TIME:SECONDS, SHIP:verticalspeed).
-                }else{
-                    local pid is pidloop(0.29,0.3,0.4).
-                    set pid:maxoutput to 10.
-                    set pid:minoutput to 0.
-
-                    local vvdot is -1.
-                    set pid:setpoint to vvdot.
-                    set dap["aerostr"]["distance_pitch"] to PID:UPDATE(TIME:SECONDS, SHIP:verticalspeed).
-                }
-            }
-
-        }else if TEAM_guid_out["team_input"]["step"] = "ROL"{
-            set dap["strmode"] to "aerostr".
-            set dap["aerostr"]["distance_pitch"] to 0.
-            set dap["aerostr"]["aerostr_Roll"] to 0.
-            set dap["aerostr"]["targetDirection"] to runway_heading.
-            brakes on.
-            if ship:airspeed < 5{
-                set step to "end".
-            }
-        }else{
-            log "error: "+TEAM_guid_out:dump to log.txt.
-        }
-
-    }
-    if step = "TEAM_MAIN_GUID"{
-
-        if ship:altitude < 10000{set console_mode to "TRAJ 3".}
-        set rnw_dis_display to calcdistance_m(ship:geoposition,runway_start).
-        local rnw is lex(
-            "runway_start",runway_start,
-            "runway_end",runway_end,
-            "runway_heading",runway_heading,
-            "runway_altitude",runway_altitude
-        ).
-        local ercl_lineup is lex(
-            "ercl_fnl_latlong",get_geoposition_along_heading(runway_start,runway_heading+180,AVES["HacDistance"]),
-            "ercl_fnl_alt", calculate_glideslope_alt(AVES["HacDistance"]),
-            "ercl_fnl_spd", 200
-        ).
-        if not(defined Team_mode){
-       set Team_mode to "Tra". // Tra /BEF /fnl / FLA
-       if  ship:altitude < Aves["TeamAltitude"] - 1000{
-        SET Team_mode TO "bef".
-        }
-       if ship:altitude < ercl_lineup["ercl_fnl_alt"]{
-        SET Team_mode TO "FNL".
-        }if  ship:altitude < runway_altitude + 100{
-        SET Team_mode TO "FLA".
-        }
-    }
-    if not(defined low_trn){
-        set low_trn to false.
-
-    }
-    If step = "TEAM_MAIN_GUID" and Team_mode = "Tra"{
-        rcs on.
-        brakes on.
-        set dap["str_mode"] to "aoa".
-        set dap["aoa"]["target_bank"] to 0.
-        if not(defined TEAM_Transition_AOA){
-            set TEAM_Transition_AOA to calc_aoa().
-        }
-        if calc_aoa() > TEAM_Transition_AOA{
-            set TEAM_Transition_AOA to calc_aoa().
-        }
-        // Gradually reduce target AOA to transition value
-        // at TEAM altitude (25000) should be TEAM_Transition_AOA
-        // at Team atitude -1000 should be 5 degrees
-        set dap["aoa"]["target_aoa"] to max(5, TEAM_Transition_AOA * ((ship:altitude - (AVES["TeamAltitude"] - 1000)) / 1000)).
-
-
-
-        if ship:altitude < AVES["TeamAltitude"] - 1000{
-            set Team_mode to "bef".
-
-        }
-    }
-    IF step = "TEAM_MAIN_GUID" and Team_mode = "bef"{
-        set dap["str_mode"] to "aoa".
-        IF NOT(defined START_DIST){
-            set START_DIST to calcdistance_m(ship:geoposition,ercl_lineup["ercl_fnl_latlong"]).
-           
-        }
-        if not(defined start_spd){
-            set start_spd to ship:airspeed.
-        }
-        local cur_dist is calcdistance_m(ship:geoposition,ercl_lineup["ercl_fnl_latlong"]).
-        local cur_spd is ship:airspeed.
-
-        local needed_spd is start_spd * (cur_dist / START_DIST).
-        if needed_spd < 180{
-            set needed_spd to 180.
-        }
-        local team_aoa_cmd is 0.
-        if cur_spd <= needed_spd{
-            brakes off.
-            set team_aoa_cmd to 5.
-        }if cur_spd <= needed_spd+20{
-            brakes off.
-            set team_aoa_cmd to 10.
-        }if cur_spd > needed_spd+20{
-            brakes on.
-            set team_aoa_cmd to 10.
-        }
-        aeroturn(heading_to_target(ercl_lineup["ercl_fnl_latlong"]),"calc",team_aoa_cmd).
-
-        set vs_dot to calc_vvdot(cur_dist, cur_spd, ercl_lineup["ercl_fnl_alt"], ship:altitude).
-        if not (defined vs_pis){
-            set vs_pis to pidloop(0.29,0.43,0.3).
-        }
-        set vs_pis:maxoutput to 20.
-        set vs_pis:minoutput to -30.
-        set vs_pis:setpoint to vs_dot.
-        set hud_vvdot to vs_dot.
-        set dap["aoa"]["base_pitch"] to vs_pis:update(time:seconds, ship:verticalspeed).
-        // Linear transition: if heading difference is 0, switch at 0m; if 180, switch at 5000m
-        local heading_diff is abs(compass_for() - rnw["runway_heading"]).
-        if heading_diff > 180 { set heading_diff to 360 - heading_diff. }
-        local switch_dist is AVES["HacDistance"] * (heading_diff / 180).
-
-        if cur_dist < switch_dist {
-            set Team_mode to "FNL".
-            if ship:altitude < calculate_glideslope_alt(calcdistance_m(ship:geoposition, rnw["runway_start"])) {
-                set low_trn to true.
-            }
-        }
-        }
-
-
-if step = "TEAM_MAIN_GUID" and Team_mode = "FNL" {
-    if abs(heading_to_target(rnw["runway_start"]) - rnw["runway_heading"]) < 2 and abs(compass_for_prograde() - rnw["runway_heading"]) < 2 {
-        dap:set_aerostr_auto().
-
-    }else{
-        dap:set_aoa_auto().
-    }
-
-    // Calculate target position
-    local dist_to_rnw is calcdistance_m(ship:geoposition, rnw["runway_start"]).
-
-    local tgt_pos is get_geoposition_along_heading(
-        rnw["runway_start"],
-        rnw["runway_heading"] + 180,
-        dist_to_rnw * 0.7
-    ).
-
-    // Calculate target altitude
-    local dist_to_tgt is calcdistance_m(ship:geoposition, tgt_pos).
-
-    local tgt_alt is calculate_glideslope_alt(dist_to_tgt) +50.
-    set alt_ovr_runway to ship:altitude - runway_altitude.
-    set vs_dot to calc_vvdot(dist_to_tgt, ship:airspeed, tgt_alt, ship:altitude).
-
-    if not (defined vs_pis) {
-        set vs_pis to pidloop(0.25,0.6,0.4).
-    }
-    if low_trn and ship:altitude + 100 < calculate_glideslope_alt(calcdistance_m(ship:geoposition, rnw["runway_start"])) {
-        set vs_dot to 0.
-        
-        
-    }else if low_trn{
-        vs_pis:reset().
-    }else{
-        set low_trn to false.
-    }
-    set vs_pis:maxoutput to 15.
-    set vs_pis:minoutput to -20.
-    if vs_dot > 10 {
-        set vs_dot to 0.
-        
-    }
-    set vs_pis:setpoint to vs_dot.
-    set hud_vvdot to vs_dot.
-    
-
-    if dap["str_mode"] = "aerostr"{
-        set dap["aerostr"]["targetDirection"] to heading_to_target(tgt_pos).
-        set dap["aerostr"]["targetRoll"] to 0.
-        set dap["aerostr"]["distance_pitch"] to vs_pis:update(time:seconds, ship:verticalspeed).
-        if ship:airspeed > 150 and dap["aerostr"]["distance_pitch"] < 2{
-            brakes on.
-        } else {
-            brakes off.
-        }
-        if ship:airspeed > 190{
-            brakes on.
-        }
-    }else{
-        set dap["aoa"]["base_pitch"] to vs_pis:update(time:seconds, ship:verticalspeed).
-        aeroturn(heading_to_target(tgt_pos), "calc", 5).
-        if ship:airspeed > 150 and dap["aoa"]["base_pitch"] < 2{
-            brakes on.
-        } else {
-            brakes off.
-        }
-        if ship:airspeed > 190{
-            brakes on.
-        }
-    }
-
-    if ship:altitude < rnw["runway_altitude"] + 100 or calcdistance_m(ship:geoposition, runway_start) < 500 {
-        set Team_mode to "FLA".
-    }
-}
-    if step = "TEAM_MAIN_GUID" and Team_mode = "FLA"{
+      
+     if step = "landing"{
         set dap["str_mode"] to "aerostr".
         set alt_ovr_runway to ship:altitude - runway_altitude.
         
@@ -906,17 +617,6 @@ if step = "TEAM_MAIN_GUID" and Team_mode = "FNL" {
     aerostr().
         
     }
-                if dap["str_mode"] = "aoa"{
-                set facing_vec to ship:facing:vector.
-                if not (defined old_facing_vec){
-                    set old_facing_vec to facing_vec.
-                }
-                set ship_rotate to facing_vec - old_facing_vec.
-                log ship:altitude +","+ ship:velocity:surface:x +","+ ship:velocity:surface:y +"," + ship:velocity:surface:z +","+ ship:sensors:acc:x +","+ ship:sensors:acc:y +","+ ship:sensors:acc:z +","+ship:facing:vector:x +","+ ship:facing:vector:y +","+ ship:facing:vector:z +","+ roll_for() +","+ ship:mass +","+ ship_rotate:x +","+ ship_rotate:y +","+ ship_rotate:z +","+ runway_start:position:x +","+ runway_start:position:y +","+ runway_start:position:z +","+ runway_end:position:x +","+ runway_end:position:y +","+ runway_end:position:z to POS_AI_LOG_SUPERVISED.txt.
-                log dapthrottle +","+ dap["aoa"]["target_aoa"]+","+dap["aoa"]["target_bank"]+","+ dap["aoa"]["base_pitch"] +","+ gear+","+brakes to POS_AI_LOG_SUPERVISED.txt.
-                set old_facing_vec to facing_vec.
-    }
-    }  
     if step = "end" {
         set running to false.
         reset_sys().
