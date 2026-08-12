@@ -67,15 +67,25 @@ function simulate_trajectory {
     parameter bank_side.
     parameter alt_.
     parameter max_alt is 70000.
-    parameter aoa is AVES["EGAOA"].
+    parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"].
+    //if EGAOA it has to check every timestep to get the new aoa for that alt using AVES["EGAOA"](simstate["altitude"])
+
 
     local temp_simstate is simstate.
 
     until temp_simstate["altitude"] < alt_ or temp_simstate["altitude"] > max_alt {
+        if aoa_temp = "EGAOA"{
+            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+        }else{
+            set aoa to aoa_temp.
+        }
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
+        log "bank angle : "+bank_angle to "goofy.log"..
+        log "aoa : "+aoa to "goofy.log".
         if bank_side = "left"{ 
+            
             set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,-bank_angle)).
         } else {
             set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
@@ -100,13 +110,18 @@ function simulate_trajectory_time {
     parameter bank_angle.
     parameter bank_side.
     parameter t.
-    parameter aoa is AVES["EGAOA"].
+    parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"].
 
     local temp_simstate is simstate.
     local t0 is simstate["simtime"].
 
     until temp_simstate["simtime"] - t0 > t {
+        if aoa_temp = "EGAOA"{
+            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+        }else{
+            set aoa to aoa_temp.
+        }
         local remaining_time is t - (temp_simstate["simtime"] - t0).
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
@@ -132,7 +147,7 @@ function simulate_trajectory_hed{
     parameter simstate.
     parameter hed.
     parameter toll is 1.
-    parameter aoa is AVES["EGAOA"].
+    parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"]/5.
     parameter min_alt is 0.
     parameter min_vel  is 100.
@@ -141,6 +156,11 @@ function simulate_trajectory_hed{
     local temp_simstate is simstate.
 
     until abs(compass_for_simstate(temp_simstate)-hed) < toll or temp_simstate["altitude"] < min_alt or temp_simstate["surfvel"]:mag < min_vel {
+        if aoa_temp = "EGAOA"{
+            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+        }else{
+            set aoa to aoa_temp.
+        }
         local heading_error is compass_for_simstate(temp_simstate)-hed.
         until abs(heading_error) <= 180 {
             if heading_error > 180 {
@@ -183,7 +203,7 @@ function simulate_trajectory_hed_pos{
     parameter simstate.
     parameter pos.
     parameter toll is 1.
-    parameter aoa is AVES["EGAOA"].
+    parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"]/5.
     parameter min_alt is 0.
     parameter min_vel  is 100.
@@ -193,6 +213,11 @@ function simulate_trajectory_hed_pos{
     local hed is heading_between(simstate["latlong"],pos).
 
     until abs(compass_for_simstate(temp_simstate)-hed) < toll or temp_simstate["altitude"] < min_alt or temp_simstate["surfvel"]:mag < min_vel {
+        if aoa_temp = "EGAOA"{
+            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+        }else{
+            set aoa to aoa_temp.
+        }
         local heading_error is compass_for_simstate(temp_simstate)-hed.
         until abs(heading_error) <= 180 {
             if heading_error > 180 {

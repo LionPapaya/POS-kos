@@ -7,6 +7,114 @@ function update_readouts{
     runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
 }
+
+// Small live panel for the commands that DAP sends to the steering system
+// during terminal (TEAM) guidance.  The source values differ by steering
+// mode, so the panel always shows the final pitch/heading/roll command that
+// the active DAP mode has produced.
+function update_team_dap_gui {
+    if not(defined step) {
+        if defined team_dap_gui { team_dap_gui:hide(). }
+        return.
+    }
+    if step <> "TEAM" {
+        if defined team_dap_gui { team_dap_gui:hide(). }
+        return.
+    }
+
+    if not(defined team_dap_gui){
+        global team_dap_gui to gui(260).
+        set team_dap_gui:style:width to 260.
+        set team_dap_gui:style:hstretch to true.
+        team_dap_gui:show().
+
+        local title_box is team_dap_gui:addhbox().
+        local title is title_box:addlabel("<size=16><b>TEAM DAP OUTPUTS</b></size>").
+        set title:style:align to "center".
+
+        local data_box is team_dap_gui:addvbox().
+        global team_dap_mode_label is data_box:addlabel().
+        global team_dap_pitch_label is data_box:addlabel().
+        global team_dap_heading_label is data_box:addlabel().
+        global team_dap_roll_label is data_box:addlabel().
+        global team_dap_aoa_label is data_box:addlabel().
+        global team_dap_bank_label is data_box:addlabel().
+        global team_dap_bias_label is data_box:addlabel().
+        global team_dap_throttle_label is data_box:addlabel().
+        global team_dap_envelope_label is data_box:addlabel().
+    } else {
+        team_dap_gui:show().
+    }
+
+    local output_pitch is 0.
+    local output_heading is 0.
+    local output_roll is 0.
+
+    if dap["dap_mode"] = "css" {
+        set output_pitch to dap["css"]["pitch_out"].
+        set output_heading to dap["css"]["yaw_out"].
+        set output_roll to dap["css"]["roll_out"].
+    } else if dap["str_mode"] = "aoa" {
+        set output_pitch to dap["aoa"]["aoa_pitch"].
+        set output_heading to dap["aoa"]["aoa_yaw"].
+        set output_roll to dap["aoa"]["aoa_roll"].
+    } else if dap["str_mode"] = "aerostr" {
+        set output_pitch to dap["aerostr"]["targetPitch"].
+        set output_heading to dap["aerostr"]["targetDirection"].
+        set output_roll to dap["aerostr"]["targetRoll"].
+    }
+
+    set team_dap_mode_label:text to ("Mode: " + dap["dap_mode"] + " / " + dap["str_mode"]).
+    set team_dap_pitch_label:text to ("CMD Pitch: " + round(output_pitch, 1) + " deg").
+    set team_dap_heading_label:text to ("CMD Heading: " + round(output_heading, 1) + " deg").
+    set team_dap_roll_label:text to ("CMD Roll: " + round(output_roll, 1) + " deg").
+    if dap["dap_mode"] = "auto" and dap["str_mode"] = "aoa" {
+        set team_dap_aoa_label:text to ("AoA: " + round(dap["aoa"]["target_aoa"], 1) + " / " + round(dap["aoa"]["smooth_target_aoa"], 1) + " deg").
+        set team_dap_bank_label:text to ("Bank: " + round(dap["aoa"]["target_bank"], 1) + " / " + round(dap["aoa"]["smooth_target_bank"], 1) + " deg").
+        set team_dap_bias_label:text to ("Pitch bias: " + round(dap["aoa"]["base_pitch"], 1) + " deg").
+    } else {
+        set team_dap_aoa_label:text to "AoA: n/a".
+        set team_dap_bank_label:text to "Bank: n/a".
+        set team_dap_bias_label:text to "Pitch bias: n/a".
+    }
+    set team_dap_throttle_label:text to ("CMD Throttle: " + round(dapthrottle, 2)).
+    set team_dap_envelope_label:text to ("Envelope: " + dap["envelope"]["state"]).
+}
+
+// Live state for the terminal-route planner.  The panel remains hidden until
+// terminal_route_init/update/fly has populated terminal_route_debug.
+function update_terminal_route_gui {
+
+    if not (defined terminal_route_gui){
+        global terminal_route_gui to gui(340).
+        set terminal_route_gui:style:width to 340.
+        set terminal_route_gui:style:hstretch to true.
+        terminal_route_gui:show().
+        local title_box is terminal_route_gui:addhbox().
+        local title is title_box:addlabel("<size=16><b>TERMINAL ROUTE TELEMETRY</b></size>").
+        set title:style:align to "center".
+        local data_box is terminal_route_gui:addvbox().
+        global terminal_route_phase_label is data_box:addlabel().
+        global terminal_route_distance_label is data_box:addlabel().
+        global terminal_route_altitude_label is data_box:addlabel().
+        global terminal_route_vs_label is data_box:addlabel().
+        global terminal_route_energy_label is data_box:addlabel().
+        global terminal_route_command_label is data_box:addlabel().
+        global terminal_route_controls_label is data_box:addlabel().
+        global terminal_route_pid_lable is data_box:addlabel().
+    } else {
+        terminal_route_gui:show().
+    }
+
+    set terminal_route_phase_label:text to ("Phase: " + terminal_route_debug["phase"] + " | " + terminal_route_debug["side"] + " | laps " + terminal_route_debug["hold_laps"]).
+    set terminal_route_distance_label:text to ("Target / remaining: " + round(terminal_route_debug["target_distance"]) + " / " + round(terminal_route_debug["remaining_distance"]) + " m").
+    set terminal_route_altitude_label:text to ("Altitude now / target: " + round(ship:altitude) + " / " + round(terminal_route_debug["target_altitude"]) + " m").
+    set terminal_route_vs_label:text to ("Vertical speed now / target: " + round(ship:verticalspeed,1) + " / " + round(terminal_route_debug["desired_vertical_speed"],1) + " m/s").
+    set terminal_route_energy_label:text to ("Energy margin / target: " + round(terminal_route_debug["energy_margin"]) + " / " + round(terminal_route_debug["target_energy"]) + " m").
+    set terminal_route_command_label:text to ("AoA / bank / bias: " + round(terminal_route_debug["target_aoa"],1) + " / " + round(dap["aoa"]["target_bank"],1) + " / " + round(terminal_route_debug["pitch_bias"],1) + " deg").
+    set terminal_route_controls_label:text to ("Throttle: " + round(terminal_route_debug["throttle"],2) + " | brake: " + terminal_route_debug["airbrake"] + " | gear: " + terminal_route_debug["gear"]).
+    set terminal_route_pid_lable:text to ("PID log: " + terminal_route_debug["Pid_log"]).
+}
 function setup_reentry_script{
     parameter Location_ is "".
     parameter runway_nr_ is "".
@@ -395,7 +503,6 @@ function update_reentry_gui {
         "aoa", calc_aoa(),
         "l/d", 0
     ).
-
     set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
     if inputs["mode"] = "DATA" {
         set console_time:text to ((timestamp():clock)).
