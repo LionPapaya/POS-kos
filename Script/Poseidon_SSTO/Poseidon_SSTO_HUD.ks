@@ -16,7 +16,7 @@ if not(step = old_step){
 Print("|==============================================================================|") at(0,0).
 Print("|                                                                              |") at(0,1).
 Print("|                           POSEIDON OPERATING SYSTEM                          |") at(0,2).
-Print("|                                VERSION 1.3.1.1                               |") at(0,3).
+Print("|                                VERSION 1.3.1.2                               |") at(0,3).
 Print("|                                                                              |") at(0,4).
 if defined ship{
     Print("|                        VEHICLE : "+ship:shipName+"  ")at(0,5).
