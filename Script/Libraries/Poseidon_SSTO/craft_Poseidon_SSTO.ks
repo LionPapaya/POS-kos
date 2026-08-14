@@ -391,41 +391,7 @@ parameter alt_ is ship:altitude.
     }).
 Poseidon_SSTO:add("simulation",lex("timestep",5,"entry_ref_alt",60000,"max_iterations",10,"dist_tolerance",5000)).
 local abort_modes is lex().
-abort_modes:add("runway_abort", Lexicon(
-    "speed", 80,
-    "altitude", 0,
-    "rapiers_out", 1,
-    "nervs_out", 0
-
-          )).
-abort_modes:add("ati", Lexicon(
-    "speed", 480,
-    "altitude", 0,
-    "rapiers_out", 1,
-    "nervs_out", 0
-
-          )).
-abort_modes:add("toa", Lexicon(
-    "speed", 0,
-    "altitude", 0, 
-    "rapiers_out", 4,
-    "nervs_out", 0
-
-       )).
-abort_modes:add("ato", Lexicon(
-    "speed", 0,
-    "altitude", 0,
-    "rapiers_out", 0,
-    "nervs_out", 1
-
-        )).
-abort_modes:add("cont", Lexicon(
-    "speed", 0,
-    "altitude", 0,
-    "rapiers_out", 0,
-    "nervs_out", 2
-
-       )).
+//abort_modes:add().
 
 
 Poseidon_SSTO:add("AbortModes", abort_modes).

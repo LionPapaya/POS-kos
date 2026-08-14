@@ -192,9 +192,26 @@ until running = false{
     if step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int"{
        
         if ship:altitude > 75000{
+            if not (defined entry_square_display){ 
+                print("hey").
+                set entry_begin_state to simulate_trajectory(current_simstate(), 0, "right", AVES["MaxAeroturnAlt"],ship:altitude+100,"EGAOA",AVES["simulation"]["timestep"]).
+                print("calculating entry square").
+                set entry_square_display to entry_possible_square(entry_begin_state,AVES["simulation"]["timestep"]+5).
+                for i in entry_square_display{
+                    //shift I latlng to account for planet rotation uning I["simtime"] and planet rotation rate
+                    local rotation_rate is ship:body:rotationperiod / 360. // degrees per second
+                    set i["latlong"] to latlng(i["latlong"]:lat, i["latlong"]:lng + (i["simtime"] * rotation_rate)).
+                    pos_arrow(i["latlong"],"",AVES["MaxAeroturnAlt"]*10,0.2).
+                }
+            }
             set Lastest_status to "coasting".
         }
+        if ship:altitude < 75000 and ship:altitude > 74000{
+            set Lastest_status to "reentry guidance".
+            clearVecDraws().
+        }
         if ship:altitude < 75000 and ship:altitude > 65000{
+            
             reset_sys().
             nervsoff().
             rapierson().

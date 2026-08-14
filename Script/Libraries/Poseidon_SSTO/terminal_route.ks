@@ -139,7 +139,12 @@ function terminal_route_current_target {
     // is now allowed to sit farther out when the aircraft is still distant,
     // so alignment begins sooner and is less likely to be a late correction.
     local distance is calcdistance_m(ship:geoposition, runway_start).
-    local lead_distance is distance * config_TR["final_lead_fraction"].
+    local lead_distance is 0.
+    if abs(heading_to_target(runway_start) - runway_heading) < 3 {
+        set lead_distance to distance * (config_TR["final_lead_fraction"] * 0.5).
+    }else{
+        set lead_distance to distance * config_TR["final_lead_fraction"].
+    }
     return get_geoposition_along_heading(runway_start, runway_heading + 180, lead_distance).
 }
 
@@ -289,7 +294,7 @@ function terminal_route_fly {
         if not (defined final_pitch_bias_pid){
             set final_pitch_bias_pid to pidloop(0.5,0.2,0.4).
             set final_pitch_bias_pid:maxoutput to 15.
-            set final_pitch_bias_pid:minoutput to -30.
+            set final_pitch_bias_pid:minoutput to -35.
         }
         set final_pitch_bias_pid:setpoint to desired_vertical_speed.
         set pitch_bias to final_pitch_bias_pid:update(time:seconds, ship:verticalspeed).
@@ -328,14 +333,32 @@ function terminal_route_fly {
             set target_aoa to max(config_TR["descent_min_aoa"], target_aoa + descent_error * config_TR["descent_aoa_gain"]).
         }
     }
+    if not( route["phase"] = "final" and abs(heading_to_target(runway_start) - runway_heading) < 1.5  ){
+        set dap["str_mode"] to "aoa".
+        
+        set dap["aoa"]["target_aoa"] to target_aoa.
+        set dap["aoa"]["target_bank"] to terminal_route_bank_command(heading_to_target(target), config_TR).
 
-    set dap["str_mode"] to "aoa".
-    set dap["aoa"]["target_aoa"] to target_aoa.
-    set dap["aoa"]["target_bank"] to terminal_route_bank_command(heading_to_target(target), config_TR).
+    }else{
+        set dap["str_mode"] to "aerostr".
+        local hed_error is heading_to_target(runway_start) - compass_for_prograde().
+        set dap["aerostr"]["turn_heading"] to heading_to_target(runway_start) + hed_error * 2.
+        //if dap["aerostr"]["turn_heading"] > compass_for_prograde() + 2{
+        //    set dap["aerostr"]["aerostr_Roll"] to 10.
+        //}else if dap["aerostr"]["turn_heading"] < compass_for_prograde() - 2{
+        //    set dap["aerostr"]["aerostr_Roll"] to -10.
+        //}else{
+            set dap["aerostr"]["aerostr_Roll"] to 0.
+        //}
+        set dap["aerostr"]["distance_pitch"] to pitch_bias.
+
+    }
+
     // aoa_bank_management treats base_pitch as an absolute pitch baseline.
     // Supply prograde plus the terminal correction so pitch_bias stays a bias.
     if route["phase"] ="final"{
         set dap["aoa"]["base_pitch"] to pitch_bias.
+        set dap["aoa"]["target_aoa"] to target_aoa + 5.
     }else{
         set dap["aoa"]["base_pitch"] to pitch_for_prograde() + pitch_bias.
     }
