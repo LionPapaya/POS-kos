@@ -11,6 +11,7 @@ RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
+RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
 
 
 
@@ -27,6 +28,10 @@ set Lastest_status to "launching".
 set orbitcalc to false.
 local ascent is AVES["Ascent"].
 local launch_heading is AVES["Ascent"]["default_launch_heading"].
+local runway_heading is AVES["Ascent"]["default_launch_heading"].
+local runway_altitude is 0.
+local liftoff_altitude is ascent["liftoff_height_above_runway"].
+local rotate_altitude is ascent["rotate_height_above_runway"].
 local previous_speed is 0.
 local speed_trend is 0.
 
@@ -43,6 +48,16 @@ check_inputs().
 
 reset_sys().
 dap:setup().
+local active_runway is find_active_runway().
+if active_runway["heading"] >= 0 {
+    set runway_heading to active_runway["heading"].
+}
+if active_runway["altitude"] >= 0 {
+    set runway_altitude to active_runway["altitude"].
+    set liftoff_altitude to runway_altitude + ascent["liftoff_height_above_runway"].
+    set rotate_altitude to runway_altitude + ascent["rotate_height_above_runway"].
+}
+set dap["aerostr"]["targetDirection"] to runway_heading.
 set launch_heading to calculate_heading(TargetInclination, ship:latitude).
 if launch_heading < 0 {
     set launch_heading to ascent["inclination_heading_fallback"].
@@ -65,7 +80,7 @@ until running = false{
 
     if step = "launch"{
          
-        if ship:altitude < ascent["liftoff_altitude"]{
+        if ship:altitude < liftoff_altitude{
              
             rapierson().
             set dapthrottle to 1.
@@ -88,15 +103,16 @@ until running = false{
         }
 
         
-    if ship:altitude > ascent["liftoff_altitude"] and ship:airspeed <= AVES["Speed"]["Rotate"]{
+    if ship:altitude > liftoff_altitude and ship:airspeed <= AVES["Speed"]["Rotate"]{
         set Lastest_status to "not in lift off conditon".
         set step to "end".
     }
     }
     if step = "rotate"{
         set dap["aerostr"]["targetPitch"] to ascent["rotate_pitch"].
+        set dap["aerostr"]["targetDirection"] to runway_heading.
         //decide_abort_mode().
-        if ship:altitude > ascent["rotate_altitude"]{
+        if ship:altitude > rotate_altitude{
             gear off.
             set step to "speed_build".
             set warp to 0.

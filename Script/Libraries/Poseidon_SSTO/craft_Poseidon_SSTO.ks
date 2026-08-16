@@ -288,8 +288,8 @@ Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",100)).
 // so the flight logic remains readable and can be adjusted without hunting for
 // thresholds in the state machine.
 Poseidon_SSTO:add("Ascent",lex(
-    "liftoff_altitude",85,
-    "rotate_altitude",90,
+    "liftoff_height_above_runway",13,
+    "rotate_height_above_runway",18,
     "rotate_pitch",20,
     "display_altitude",70000,
     "display_speed",2100,

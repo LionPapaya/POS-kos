@@ -248,6 +248,53 @@ function calculate_heading {
     }
     return h.
 }
+
+// Find the runway currently occupied by the aircraft and select the runway
+// direction closest to its present heading.
+function find_active_runway {
+    local runways is Location_constants["kerbin"].
+    local closest_distance is 9999999999.
+    local active_heading is -1.
+    local active_start is "".
+    local active_end is "".
+    local active_altitude is -1.
+
+    for runway_key in runways:keys {
+        if runway_key:matchespattern("runway_\\d{1,2}_start$") {
+            local end_key is runway_key:replace("_start", "_end").
+            if runways:haskey(end_key) {
+                local start_pos is runways[runway_key].
+                local end_pos is runways[end_key].
+                local midpoint is latlng((start_pos:lat + end_pos:lat) / 2, (start_pos:lng + end_pos:lng) / 2).
+                local distance_to_midpoint is calcdistance_m(ship:geoposition, midpoint).
+                if distance_to_midpoint < closest_distance {
+                    local runway_location is runway_key:split("_")[0].
+                    local runway_heading is heading_between(start_pos, end_pos).
+                    local reverse_heading is runway_heading + 180.
+                    if reverse_heading >= 360 { set reverse_heading to reverse_heading - 360. }
+                    local forward_error is abs(compass_for() - runway_heading).
+                    local reverse_error is abs(compass_for() - reverse_heading).
+                    if forward_error > 180 { set forward_error to 360 - forward_error. }
+                    if reverse_error > 180 { set reverse_error to 360 - reverse_error. }
+                    if reverse_error < forward_error {
+                        set runway_heading to reverse_heading.
+                        set active_start to end_pos.
+                        set active_end to start_pos.
+                    } else {
+                        set active_start to start_pos.
+                        set active_end to end_pos.
+                    }
+                    set closest_distance to distance_to_midpoint.
+                    set active_heading to runway_heading.
+                    if KerbinRunwayalt:haskey(runway_location + "_runway") {
+                        set active_altitude to KerbinRunwayalt[runway_location + "_runway"].
+                    }
+                }
+            }
+        }
+    }
+    return lex("heading", active_heading, "start", active_start, "end", active_end, "altitude", active_altitude).
+}
 function calc_hacstate{
     parameter hac_pos.
     parameter hac_rad.
