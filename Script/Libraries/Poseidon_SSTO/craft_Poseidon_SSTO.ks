@@ -284,6 +284,39 @@ function setup_landing_script{
 
 local Poseidon_SSTO is lex().
 Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",100)).
+// Aircraft-style ascent profile.  Keep all Poseidon-specific ascent tuning here
+// so the flight logic remains readable and can be adjusted without hunting for
+// thresholds in the state machine.
+Poseidon_SSTO:add("Ascent",lex(
+    "liftoff_altitude",85,
+    "rotate_altitude",90,
+    "rotate_pitch",20,
+    "display_altitude",70000,
+    "display_speed",2100,
+    "default_launch_heading",90,
+    "shallow_climb_pitch",10,
+    "speed_build_target",440,
+    "speed_build_pitch",10,
+    "climb_altitude",20000,
+    "climb_target_speed",1500,
+    "climb_pitch",15,
+    "nerv_activation_altitude",20000,
+    "minimum_climb_vertical_speed",5,
+    "closed_cycle_min_altitude",23000,
+    "closed_cycle_max_altitude",57000,
+    "closed_cycle_pitch_start",10,
+    "closed_cycle_pitch_rate",1,
+    "closed_cycle_pitch_max",30,
+    "rapier_cutoff_apoapsis",57000,
+    "apoapsis_build_pitch",15,
+    "space_altitude",70000,
+    "heading_tolerance",5,
+    "speed_gain_threshold",0.5,
+    "vertical_speed_recovery_pitch",2,
+    "vertical_speed_recovery_threshold",0,
+    "apoapsis_margin",500,
+    "inclination_heading_fallback",90
+)).
 Poseidon_SSTO:add("MaxAeroturnAlt",60000).
 Poseidon_SSTO:add("MaxRoll",40).
 Poseidon_SSTO:add("MaxPitch",48).
@@ -358,7 +391,27 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "pitch_bias_max",12,
     "descent_min_aoa",5,
     "descent_aoa_max",12,
-    "descent_aoa_gain",0.4
+    "descent_aoa_gain",0.4,
+    "time_to_go_min_speed",80,
+    "time_to_go_min",5,
+    "final_time_to_go_min",3,
+    "hold_descent_time_limit",20,
+    "downwind_descent_time_limit",20,
+    "final_descent_time_limit",15,
+    "final_pitch_pid_p",0.5,
+    "final_pitch_pid_i",0.2,
+    "final_pitch_pid_d",0.4,
+    "final_pitch_pid_max",15,
+    "final_pitch_pid_min",-35,
+    "pitch_bias_gain",0.35,
+    "nominal_target_aoa",16,
+    "max_energy_aoa",30,
+    "high_energy_threshold",300,
+    "energy_aoa_gain_denominator",120,
+    "final_alignment_heading_tolerance",1.5,
+    "final_heading_correction",2,
+    "final_aoa_offset",5,
+    "debug_log_interval",0.5
 )).
 Poseidon_SSTO:add("EG_rev°",5).
 Poseidon_SSTO:add("EG_am_range",20).

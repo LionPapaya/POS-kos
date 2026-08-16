@@ -238,11 +238,15 @@ function calculate_heading {
     set sin_h to cos(inclination) / cos(latitude_).
     if abs(sin_h) > 1 {
         print "Inclination not possible from this latitude.".
-        return.
+        return -1.
     }
 
     set h to arcsin(sin_h).
-    return h. // Adjust for prograde or retrograde as needed.
+    until h >= 0 and h < 360 {
+        if h < 0 { set h to h + 360. }
+        if h >= 360 { set h to h - 360. }
+    }
+    return h.
 }
 function calc_hacstate{
     parameter hac_pos.

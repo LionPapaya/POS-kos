@@ -27,7 +27,8 @@ global terminal_route_debug is lex(
 
 function terminal_route_energy_height {
     // Specific kinetic energy expressed as an equivalent altitude in metres.
-    return ship:altitude - runway_altitude + (ship:airspeed ^ 2) / (2 * 9.81).
+    local body_gravity is ship:body:mu / (ship:body:radius ^ 2).
+    return ship:altitude - runway_altitude + (ship:airspeed ^ 2) / (2 * body_gravity).
 }
 
 // Terminal-only lateral controller.  Unlike aeroturn's fixed-radius command,
@@ -112,7 +113,8 @@ function terminal_route_init {
     local direct_distance is calcdistance_m(ship:geoposition, downwind_fix) +
         calcdistance_m(downwind_fix, base_fix) +
         calcdistance_m(base_fix, final_fix) + final_distance.
-    local direct_target_energy is calculate_glideslope_alt(direct_distance) - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * 9.81).
+    local body_gravity is ship:body:mu / (ship:body:radius ^ 2).
+    local direct_target_energy is calculate_glideslope_alt(direct_distance) - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * body_gravity).
     if terminal_route_energy_height() < direct_target_energy - config_TR["low_energy_margin"] {
         set route["phase"] to "downwind".
     }
@@ -179,25 +181,26 @@ function terminal_route_update {
     local target_distance is calcdistance_m(ship:geoposition, target).
     local remaining_distance is terminal_route_remaining_distance(route).
     local profile_altitude is calculate_glideslope_alt(remaining_distance).
-    local target_energy is profile_altitude - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * 9.81).
+    local body_gravity is ship:body:mu / (ship:body:radius ^ 2).
+    local target_energy is profile_altitude - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * body_gravity).
     local energy_margin is terminal_route_energy_height() - target_energy.
 
     local target_altitude is profile_altitude.
-    local speed is max(ship:airspeed, 80).
+    local speed is max(ship:airspeed, config_TR["time_to_go_min_speed"]).
     if route["phase"] = "intercept" or route["phase"] = "hold" {
-        local hold_time is max(remaining_distance / speed, 5).
-        local descent_time is min(hold_time, 20).
+        local hold_time is max(remaining_distance / speed, config_TR["time_to_go_min"]).
+        local descent_time is min(hold_time, config_TR["hold_descent_time_limit"]).
         local descent_target is ship:altitude - config_TR["hold_descent_rate"] * descent_time.
         set target_altitude to min(profile_altitude - config_TR["early_descent_margin"], descent_target).
         set target_altitude to max(target_altitude, runway_altitude + 500).
     } else if route["phase"] = "downwind" or route["phase"] = "base" {
-        local downwind_time is max(remaining_distance / speed, 5).
-        local descent_target is ship:altitude - config_TR["downwind_descent_rate"] * min(downwind_time, 20).
+        local downwind_time is max(remaining_distance / speed, config_TR["time_to_go_min"]).
+        local descent_target is ship:altitude - config_TR["downwind_descent_rate"] * min(downwind_time, config_TR["downwind_descent_time_limit"]).
         set target_altitude to min(profile_altitude - config_TR["early_descent_margin"], descent_target).
         set target_altitude to max(target_altitude, runway_altitude + 300).
     } else if route["phase"] = "final" {
-        local final_time is max(remaining_distance / speed, 3).
-        local descent_target is ship:altitude - config_TR["final_descent_rate"] * min(final_time, 15).
+        local final_time is max(remaining_distance / speed, config_TR["final_time_to_go_min"]).
+        local descent_target is ship:altitude - config_TR["final_descent_rate"] * min(final_time, config_TR["final_descent_time_limit"]).
         set target_altitude to min(profile_altitude, descent_target).
         set target_altitude to max(target_altitude, runway_altitude + 100).
     }
@@ -272,7 +275,7 @@ function terminal_route_fly {
     local config_TR is AVES["TerminalRoute"].
     local target is terminal_route_current_target(route).
     local distance is route["remaining_distance"].
-    local time_to_go is max(distance / max(ship:airspeed, 80), 5).
+    local time_to_go is max(distance / max(ship:airspeed, config_TR["time_to_go_min_speed"]), config_TR["time_to_go_min"]).
     local desired_vertical_speed is 0.
     local pid_log is "none".
     if route["phase"] = "final" {
@@ -292,24 +295,24 @@ function terminal_route_fly {
     local pitch_bias is 0.
     if route["phase"] = "final" {
         if not (defined final_pitch_bias_pid){
-            set final_pitch_bias_pid to pidloop(0.5,0.2,0.4).
-            set final_pitch_bias_pid:maxoutput to 15.
-            set final_pitch_bias_pid:minoutput to -35.
+            set final_pitch_bias_pid to pidloop(config_TR["final_pitch_pid_p"],config_TR["final_pitch_pid_i"],config_TR["final_pitch_pid_d"]).
+            set final_pitch_bias_pid:maxoutput to config_TR["final_pitch_pid_max"].
+            set final_pitch_bias_pid:minoutput to config_TR["final_pitch_pid_min"].
         }
         set final_pitch_bias_pid:setpoint to desired_vertical_speed.
         set pitch_bias to final_pitch_bias_pid:update(time:seconds, ship:verticalspeed).
         set pid_log to pitch_bias.
     } else {
-        set pitch_bias to max(config_TR["pitch_bias_min"], min(config_TR["pitch_bias_max"], (desired_vertical_speed - ship:verticalspeed) * 0.35)).
+        set pitch_bias to max(config_TR["pitch_bias_min"], min(config_TR["pitch_bias_max"], (desired_vertical_speed - ship:verticalspeed) * config_TR["pitch_bias_gain"])).
     }
-    local target_aoa is 16.
-    local max_energy_aoa is 30.
+    local target_aoa is config_TR["nominal_target_aoa"].
+    local max_energy_aoa is config_TR["max_energy_aoa"].
     if route["phase"] = "intercept" or route["phase"] = "hold" {
         set max_energy_aoa to config_TR["hold_aoa_max"].
     }
 
-    if route["energy_margin"] > 300 {
-        set target_aoa to min(max_energy_aoa, 16 + route["energy_margin"] / 120).
+    if route["energy_margin"] > config_TR["high_energy_threshold"] {
+        set target_aoa to min(max_energy_aoa, config_TR["nominal_target_aoa"] + route["energy_margin"] / config_TR["energy_aoa_gain_denominator"]).
     }
     if route["energy_margin"] < -config_TR["low_energy_margin"] {
         set target_aoa to config_TR["descent_min_aoa"].
@@ -333,7 +336,7 @@ function terminal_route_fly {
             set target_aoa to max(config_TR["descent_min_aoa"], target_aoa + descent_error * config_TR["descent_aoa_gain"]).
         }
     }
-    if not( route["phase"] = "final" and abs(heading_to_target(runway_start) - runway_heading) < 1.5  ){
+    if not( route["phase"] = "final" and abs(heading_to_target(runway_start) - runway_heading) < config_TR["final_alignment_heading_tolerance"]  ){
         set dap["str_mode"] to "aoa".
         
         set dap["aoa"]["target_aoa"] to target_aoa.
@@ -342,7 +345,7 @@ function terminal_route_fly {
     }else{
         set dap["str_mode"] to "aerostr".
         local hed_error is heading_to_target(runway_start) - compass_for_prograde().
-        set dap["aerostr"]["turn_heading"] to heading_to_target(runway_start) + hed_error * 2.
+        set dap["aerostr"]["turn_heading"] to heading_to_target(runway_start) + hed_error * config_TR["final_heading_correction"].
         //if dap["aerostr"]["turn_heading"] > compass_for_prograde() + 2{
         //    set dap["aerostr"]["aerostr_Roll"] to 10.
         //}else if dap["aerostr"]["turn_heading"] < compass_for_prograde() - 2{
@@ -358,7 +361,7 @@ function terminal_route_fly {
     // Supply prograde plus the terminal correction so pitch_bias stays a bias.
     if route["phase"] ="final"{
         set dap["aoa"]["base_pitch"] to pitch_bias.
-        set dap["aoa"]["target_aoa"] to target_aoa + 5.
+        set dap["aoa"]["target_aoa"] to target_aoa + config_TR["final_aoa_offset"].
     }else{
         set dap["aoa"]["base_pitch"] to pitch_for_prograde() + pitch_bias.
     }
@@ -369,7 +372,7 @@ function terminal_route_fly {
     set terminal_route_debug["Pid_log"] to pid_log.
 
     // Log at 2 Hz so a complete approach is inspectable without flooding the volume.
-    if time:seconds - terminal_route_debug["last_log_time"] >= 0.5 {
+    if time:seconds - terminal_route_debug["last_log_time"] >= config_TR["debug_log_interval"] {
         log "TR phase=" + terminal_route_debug["phase"] + " side=" + terminal_route_debug["side"] + " laps=" + terminal_route_debug["hold_laps"] + " target_dist=" + round(terminal_route_debug["target_distance"],1) + " remain=" + round(terminal_route_debug["remaining_distance"],1) + " alt=" + round(ship:altitude,1) + " target_alt=" + round(terminal_route_debug["target_altitude"],1) + " vs=" + round(ship:verticalspeed,1) + " desired_vs=" + round(desired_vertical_speed,1) + " bias=" + round(pitch_bias,1) + " energy_margin=" + round(terminal_route_debug["energy_margin"],1) + " target_energy=" + round(terminal_route_debug["target_energy"],1) + " aoa=" + round(target_aoa,1) + " bank=" + round(dap["aoa"]["target_bank"],1) + " throttle=" + round(dapthrottle,2) + " brake=" + terminal_route_debug["airbrake"] + " gear=" + terminal_route_debug["gear"] + " pid_log=" + pid_log to "terminal_route.log".
         set terminal_route_debug["last_log_time"] to time:seconds.
     }

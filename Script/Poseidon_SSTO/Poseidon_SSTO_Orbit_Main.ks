@@ -1,8 +1,7 @@
 
 // Poseidon_SSTO/Poseidon_SSTO_Orbit_Main.ks
 // Purpose: ascent and orbital insertion script for Poseidon SSTO.
-// - Loads the Poseidon libraries and runs the ascent/circularization flow (Launch -> rotate -> assent -> circ).
-// Notes: header comments only, no code changes.
+// - Loads the Poseidon libraries and runs the aircraft-style ascent/circularization flow.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
@@ -16,7 +15,7 @@ RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 
 
 
-set step to "Launch".
+set step to "launch".
 set running to true.
 clearScreen.  
 
@@ -26,10 +25,12 @@ set rapiers to false.
 set circ_done to false.
 set Lastest_status to "launching".
 set orbitcalc to false.
+local ascent is AVES["Ascent"].
+local launch_heading is AVES["Ascent"]["default_launch_heading"].
+local previous_speed is 0.
+local speed_trend is 0.
 
 
-//min periapsis = 75000  ----->  apoapsis > periapsis
-//Inclination between 0 and 180
 local Target_orbit is create_assent_gui().
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
@@ -42,6 +43,11 @@ check_inputs().
 
 reset_sys().
 dap:setup().
+set launch_heading to calculate_heading(TargetInclination, ship:latitude).
+if launch_heading < 0 {
+    set launch_heading to ascent["inclination_heading_fallback"].
+}
+set previous_speed to ship:airspeed.
 set t0 to -1.
 set dap_mode to "auto".
 until running = false{
@@ -49,14 +55,17 @@ until running = false{
     dap:update().
     update_assent_gui().
 
-    if ship:altitude < 70000 and ship:airspeed < 2100{
+    if ship:altitude < ascent["display_altitude"] and ship:airspeed < ascent["display_speed"]{
         set console_mode to "assent".
     }else{
          set console_mode to "Data".
     }
-    if step = "Launch"{
+    set speed_trend to ship:airspeed - previous_speed.
+    set previous_speed to ship:airspeed.
+
+    if step = "launch"{
          
-        if ship:altitude < 85{
+        if ship:altitude < ascent["liftoff_altitude"]{
              
             rapierson().
             set dapthrottle to 1.
@@ -79,92 +88,94 @@ until running = false{
         }
 
         
-    if ship:altitude > 85{
+    if ship:altitude > ascent["liftoff_altitude"] and ship:airspeed <= AVES["Speed"]["Rotate"]{
         set Lastest_status to "not in lift off conditon".
         set step to "end".
     }
     }
     if step = "rotate"{
-        set dap["aerostr"]["targetPitch"] to 20.
+        set dap["aerostr"]["targetPitch"] to ascent["rotate_pitch"].
         //decide_abort_mode().
-        if ship:altitude > 90{
+        if ship:altitude > ascent["rotate_altitude"]{
             gear off.
-            set step to "assent".
+            set step to "speed_build".
             set warp to 0.
-            //set assent_heading to calculate_heading(TargetInclination, ship:latitude).
-            SET ASSENT_HEADING TO TargetInclination + 90.
-            
+            set assent_heading to launch_heading.
         }
     }
-    if step = "assent"{
-        //decide_abort_mode().
-        if ship:airspeed < 440 or abs(compass_for() - assent_heading) < 5{
-            
-            IF SHIP:AIRSPEED > 400{
-                SET STEP TO "ATI".
-            }
-            if ship:altitude < 200{
-                set aoa_pitch to 17.
-            }else{
-                set aoa_pitch to 10.
-            }
-            set dap["str_mode"] to "aoa".
-            set base_pitch to -1.
-            aeroturn(assent_heading,"calc",aoa_pitch).
-        }else{
-            set dap["str_mode"] to "aerostr".
-            set dap["aerostr"]["targetPitch"] to  15.
-            set dap["aerostr"]["targetDirection"] to assent_heading.
+    if step = "speed_build"{
+        set dap["str_mode"] to "aerostr".
+        set dap["aerostr"]["targetDirection"] to assent_heading.
+        set dap["aerostr"]["targetPitch"] to ascent["shallow_climb_pitch"].
+        if ship:airspeed >= ascent["speed_build_target"] {
+            set step to "high_altitude_climb".
+            set Lastest_status to "speed target reached".
         }
-        if airspeed > 440 and ship:altitude < 15000{set dap["aerostr"]["targetPitch"] to  15. set warp to 1.}
-        
-        if ship:altitude > 15000 and ship:altitude < 20000 and dap["aerostr"]["targetPitch"] > 2{
-            
-            set dap["aerostr"]["targetPitch"] to dap["aerostr"]["targetPitch"] - 0.4.
-            wait 0.55.
-            if not (ship:apoapsis > ship:altitude + 500){
-                set dap["aerostr"]["targetPitch"] to 7.
-            }
-            }
-        if ship:altitude > 20000 and ship:altitude < 23000{   
-        set dap["aerostr"]["targetPitch"] to 10.
-        set warp to 0.
-        nervson().
-        set Lastest_status to "nervs on".
+    }
+    if step = "high_altitude_climb"{
+        set dap["str_mode"] to "aerostr".
+        set dap["aerostr"]["targetDirection"] to assent_heading.
+        set dap["aerostr"]["targetPitch"] to ascent["climb_pitch"].
+        if ship:verticalspeed < ascent["minimum_climb_vertical_speed"] {
+            set dap["aerostr"]["targetPitch"] to ascent["climb_pitch"] + ascent["vertical_speed_recovery_pitch"].
         }
-        if ship:altitude > 23000 and ship:altitude < 57000{
+        if ship:altitude >= ascent["climb_altitude"] and ship:airspeed >= ascent["climb_target_speed"] {
+            nervson().
+            set step to "nerv_assist".
+            set Lastest_status to "nervs on".
+        }
+    }
+    if step = "nerv_assist"{
+        set dap["str_mode"] to "aerostr".
+        set dap["aerostr"]["targetDirection"] to assent_heading.
+        set dap["aerostr"]["targetPitch"] to ascent["climb_pitch"].
+        if ship:verticalspeed <= ascent["vertical_speed_recovery_threshold"] {
+            set dap["aerostr"]["targetPitch"] to ascent["climb_pitch"] + ascent["vertical_speed_recovery_pitch"].
+        }
+        if speed_trend <= ascent["speed_gain_threshold"] and ship:altitude >= ascent["closed_cycle_min_altitude"] {
+            set step to "closed_cycle_climb".
+            set Lastest_status to "transitioning to closed cycle".
+        }
+    }
+    if step = "closed_cycle_climb"{
             if rapier_mode = "air"{
                 togglerapiermode("CLOSED").
-            }   
+            }
             set Lastest_status to "rapiers in closed cycle".
-            if dap["aerostr"]["targetPitch"] < 30{
-                set dap["aerostr"]["targetPitch"] to dap["aerostr"]["targetPitch"] + 1.
-                wait 0.5.
+            set dap["str_mode"] to "aerostr".
+            set dap["aerostr"]["targetDirection"] to assent_heading.
+            if dap["aerostr"]["targetPitch"] < ascent["closed_cycle_pitch_max"]{
+                set dap["aerostr"]["targetPitch"] to dap["aerostr"]["targetPitch"] + ascent["closed_cycle_pitch_rate"].
             }else{
                 set warp to 1.
             }
-            
             rcs on.
-        }    
-        if ship:apoapsis > 57000{
-            rapiersoff().
-            set dap["aerostr"]["targetPitch"] to 15.
-            rcs off.
-        } 
-        if ship:altitude > 70000{
-            lock dap_steering to prograde.
-            set Lastest_status to "Space".
-            ag5 on.
-        }   
-        if ship:apoapsis > TargetApoapsis {
+            if ship:apoapsis > ascent["rapier_cutoff_apoapsis"] {
+                rapiersoff().
+                set dap["aerostr"]["targetPitch"] to ascent["apoapsis_build_pitch"].
+                set step to "apoapsis_build".
+                set Lastest_status to "nerv apoapsis build".
+            }
+    }
+    if step = "apoapsis_build"{
+        set dap["str_mode"] to "aerostr".
+        set dap["aerostr"]["targetDirection"] to assent_heading.
+        set dap["aerostr"]["targetPitch"] to ascent["apoapsis_build_pitch"].
+        if ship:verticalspeed <= ascent["vertical_speed_recovery_threshold"] {
+            set dap["aerostr"]["targetPitch"] to ascent["apoapsis_build_pitch"] + ascent["vertical_speed_recovery_pitch"].
+        }
+        if ship:apoapsis > TargetApoapsis + ascent["apoapsis_margin"] {
             set Step to "circ".
             rapiersoff().
             set dapthrottle to 0.
             wait 2.
-        
-
-            
         }
+    }
+    if ship:altitude > ascent["space_altitude"] and (step = "apoapsis_build" or step = "closed_cycle_climb"){
+            lock dap_steering to prograde.
+            set Lastest_status to "Space".
+            ag5 on.
+    }
     }
     if step = "circ"{
         if circ_done = false{
