@@ -192,7 +192,7 @@ until running = false{
             set Lastest_status to "Space".
             ag5 on.
     }
-    }
+    
     if step = "circ"{
         if circ_done = false{
             set circ to node( time+eta:apoapsis, 0, 0, 0).
