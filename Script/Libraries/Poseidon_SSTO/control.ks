@@ -3,7 +3,7 @@
 // Libraries/Poseidon_SSTO/control.ks
 // Purpose: Poseidon autopilot and control helpers (the `dap` control lexicon).
 // - Initializes `dap` with `dap:setup()` and updates via `dap:update()`.
-// - Implements autopilot modes (auto/aoa/aerostr/css/off), engine helpers and utility actions (execute_node, reset_sys).
+// - Implements autopilot modes (auto/aoa/aerostr/vector/css/off), engine helpers and utility actions (execute_node, reset_sys).
 // Notes: only comments inserted; no logic or code changed.
 global dap is lex().
 if not (dap:haskey("setup_done")) {
@@ -38,6 +38,12 @@ if not (dap:haskey("setup")) {
         aoa_str:add("smooth_target_bank", 0).
         aoa_str:add("base_pitch", 0).
         dap:add("aoa", aoa_str).
+    }
+
+    if not (dap:haskey("vector")) {
+        local vector_str is lexicon().
+        vector_str:add("targetVector", ship:facing:vector).
+        dap:add("vector", vector_str).
     }
 
     if not (dap:haskey("css")) {
@@ -288,6 +294,8 @@ if not (dap:haskey("update")) {
             dap:set_aerostr_auto().
         }else if dap["dap_mode"] = "auto" and dap["str_mode"] = "aoa"{
             dap:set_aoa_auto().
+        }else if dap["dap_mode"] = "auto" and dap["str_mode"] = "vector"{
+            dap:set_vector_auto().
         }else if dap["dap_mode"] = "css"{
             dap:set_css().
         }else if dap["dap_mode"] = "off"{ 
@@ -325,6 +333,9 @@ if not (dap:haskey("update")) {
             
              
         
+        }
+        if dap["str_mode"] = "vector"{
+            lock steering to dap["vector"]["targetVector"].
         }
     }
     if dap["dap_mode"] = "css"{
@@ -395,7 +406,7 @@ if not (dap:haskey("update")) {
 
         }
     }
-    if dap["envelope"]["state"] = "upset_zero_aoa" or dap["envelope"]["state"] = "upset_pullup" {
+    if (dap["envelope"]["state"] = "upset_zero_aoa" or dap["envelope"]["state"] = "upset_pullup") and dap["str_mode"] <> "vector" {
         envelope_run_recovery().
     } else if dap["envelope"]["restore_steering"] {
         lock steering to dap_steering.
@@ -429,6 +440,20 @@ if not (dap:haskey("set_aerostr_auto")) {
     set dap["str_mode"] to "aerostr".
     set dap["dap_mode_set"]["dapmode"] to "auto".
     set dap["dap_mode_set"]["str_mode"] to "aerostr".
+
+}).
+}
+if not (dap:haskey("set_vector_auto")) {
+    dap:add("set_vector_auto", {
+    if not dap["setup_done"]{
+        setup_dap().
+    }
+    lock dap_steering to dap["vector"]["targetVector"].
+    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
+    set dap["dap_mode"] to "auto".
+    set dap["str_mode"] to "vector".
+    set dap["dap_mode_set"]["dapmode"] to "auto".
+    set dap["dap_mode_set"]["str_mode"] to "vector".
 
 }).
 }
