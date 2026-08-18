@@ -283,23 +283,24 @@ function setup_landing_script{
 }
 
 local Poseidon_SSTO is lex().
-Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",100)).
+Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",110)).
 // Aircraft-style ascent profile.  Keep all Poseidon-specific ascent tuning here
 // so the flight logic remains readable and can be adjusted without hunting for
 // thresholds in the state machine.
 Poseidon_SSTO:add("Ascent",lex(
     "liftoff_height_above_runway",13,
-    "rotate_height_above_runway",18,
+    "rotate_height_above_runway",30,
     "rotate_pitch",20,
     "display_altitude",70000,
     "display_speed",2100,
     "default_launch_heading",90,
-    "shallow_climb_pitch",10,
+    "shallow_climb_pitch",9,
     "speed_build_target",440,
     "speed_build_pitch",10,
     "climb_altitude",20000,
     "climb_target_speed",1500,
-    "climb_pitch",15,
+    "climb_pitch",12,
+    "nerv_pitch", 9,
     "nerv_activation_altitude",20000,
     "minimum_climb_vertical_speed",5,
     "closed_cycle_min_altitude",23000,
