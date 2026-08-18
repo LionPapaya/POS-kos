@@ -123,6 +123,19 @@ function envelope_refresh {
     local requested_aoa is dap["aoa"]["target_aoa"].
     local requested_pitch is dap["aerostr"]["targetPitch"].
 
+    // During launch or rotate phases, disable envelope upset interventions
+    // to avoid interfering with ascent/initial rotation maneuvers.
+    if defined step and (step = "launch" or step = "rotate") {
+        set envelope["rcs_assist"] to false.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        set envelope["state"] to "normal".
+        rcs off.
+        return.
+    }
+
     if dap["dap_mode"] = "css" and dap["str_mode"] = "aoa" {
         set requested_aoa to dap["css"]["last_aoa"].
     }
@@ -468,18 +481,18 @@ if not(dap:haskey("set_css")) {
 
 
 function rapierson{
-    for rapiers in ship:partstitledpattern("R.A.P.I.E.R"){
-        if not( rapiers:ignition){
-            rapiers:ACTIVATE.
+    for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
+        if not( rapiers_:ignition){
+            rapiers_:ACTIVATE.
         }
     }
     set rapiers to true.
 
 }
 function rapiersoff{
-    for rapiers in ship:partstitledpattern("R.A.P.I.E.R"){
-        if rapiers:ignition{
-            rapiers:SHUTDOWN.
+    for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
+        if rapiers_:ignition{
+            rapiers_:SHUTDOWN.
         }
     }
      set rapiers to false.
@@ -487,40 +500,40 @@ function rapiersoff{
 function togglerapiermode{
     PARAMETER TGT_MODE IS "TOGGEL".
     if TGT_MODE = "TOGGEL"{
-        for rapiers in ship:partstitledpattern("R.A.P.I.E.R"){
-            rapiers:TOGGLEMODE().
-                SET rapier_mode to RAPIERS:MODE.
+        for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
+            rapiers_:TOGGLEMODE().
+                SET rapier_mode to RAPIERS_:MODE.
         }
 
     }ELSE IF TGT_MODE = "AIR"{
         
-        for rapiers in ship:partstitledpattern("R.A.P.I.E.R"){
-            IF NOT rapiers:MODE = "AIRBREATHING"{
-                rapiers:TOGGLEMODE().
+        for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
+            IF NOT (rapiers_:MODE = "AirBreathing"){
+                rapiers_:TOGGLEMODE().
             }
-            SET rapier_mode to RAPIERS:MODE.
+            SET rapier_mode to "AirBreathing".
         }
     }ELSE IF TGT_MODE = "CLOSED"{
-        for rapiers in ship:partstitledpattern("R.A.P.I.E.R"){
-            IF NOT rapiers:MODE = "CLOSED"{
-                rapiers:TOGGLEMODE().
+        for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
+            IF NOT (rapiers_:MODE = "ClosedCycle"){
+                rapiers_:TOGGLEMODE().
             }
-            SET rapier_mode to RAPIERS:MODE.
+            SET rapier_mode to "ClosedCycle".
         }
     }
 }   
 function nervson{
-    for nervs in ship:partstitledpattern("LV-N Atomic Rocket Motor"){
-        if not( nervs:ignition){
-            nervs:ACTIVATE.
+    for nervs_ in  ship:partstitledpattern("LV-N"){
+        if not(nervs_:ignition){
+        nervs_:ACTIVATE.
         }
     }
     set nervs to true.
 }
 function nervsoff{
-    for nervs in ship:partstitledpattern("LV-N Atomic Rocket Motor"){
-        if nervs:ignition{
-            nervs:SHUTDOWN.
+    for nervs_ in  ship:partstitledpattern("LV-N"){
+        if nervs_:ignition{
+            nervs_:SHUTDOWN.
         }
     }
     set nervs to false.
