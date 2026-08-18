@@ -253,26 +253,45 @@ function calculate_heading {
 // with every runway start point.  The nearest start point identifies both the
 // runway and the direction from which the aircraft is departing.
 function find_active_runway {
-    local runways is Location_constants["kerbin"].
+    // Use the global `location_constants` lexicon; prefer the per-body entry if present
+    local runways is location_constants.
+    if runways:haskey("kerbin") { set runways to runways["kerbin"]. }
+    // Debug log file for runway selection
+    local debug_log_file is "0:/runway_debug.txt".
+    LOG "find_active_runway called" TO debug_log_file.
     local closest_distance is 9999999999.
     local active_heading is -1.
     local active_start is "".
     local active_end is "".
     local active_altitude is -1.
+    local active_location is "".
+    local active_runway_num is "".
 
     for runway_key in runways:keys {
-        if runway_key:matchespattern("runway_\\d{1,2}_start$") {
-            local end_key is runway_key:replace("_start", "_end").
+        // Log each key being tested
+        LOG "testing key: " + runway_key TO debug_log_file.
+        // Match keys like "<Location>_runway_##_start" (e.g. KSC_runway_09_start)
+        if runway_key:endswith("_start") {
+            // Split into location and the rest (e.g. ["KSC","09_start"]).
+            local parts is runway_key:split("_runway_").
+            local runway_location is parts[0].
+            local rest is parts[1].
+            local runway_num is rest:split("_")[0].
+
+            local end_key is runway_location + "_runway_" + runway_num + "_end".
             if runways:haskey(end_key) {
                 local start_pos is runways[runway_key].
                 local end_pos is runways[end_key].
                 local distance_to_start is calcdistance_m(ship:geoposition, start_pos).
+                LOG "distance to start for " + runway_key + " = " + distance_to_start TO debug_log_file.
                 if distance_to_start < closest_distance {
-                    local runway_location is runway_key:split("_")[0].
                     set closest_distance to distance_to_start.
+                    LOG "new closest " + runway_key + " dist=" + closest_distance TO debug_log_file.
                     set active_start to start_pos.
                     set active_end to end_pos.
                     set active_heading to heading_between(start_pos, end_pos).
+                    set active_location to runway_location.
+                    set active_runway_num to runway_num.
                     if KerbinRunwayalt:haskey(runway_location + "_runway") {
                         set active_altitude to KerbinRunwayalt[runway_location + "_runway"].
                     }
@@ -280,7 +299,16 @@ function find_active_runway {
             }
         }
     }
-    return lex("heading", active_heading, "start", active_start, "end", active_end, "altitude", active_altitude).
+    LOG "selected: loc=" + active_location + " num=" + active_runway_num + " dist=" + closest_distance TO debug_log_file.
+    return lex(
+        "heading", active_heading,
+        "start", active_start,
+        "end", active_end,
+        "altitude", active_altitude,
+        "location", active_location,
+        "runway_num", active_runway_num,
+        "distance_m", closest_distance
+    ).
 }
 function calc_hacstate{
     parameter hac_pos.
