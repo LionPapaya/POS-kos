@@ -161,37 +161,22 @@ function check_abort {
     abort_info:add("scenario_disp", abort_scenario).
 
     if abort_flag {
-        log "Abort needed: " + abort_scenario to "0:/log.txt".
-        ask_abort_mode(abort_info["scenario"]).
+        local mode is ask_abort_modes(abort_info["scenario"],step).
+        log "Abort needed: " + abort_scenario to "0:/log_abort.txt".
+        abort_info:add("mode",mode).
     }
+
     return abort_info.
 }
 function ask_abort_modes{
-    parameter scenarios.
-    local abort_lex is AVES["AbortModes"].
-
-
-
-    if abort_mode = "runway_abort" {
-        set step to "runway_abort".
-        log "Executing runway abort." to "0:/log.txt".
- 
-    } else if abort_mode = "ati" {
-        set step to "ati".
-        log "Executing abort to island (ATI)." to "0:/log.txt".
-   
-    } else if abort_mode = "toa" {
-        set step to "toa".
-        log "Executing trans-oceanic abort (TOA)." to "0:/log.txt".
-       
-    } else if abort_mode = "ato" {
-        set step to "ato".
-        log "Executing abort to orbit (ATO)." to "0:/log.txt".
- 
-    } else if abort_mode = "cont" {
-        set step to "cont".
-        log "Executing contingency abort (CONT)." to "0:/log.txt".
-  
+    parameter scenarios, phase.
+    
+    if phase ="launch"{
+        return "runway_abort".
+    }else if phase = "rotate" and scenarios["rapiers_out"] < 4{
+        return "rtls".
+    }else if (phase ="speed_build" or phase ="high_altitude_climb") and scenarios["rapiers_out"] < 4{
+        return "atr".
     }
 }
 function check_engines {
@@ -337,7 +322,7 @@ Poseidon_SSTO:add("TEAM_vvdot_t",5).
 Poseidon_SSTO:add("Envelope",lex(
     "low_speed",115,
     "minimum_safe_speed",110,
-    "low_speed_throttle",0.65,
+    "low_speed_throttle",0.75,
     "high_speed",800,
     "entry_speed",1350,
     "max_aoa_low_speed",10,
