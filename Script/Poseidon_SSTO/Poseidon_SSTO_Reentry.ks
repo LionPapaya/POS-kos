@@ -4,6 +4,7 @@
 // - Coordinates `dap` and entry solver to guide the vehicle to a chosen runway.
 // Notes: header comments only; no code changed.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_guid.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
@@ -17,6 +18,11 @@ RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_route.ks").
 
 parameter force_tgt is lex("force",false,"Location","","Runway","").
+if not(defined recovery_result) {
+    global recovery_result is lex("complete",false,"success",false,"reason","running").
+}else{
+    set recovery_result to lex("complete",false,"success",false,"reason","running").
+}
 
 IF SHIP:BODY:atm:exists{
 //if ship:periapsis > 70000{
@@ -571,6 +577,7 @@ until running = false{
         set TEAM_targetalt to terminal_route["target_altitude"].
         set hud_vvdot to (TEAM_targetalt - ship:altitude) / max(TEAM_dist / max(ship:airspeed,120),5).
         if terminal_route["landing_ready"]{
+            if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
             set step to "landing".
             set dap["str_mode"] to "aerostr".
         }
@@ -626,6 +633,7 @@ until running = false{
             log_status("Landing completed").
         }
         if ship:airspeed < 1 {
+            set recovery_result to lex("complete",true,"success",true,"reason","landing_complete").
             set step to "end".
             log_status("Landing completed, switching to end phase").
         }
@@ -635,6 +643,9 @@ until running = false{
         
     }
     if step = "end" {
+        if not recovery_result["complete"] {
+            set recovery_result to lex("complete",true,"success",false,"reason","recovery_ended_before_landing").
+        }
         set running to false.
         reset_sys().
         set warp to 0.

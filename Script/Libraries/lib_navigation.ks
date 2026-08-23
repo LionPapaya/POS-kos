@@ -279,7 +279,7 @@ function find_active_runway {
             local runway_num is rest:split("_")[0].
 
             local end_key is runway_location + "_runway_" + runway_num + "_end".
-            if runways:haskey(end_key) {
+            if runways:haskey(end_key) and KerbinRunwayalt:haskey(runway_location + "_runway") {
                 local start_pos is runways[runway_key].
                 local end_pos is runways[end_key].
                 local distance_to_start is calcdistance_m(ship:geoposition, start_pos).

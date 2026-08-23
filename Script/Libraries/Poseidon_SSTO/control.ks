@@ -505,9 +505,18 @@ if not(dap:haskey("set_css")) {
 
 
 
+function engine_blocked_by_abort {
+    parameter engine_type, engine_part.
+    if not(defined abort_state) { return false. }
+    if not abort_state:haskey("engines") { return false. }
+    if not abort_state["engines"]:haskey(engine_type) { return false. }
+    if not abort_state["engines"][engine_type]:haskey("failed_ids") { return false. }
+    return abort_state["engines"][engine_type]["failed_ids"]:haskey("part_" + engine_part:uid).
+}
+
 function rapierson{
     for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-        if not( rapiers_:ignition){
+        if not rapiers_:ignition and not engine_blocked_by_abort("rapier",rapiers_){
             rapiers_:ACTIVATE.
         }
     }
@@ -526,30 +535,32 @@ function togglerapiermode{
     PARAMETER TGT_MODE IS "TOGGEL".
     if TGT_MODE = "TOGGEL"{
         for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-            rapiers_:TOGGLEMODE().
+            if not engine_blocked_by_abort("rapier",rapiers_) {
+                rapiers_:TOGGLEMODE().
                 SET rapier_mode to RAPIERS_:MODE.
+            }
         }
 
     }ELSE IF TGT_MODE = "AIR"{
         
         for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-            IF NOT (rapiers_:MODE = "AirBreathing"){
-                rapiers_:TOGGLEMODE().
+            IF NOT engine_blocked_by_abort("rapier",rapiers_) {
+                IF NOT (rapiers_:MODE = "AirBreathing") { rapiers_:TOGGLEMODE(). }
+                SET rapier_mode to "AirBreathing".
             }
-            SET rapier_mode to "AirBreathing".
         }
     }ELSE IF TGT_MODE = "CLOSED"{
         for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-            IF NOT (rapiers_:MODE = "ClosedCycle"){
-                rapiers_:TOGGLEMODE().
+            IF NOT engine_blocked_by_abort("rapier",rapiers_) {
+                IF NOT (rapiers_:MODE = "ClosedCycle") { rapiers_:TOGGLEMODE(). }
+                SET rapier_mode to "ClosedCycle".
             }
-            SET rapier_mode to "ClosedCycle".
         }
     }
 }   
 function nervson{
     for nervs_ in  ship:partstitledpattern("LV-N"){
-        if not(nervs_:ignition){
+        if not nervs_:ignition and not engine_blocked_by_abort("nerv",nervs_){
         nervs_:ACTIVATE.
         }
     }

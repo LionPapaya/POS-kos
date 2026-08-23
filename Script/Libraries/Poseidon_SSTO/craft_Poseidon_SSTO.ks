@@ -133,91 +133,191 @@ function log_status {
 }
 
 
+function normalized_heading_error {
+    parameter target_heading, current_heading.
+    local error is target_heading - current_heading.
+    until abs(error) <= 180 {
+        if error > 180 { set error to error - 360. }
+        if error < -180 { set error to error + 360. }
+    }
+    return error.
+}
+
+function abort_engine_snapshot {
+    local snapshot is lex(
+        "rapier", lex("installed",0,"working",0,"failed",0,"failed_ids",lex()),
+        "nerv", lex("installed",0,"working",0,"failed",0,"failed_ids",lex())
+    ).
+    local rapier_parts is ship:partstitledpattern("R.A.P.I.E.R").
+    set snapshot["rapier"]["installed"] to rapier_parts:length.
+    for engine_part in rapier_parts {
+        if engine_part:ignition {
+            set snapshot["rapier"]["working"] to snapshot["rapier"]["working"] + 1.
+        }else{
+            snapshot["rapier"]["failed_ids"]:add("part_" + engine_part:uid,true).
+        }
+    }
+    set snapshot["rapier"]["failed"] to snapshot["rapier"]["installed"] - snapshot["rapier"]["working"].
+
+    local nerv_parts is ship:partstitledpattern("LV-N").
+    set snapshot["nerv"]["installed"] to nerv_parts:length.
+    for engine_part in nerv_parts {
+        if engine_part:ignition {
+            set snapshot["nerv"]["working"] to snapshot["nerv"]["working"] + 1.
+        }else{
+            snapshot["nerv"]["failed_ids"]:add("part_" + engine_part:uid,true).
+        }
+    }
+    set snapshot["nerv"]["failed"] to snapshot["nerv"]["installed"] - snapshot["nerv"]["working"].
+    return snapshot.
+}
+
 function check_abort {
-    local abort_info is lexicon().
-    local abort_flag is false.
-    local abort_scenario is "".
-
-    // Check RAPIER engines
-    local rapier_status is check_engines("rapier").
-    if rapier_status["failed"] > 0 {
-        set abort_flag to true.
-        set abort_scenario to abort_scenario + rapier_status["failed"] + "RO, ".
+    parameter phase is step.
+    local engines is abort_engine_snapshot().
+    // Intentionally shut-down engines are not failures.  During ascent all
+    // commanded RAPIERs are expected; NERVs become expected after activation.
+    if not rapiers {
+        set engines["rapier"]["failed"] to 0.
+        set engines["rapier"]["failed_ids"] to lex().
     }
-
-
-    // Check NERV engines
-    local nerv_status is check_engines("nerv").
-    if nerv_status["failed"] > 0 {
-        set abort_flag to true.
-        set abort_scenario to abort_scenario + nerv_status["failed"] + "NO, ".
+    if not nervs {
+        set engines["nerv"]["failed"] to 0.
+        set engines["nerv"]["failed_ids"] to lex().
     }
-
-
-
-    // Populate the lexicon
-    abort_info:add("abort", abort_flag).
-    abort_info:add("scenario", lex("rapiers_out",rapier_status["failed"],"nervs_out",nerv_status["failed"])).
-    abort_info:add("scenario_disp", abort_scenario).
-
+    local abort_flag is engines["rapier"]["failed"] > 0 or engines["nerv"]["failed"] > 0.
+    local scenario_display is "".
+    if engines["rapier"]["failed"] > 0 { set scenario_display to scenario_display + engines["rapier"]["failed"] + "RO, ". }
+    if engines["nerv"]["failed"] > 0 { set scenario_display to scenario_display + engines["nerv"]["failed"] + "NO, ". }
+    local abort_info is lex(
+        "abort",abort_flag,"mode","",
+        "scenario",lex("rapiers_out",engines["rapier"]["failed"],"nervs_out",engines["nerv"]["failed"]),
+        "scenario_disp",scenario_display,"engines",engines
+    ).
     if abort_flag {
-        local mode is ask_abort_modes(abort_info["scenario"],step).
-        log "Abort needed: " + abort_scenario to "0:/log_abort.txt".
-        abort_info:add("mode",mode).
+        set abort_info["mode"] to ask_abort_modes(abort_info["scenario"],phase).
+        log "Abort needed in " + phase + ": " + scenario_display to "0:/log_abort.txt".
     }
-
     return abort_info.
 }
 function ask_abort_modes{
     parameter scenarios, phase.
     
-    if phase ="launch"{
+    if scenarios["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] {
+        return "contingency_abort".
+    }else if phase ="launch"{
         return "runway_abort".
-    }else if phase = "rotate" and scenarios["rapiers_out"] < 4{
+    }else if phase = "rotate"{
         return "rtls".
-    }else if (phase ="speed_build" or phase ="high_altitude_climb") and scenarios["rapiers_out"] < 4{
+    }else if phase ="speed_build" or phase ="high_altitude_climb"{
         return "atr".
+    }else{
+        return "ati".
     }
 }
-function check_engines {
-    parameter engine_type.
-    local failed_engines is 0.
-    local extra_engines is 0.
-    
-    if ship:altitude < 21000 {
-        set nerv_expected to false.
+
+function create_abort_state {
+    parameter abort_info, origin_step, departure_runway.
+    return lex(
+        "active",abort_info["abort"],"mode",abort_info["mode"],
+        "submode",abort_info["scenario"]["rapiers_out"] + "RO",
+        "phase","initialize","phase_entered",time:seconds,"source_step",origin_step,
+        "scenario",abort_info["scenario"],"engines",abort_info["engines"],
+        "departure_runway",departure_runway,
+        "target",lex("selected",false,"location","","runway_num","","start","","end","","heading",-1,"altitude",-1,"distance_m",0,"score",0),
+        "policy",lex("use_nervs",false,"fuel_dump",false,"target_mass",ship:mass,"turn_bank",0),
+        "handoff",lex("started",false,"complete",false),
+        "result",lex("success",false,"reason",""),
+        "last_failure_refresh",time:seconds
+    ).
+}
+
+function abort_refresh_state {
+    parameter state.
+    local snapshot is abort_engine_snapshot().
+    // Failure counts are sticky and may only increase during an abort.
+    if rapiers {
+        for engine_id in snapshot["rapier"]["failed_ids"]:keys {
+            if not state["engines"]["rapier"]["failed_ids"]:haskey(engine_id) {
+                state["engines"]["rapier"]["failed_ids"]:add(engine_id,true).
+            }
+        }
+        set state["engines"]["rapier"]["failed"] to state["engines"]["rapier"]["failed_ids"]:keys:length.
+        set state["engines"]["rapier"]["working"] to state["engines"]["rapier"]["installed"] - state["engines"]["rapier"]["failed"].
     }
-    if ship:altitude < 57000 {
-        set rapiers_expected to true.
+    if nervs {
+        for engine_id in snapshot["nerv"]["failed_ids"]:keys {
+            if not state["engines"]["nerv"]["failed_ids"]:haskey(engine_id) {
+                state["engines"]["nerv"]["failed_ids"]:add(engine_id,true).
+            }
+        }
+        set state["engines"]["nerv"]["failed"] to state["engines"]["nerv"]["failed_ids"]:keys:length.
+        set state["engines"]["nerv"]["working"] to state["engines"]["nerv"]["installed"] - state["engines"]["nerv"]["failed"].
     }
-    
-    if engine_type = "all" or engine_type = "rapier" {
-        set rapier_engines to ship:partstitledpattern("R.A.P.I.E.R").
-        for all_rapiers in rapier_engines {
-            if not all_rapiers:ignition and rapiers_expected {
-                log "RAPIER engine " + all_rapiers:name + " is not running!" to "0:/log.txt".
-                set failed_engines to failed_engines + 1.
+    set state["scenario"]["rapiers_out"] to state["engines"]["rapier"]["failed"].
+    set state["scenario"]["nervs_out"] to state["engines"]["nerv"]["failed"].
+    set state["submode"] to state["scenario"]["rapiers_out"] + "RO".
+    set state["last_failure_refresh"] to time:seconds.
+    if state["scenario"]["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] {
+        set state["mode"] to "contingency_abort".
+        set state["phase"] to "unimplemented".
+        set state["phase_entered"] to time:seconds.
+    }
+    return state.
+}
+
+function abort_set_fuel_dump {
+    parameter enabled.
+    for drain_part in ship:partstitledpattern("FTE-1") {
+        local drain_module is drain_part:getmodule("ModuleResourceDrain").
+        if enabled {
+            drain_module:setfield("Drain", "Started").
+            drain_module:setfield("Drain Mode","Vessel").
+        }else{
+            drain_module:setfield("Drain", "Stopped").
+            drain_module:setfield("Drain Mode","Part").
+        }
+    }
+}
+
+function abort_select_runway {
+    parameter config_select is AVES["Abort"]["RunwaySelection"].
+    local runways is location_constants["kerbin"].
+    local best is lex("selected",false,"location","","runway_num","","start","","end","","heading",-1,"altitude",-1,"distance_m",0,"score",999999999999).
+    for runway_key in runways:keys {
+        if runway_key:endswith("_start") and runway_key:contains("_runway_") {
+            local parts is runway_key:split("_runway_").
+            local location_name is parts[0].
+            local runway_number is parts[1]:split("_")[0].
+            local end_key is location_name + "_runway_" + runway_number + "_end".
+            if runways:haskey(end_key) and KerbinRunwayalt:haskey(location_name + "_runway") {
+                local runway_start_ is runways[runway_key].
+                local runway_end_ is runways[end_key].
+                local distance_ is calcdistance_m(ship:geoposition,runway_start_).
+                if distance_ <= config_select["maximum_distance"] {
+                    local bearing_error is abs(normalized_heading_error(heading_to_target(runway_start_),compass_for_prograde())).
+                    local score_ is distance_ + bearing_error * config_select["heading_weight"].
+                    if bearing_error > config_select["ahead_angle"] { set score_ to score_ + config_select["behind_penalty"]. }
+                    if score_ < best["score"] {
+                        local altitude_ is KerbinRunwayalt[location_name + "_runway"].
+                        set best to lex(
+                            "selected",true,"location",location_name,"runway_num",runway_number,
+                            "start",runway_start_,"end",runway_end_,"heading",heading_between(runway_start_,runway_end_),
+                            "altitude",altitude_,"distance_m",distance_,"score",score_
+                        ).
+                    }
+                }
             }
         }
     }
-    
-    if engine_type = "all" or engine_type = "nerv" {
-        set nerv_engines to ship:partstitledpattern("LV-N Atomic Rocket Motor").
-        for all_nervs in nerv_engines {
-            if not all_nervs:ignition and nerv_expected {
-                log "NERV engine " + all_nervs:name + " is not running!" to "0:/log.txt".
-                set failed_engines to failed_engines + 1.
-            }
-        }
+    if best["selected"] {
+        log "ATR selected " + best["location"] + " runway " + best["runway_num"] +
+            " distance=" + round(best["distance_m"]) + " score=" + round(best["score"]) to "0:/log_abort.txt".
+    }else{
+        log "ATR runway selection found no candidate" to "0:/log_abort.txt".
     }
-
-    local engine_status is lexicon().
-    engine_status:add("failed", failed_engines).
-
-    return engine_status.
+    return best.
 }
-
-
 // Function to log telemetry data on every call
 function logTelemetry {
     set log_filename to "assentlog3.txt".  // Fixed filename for telemetry data
@@ -303,6 +403,19 @@ Poseidon_SSTO:add("Ascent",lex(
     "apoapsis_margin",500,
     "inclination_heading_fallback",90
 )).
+Poseidon_SSTO:add("Abort",lex(
+    "contingency_rapiers_out",4,
+    "RunwayStop",lex("stop_speed",1,"command_pitch",-5),
+    "RTLS",lex(
+        "minimum_turn_speed",300,"turn_bank",55,"target_aoa_min",10,
+        "handoff_heading_change",125,"gear_retract_distance",2500,
+        "airborne_pitch_margin",1,"low_alt_pitch_margin",5,
+        "1RO",lex("use_nervs",false,"fuel_dump",false,"target_mass",70),
+        "2RO",lex("use_nervs",true,"fuel_dump",true,"target_mass",60),
+        "3RO",lex("use_nervs",true,"fuel_dump",true,"target_mass",50)
+    ),
+    "RunwaySelection",lex("maximum_distance",400000,"heading_weight",350,"ahead_angle",100,"behind_penalty",50000)
+)).
 Poseidon_SSTO:add("MaxAeroturnAlt",60000).
 Poseidon_SSTO:add("MaxRoll",40).
 Poseidon_SSTO:add("MaxPitch",48).
@@ -366,7 +479,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "hold_aoa_max",22,
     "bank_deadband",4,
     "bank_full_error",30,
-    "bank_max",40,
+    "bank_max",65,
     "intercept_hold_distance",1500,
     "downwind_to_base_distance",6000,
     "base_to_final_distance",6000,
@@ -397,7 +510,27 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_alignment_heading_tolerance",1.5,
     "final_heading_correction",2,
     "final_aoa_offset",5,
-    "debug_log_interval",0.5
+    "debug_log_interval",0.5,
+    "Geometry",lex(
+        "direct_final_cross_track",3000,"direct_final_heading_error",35,"direct_final_min_along_track",2500,
+        "wide_final_distance",14000,"wide_base_offset",7000,"wide_downwind_extension",14000,
+        "waypoint_capture_distance",2600,"waypoint_overshoot_distance",1200,"overshoot_eligible_distance",6000,
+        "final_target_lookahead",500
+    ),
+    "Propulsion",lex(
+        "assist_energy_deficit",120,"full_assist_energy_deficit",600,"maximum_throttle",0.70,
+        "minimum_speed_reserve",8,"speed_assist_gain",0.04
+    ),
+    "GoAround",lex(
+        "enabled",true,"decision_distance",3500,"minimum_altitude",80,
+        "maximum_heading_error",22,"maximum_cross_track",900,"maximum_sink_rate",12,
+        "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"passed_threshold",0
+    ),
+    "LandingGate",lex(
+        "distance",1500,"altitude",120,"heading_error",8,"cross_track",300,
+        "minimum_speed",105,"maximum_speed",175,"maximum_sink_rate",8,"minimum_along_track",-250,"stable_time",2,
+        "gear_distance",2200,"gear_altitude",180,"airbrake_minimum_altitude",100
+    )
 )).
 Poseidon_SSTO:add("EG_rev°",5).
 Poseidon_SSTO:add("EG_am_range",20).

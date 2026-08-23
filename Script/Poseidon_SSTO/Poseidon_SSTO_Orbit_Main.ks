@@ -3,6 +3,7 @@
 // Purpose: ascent and orbital insertion script for Poseidon SSTO.
 // - Loads the Poseidon libraries and runs the aircraft-style ascent/circularization flow.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
@@ -66,6 +67,7 @@ if launch_heading < 0 {
 set previous_speed to ship:airspeed.
 set t0 to -1.
 local abort_info is lex().
+global abort_state is lex("active",false).
 set dap_mode to "auto".
 set dap["str_mode"] to "aerostr".
 print("3").
@@ -106,14 +108,15 @@ until running = false{
                     Set warpmode to "physics".
                     
                 }
-            set abort_info to check_abort().
+            set abort_info to check_abort(step).
             if abort_info["abort"]{
-                set step to abort_info["mode"].
+                set abort_state to create_abort_state(abort_info,step,active_runway).
+                set step to abort_state["mode"].
             }
         }
 
         
-    if ship:altitude > liftoff_altitude and ship:airspeed <= AVES["Speed"]["Rotate"]{
+    if step = "launch" and ship:altitude > liftoff_altitude and ship:airspeed <= AVES["Speed"]["Rotate"]{
         set Lastest_status to "not in lift off conditon".
         set step to "end".
     }
@@ -124,11 +127,12 @@ until running = false{
         set dap["aerostr"]["turn_pitch"] to ascent["rotate_pitch"].
         set dap["aerostr"]["turn_heading"] to runway_heading.
         //decide_abort_mode().
-        set abort_info to check_abort().
+        set abort_info to check_abort(step).
         if abort_info["abort"]{
-            set step to abort_info["mode"].
+            set abort_state to create_abort_state(abort_info,step,active_runway).
+            set step to abort_state["mode"].
         }
-        if ship:altitude > rotate_altitude{
+        if step = "rotate" and ship:altitude > rotate_altitude{
             gear off.
             set step to "speed_build".
             set warp to 0.
@@ -142,20 +146,22 @@ until running = false{
         set dap["aerostr"]["turn_heading"] to assent_heading.
         set dap["aerostr"]["targetPitch"] to ascent["shallow_climb_pitch"].
         set dap["aerostr"]["turn_pitch"] to ascent["shallow_climb_pitch"].
-        set abort_info to check_abort().
+        set abort_info to check_abort(step).
         if abort_info["abort"]{
-            set step to abort_info["mode"].
+            set abort_state to create_abort_state(abort_info,step,active_runway).
+            set step to abort_state["mode"].
         }
-        if ship:airspeed >= ascent["speed_build_target"] or ship:altitude >= ascent["climb_altitude"] {
+        if step = "speed_build" and (ship:airspeed >= ascent["speed_build_target"] or ship:altitude >= ascent["climb_altitude"]) {
             set step to "high_altitude_climb".
             set Lastest_status to "speed target reached".
         }
     }
     if step = "high_altitude_climb"{
         update_team_dap_gui().
-        set abort_info to check_abort().
+        set abort_info to check_abort(step).
         if abort_info["abort"]{
-            set step to abort_info["mode"].
+            set abort_state to create_abort_state(abort_info,step,active_runway).
+            set step to abort_state["mode"].
         }
         set dap["str_mode"] to "aerostr".
         set assent_heading to calculate_heading(TargetInclination, ship:latitude).  
@@ -199,7 +205,7 @@ until running = false{
         // log as much as possible to a file for analysis
         log ("climb_time: "+climb_time+" speed_time: "+speed_time + " altitude: " + ship:altitude + " airspeed: " + ship:airspeed + " verticalspeed: " + ship:verticalspeed + " accel_in_prograde: " + accel_in_prograde + " pfp_tgt: " + pfp_tgt) to "climb_log.txt".
 
-        if ship:altitude >= ascent["climb_altitude"] {
+        if step = "high_altitude_climb" and ship:altitude >= ascent["climb_altitude"] {
             nervson().
             set step to "nerv_assist".
             set Lastest_status to "nervs on".
@@ -207,6 +213,11 @@ until running = false{
     }
     if step = "nerv_assist"{
         update_team_dap_gui().
+        set abort_info to check_abort(step).
+        if abort_info["abort"] {
+            set abort_state to create_abort_state(abort_info,step,active_runway).
+            set step to abort_state["mode"].
+        }
         set dap["str_mode"] to "aerostr".
         set assent_heading to calculate_heading(TargetInclination, ship:latitude).  
         set dap["aerostr"]["turn_heading"] to assent_heading.
@@ -214,13 +225,17 @@ until running = false{
         if ship:verticalspeed <= ascent["vertical_speed_recovery_threshold"] {
             set dap["aerostr"]["turn_pitch"] to ascent["nerv_pitch"] + ascent["vertical_speed_recovery_pitch"].
         }
-        if speed_trend <= ascent["speed_gain_threshold"] and ship:altitude >= ascent["closed_cycle_min_altitude"] {
+        if step = "nerv_assist" and speed_trend <= ascent["speed_gain_threshold"] and ship:altitude >= ascent["closed_cycle_min_altitude"] {
             set step to "closed_cycle_climb".
             set Lastest_status to "transitioning to closed cycle".
         }
     }
     if step = "closed_cycle_climb"{
-            
+            set abort_info to check_abort(step).
+            if abort_info["abort"] {
+                set abort_state to create_abort_state(abort_info,step,active_runway).
+                set step to abort_state["mode"].
+            }
             togglerapiermode("CLOSED").
             update_team_dap_gui().
             set Lastest_status to "rapiers in closed cycle".
@@ -233,7 +248,7 @@ until running = false{
                 set warp to 1.
             }
             rcs on.
-            if ship:apoapsis > ascent["rapier_cutoff_apoapsis"] {
+            if step = "closed_cycle_climb" and ship:apoapsis > ascent["rapier_cutoff_apoapsis"] {
                 rapiersoff().
                 set dap["aerostr"]["turn_pitch"] to ascent["apoapsis_build_pitch"].
                 set step to "apoapsis_build".
@@ -242,6 +257,11 @@ until running = false{
     }
     if step = "apoapsis_build"{
         update_team_dap_gui().
+        set abort_info to check_abort(step).
+        if abort_info["abort"] {
+            set abort_state to create_abort_state(abort_info,step,active_runway).
+            set step to abort_state["mode"].
+        }
         set dap["str_mode"] to "aerostr".
         set dap["aerostr"]["turn_heading"] to assent_heading.
         set assent_heading to calculate_heading(TargetInclination, ship:latitude).  
@@ -249,7 +269,7 @@ until running = false{
         if ship:verticalspeed <= ascent["vertical_speed_recovery_threshold"] {
             set dap["aerostr"]["turn_pitch"] to ascent["apoapsis_build_pitch"] + ascent["vertical_speed_recovery_pitch"].
         }
-        if ship:apoapsis > TargetApoapsis + ascent["apoapsis_margin"] {
+        if step = "apoapsis_build" and ship:apoapsis > TargetApoapsis + ascent["apoapsis_margin"] {
             set Step to "circ".
             togglerapiermode("AIR").
             rapiersoff().
@@ -307,85 +327,127 @@ until running = false{
 
     }
     if step = "runway_abort"{
+        set abort_state to abort_refresh_state(abort_state).
         set Lastest_status to "Runway abort".
         brakes on.
         set dapthrottle to 0.
         rapiersoff().
-        set dap["aerostr"]["targetPitch"] to -5.
-        if ship:airspeed < 1{
+        set dap["aerostr"]["targetPitch"] to AVES["Abort"]["RunwayStop"]["command_pitch"].
+        if ship:airspeed < AVES["Abort"]["RunwayStop"]["stop_speed"]{
             set Lastest_status to "abort complete".
+            set abort_state["result"]["success"] to true.
+            set abort_state["result"]["reason"] to "stopped_on_runway".
+            set abort_state["active"] to false.
             set step to "end".
-        }    
+        }
     }if step = "rtls"{
-        //clearScreen.
-        //Print("mode not implemented yet").
-        //set a to  1/0.
-
-        set Lastest_status to "Abort RTLS".
-        if abort_info["scenario"]["rapiers_out"] = 3{
-            nervson().
-            for res in ship:resources{
-                if res:name = "Oxidizer"{
-                    if res:amount > 0{
-                        togglerapiermode("closed").
-                    }else{
-                        togglerapiermode("air").
-                    }
-                }
+        set abort_state to abort_refresh_state(abort_state).
+        if abort_state["mode"] = "contingency_abort" {
+            set step to "contingency_abort".
+        }else{
+            local rtls_config is AVES["Abort"]["RTLS"].
+            local rtls_policy is rtls_config[abort_state["submode"]].
+            set abort_state["policy"] to lex(
+                "use_nervs",rtls_policy["use_nervs"],"fuel_dump",rtls_policy["fuel_dump"],
+                "target_mass",rtls_policy["target_mass"],"turn_bank",rtls_config["turn_bank"]
+            ).
+            if abort_state["phase"] = "initialize" {
+                set abort_state["target"] to lex(
+                    "selected",true,"location",active_runway["Location"],"runway_num",active_runway["runway_num"],
+                    "start",active_runway["start"],"end",active_runway["end"],"heading",active_runway["heading"],
+                    "altitude",active_runway["altitude"],"distance_m",calcdistance_m(ship:geoposition,active_runway["start"]),"score",0
+                ).
+                set abort_state["phase"] to "turnback".
+                set abort_state["phase_entered"] to time:seconds.
             }
-
-            if calcdistance_m(ship:geoposition, active_runway["end"]) > calcdistance_m(active_runway["start"], active_runway["end"]){
-                gear off.
+            set Lastest_status to "Abort RTLS " + abort_state["submode"] + " | " + abort_state["phase"].
+            rapierson().
+            if abort_state["policy"]["use_nervs"] { nervson(). }else{ nervsoff(). }
+            local oxidizer_available is false.
+            for res in ship:resources {
+                if res:name = "Oxidizer" and res:amount > 0 { set oxidizer_available to true. }
             }
-            if ship:altitude > rotate_altitude{
-                set dap["aerostr"]["turn_pitch"] to calc_aoa() + ((-1 * pitch_for_prograde()) +  1).
+            if oxidizer_available { togglerapiermode("closed"). }else{ togglerapiermode("air"). }
+            abort_set_fuel_dump(abort_state["policy"]["fuel_dump"] and ship:mass > abort_state["policy"]["target_mass"]).
+            if calcdistance_m(ship:geoposition,active_runway["end"]) > rtls_config["gear_retract_distance"] { gear off. }
+
+            if ship:altitude > rotate_altitude {
+                set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["airborne_pitch_margin"].
             }else{
-                set dap["aerostr"]["turn_pitch"] to calc_aoa() + ((-1 * pitch_for_prograde()) +  5).
+                set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["low_alt_pitch_margin"].
             }
-            if ship:mass > 50{
-                    for part in ship:partstitledpattern("FTE-1"){
-                    local p to part:getmodule("ModuleResourceDrain").
-                    p:SETFIELD("Drain", "Started").
-                    p:setfield("Drain Mode","Vessel").
-
+            if ship:airspeed > rtls_config["minimum_turn_speed"] {
+                set abort_state["phase"] to "turnback".
+                set dap["str_mode"] to "aoa".
+                local rtls_heading_error is normalized_heading_error(heading_to_target(active_runway["start"]),compass_for_prograde()).
+                if rtls_heading_error > 0 {
+                    set dap["aoa"]["target_bank"] to -rtls_config["turn_bank"].
+                }else{
+                    set dap["aoa"]["target_bank"] to rtls_config["turn_bank"].
                 }
-            }else{
-                for part in ship:partstitledpattern("FTE-1"){
-                    local p to part:getmodule("ModuleResourceDrain").
-                    p:SETFIELD("Drain", "Stopped").
-                    p:setfield("Drain Mode","Part").
-                }
-            }
-            if ship:airspeed > 300{
-                set dap["str_mode"] to "aoa". 
-                set dap["aoa"]["target_bank"] to 35.
-                set dap["aoa"]["target_aoa"] to max(10, (-1 * pitch_for_prograde())).
-                if abs(compass_for_prograde() - runway_heading) > 130{
-                    for part in ship:partstitledpattern("FTE-1"){
-                        local p to part:getmodule("ModuleResourceDrain").
-                        p:SETFIELD("Drain", "Stopped").
-                        p:setfield("Drain Mode","Part").
-                    }
-                    RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex("force",TRUE,"Location",active_runway["Location"],"Runway",active_runway["runway_num"])).
+                set dap["aoa"]["target_aoa"] to max(rtls_config["target_aoa_min"],-pitch_for_prograde()).
+                local departure_heading_change is abs(normalized_heading_error(compass_for_prograde(),runway_heading)).
+                if departure_heading_change > rtls_config["handoff_heading_change"] and not abort_state["handoff"]["started"] {
+                    set abort_state["phase"] to "handoff".
+                    set abort_state["handoff"]["started"] to true.
+                    RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
+                        "force",TRUE,"Location",active_runway["Location"],"Runway",active_runway["runway_num"],
+                        "context",lex("mission","abort","abort_mode","rtls","preserve_propulsion",true,"allow_go_around",true)
+                    )).
+                    set abort_state["handoff"]["complete"] to true.
+                    set abort_state["result"]["success"] to recovery_result["success"].
+                    set abort_state["result"]["reason"] to recovery_result["reason"].
+                    set abort_state["active"] to false.
+                    set step to "end".
                 }
             }else{
                 set dap["str_mode"] to "aerostr".
             }
-            
-        }else{
-
         }
     }
     if step = "atr"{
-        clearScreen.
-        Print("mode not implemented yet").
-        set a to  1/0.
+        set abort_state to abort_refresh_state(abort_state).
+        if abort_state["mode"] = "contingency_abort" {
+            set step to "contingency_abort".
+        }else{
+            if not abort_state["target"]["selected"] {
+                set abort_state["target"] to abort_select_runway().
+                set abort_state["phase"] to "runway_selected".
+            }
+            if abort_state["target"]["selected"] and not abort_state["handoff"]["started"] {
+                local atr_policy is AVES["Abort"]["RTLS"][abort_state["submode"]].
+                set abort_state["policy"] to lex(
+                    "use_nervs",atr_policy["use_nervs"],"fuel_dump",atr_policy["fuel_dump"],
+                    "target_mass",atr_policy["target_mass"],"turn_bank",0
+                ).
+                abort_set_fuel_dump(abort_state["policy"]["fuel_dump"] and ship:mass > abort_state["policy"]["target_mass"]).
+                set Lastest_status to "ATR " + abort_state["submode"] + " to " + abort_state["target"]["location"] + " " + abort_state["target"]["runway_num"].
+                set abort_state["handoff"]["started"] to true.
+                RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
+                    "force",TRUE,"Location",abort_state["target"]["location"],"Runway",abort_state["target"]["runway_num"],
+                    "context",lex("mission","abort","abort_mode","atr","preserve_propulsion",true,"allow_go_around",true)
+                )).
+                set abort_state["handoff"]["complete"] to true.
+                set abort_state["result"]["success"] to recovery_result["success"].
+                set abort_state["result"]["reason"] to recovery_result["reason"].
+                set abort_state["active"] to false.
+                set step to "end".
+            }else if not abort_state["target"]["selected"] {
+                set Lastest_status to "ATR: no runway inside geometric search range".
+            }
+        }
     }
     if step = "ati"{
         set Lastest_status to "ati".
         set warp to 0.
         RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex("force",TRUE,"Location","Kola-Island","Runway","20")).
         SET step to "end".
+    }
+    if step = "contingency_abort"{
+        abort_set_fuel_dump(false).
+        set Lastest_status to "4RO contingency abort detected - mode not implemented".
+        set abort_state["result"]["success"] to false.
+        set abort_state["result"]["reason"] to "4RO_unimplemented".
     }
     if step = "end"{
         set running to false.
