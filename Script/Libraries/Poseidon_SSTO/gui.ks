@@ -188,6 +188,32 @@ function create_reentry_display {
     parameter force_runway is "".
     local location_to_runways is lexicon().
 
+    // A quickloaded kOS session can retain a partially initialized constants
+    // lexicon while RUNONCEPATH skips this library.  Rebuild it before the
+    // automatic target selector relies on its runway keys.
+    local location_constants_ready is defined location_constants.
+    if location_constants_ready {
+        if not location_constants:haskey("kerbin") {
+            set location_constants_ready to false.
+        } else if not location_constants["kerbin"]:haskey("KSC_runway_09_start") or not location_constants["kerbin"]:haskey("KSC_runway_09_end") {
+            set location_constants_ready to false.
+        }
+    }
+    if not(defined KerbinRunwayalt) {
+        set location_constants_ready to false.
+    } else if not KerbinRunwayalt:haskey("KSC_runway") {
+        set location_constants_ready to false.
+    }
+    if not location_constants_ready {
+        if defined location_constants {
+            unset location_constants.
+        }
+        if defined KerbinRunwayalt {
+            unset KerbinRunwayalt.
+        }
+        runpath("0:/Libraries/lib_location_constants.ks").
+    }
+
     // A forced re-entry target does not enter the confirmation loop below.  Copy
     // it into the selections before building the display so setup_reentry_script
     // can use it as soon as this function returns.
