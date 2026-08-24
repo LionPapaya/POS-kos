@@ -187,6 +187,14 @@ function create_reentry_display {
     parameter force_loaction is "".
     parameter force_runway is "".
     local location_to_runways is lexicon().
+
+    // A forced re-entry target does not enter the confirmation loop below.  Copy
+    // it into the selections before building the display so setup_reentry_script
+    // can use it as soon as this function returns.
+    if not wait_for_confirm {
+        set Location to force_loaction.
+        set runway_nr to force_runway.
+    }
     
     
         set confirm_in to false.
@@ -437,17 +445,6 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         }
     }
     
-    // Replace input buttons with labels displaying the selected target and runway number
-    if false{
-    location_box:clear().
-    runway_box:clear().
-    if not (wait_for_confirm){
-        set Location to force_loaction.
-        set runway_nr to force_runway.
-    }
-    set reentry_gui_location_label to location_box:addlabel("<b>Location:</b> " + Location).
-    set reentry_gui_runway_label to runway_box:addlabel("<b>Runway:</b> " + runway_nr).
-    }    
 }
 
 function create_reentry_gui{
