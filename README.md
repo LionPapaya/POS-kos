@@ -113,7 +113,9 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 - start re-entry and select a landing location and runway; or
 - use the docking workflow when applicable.
 
-During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information. The scripts also write diagnostic information to files such as `log.txt`, `log_runway.txt`, and trajectory or telemetry logs.
+During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information. File logging is disabled by default. Set the global `POS_LOGGING_ENABLED` flag to `true` before launching POS to enable all diagnostic logs. This also enables the rate-limited `control_envelope.csv` flight-control log; aerodynamic trajectory simulation loops never write logs, even when the flag is enabled.
+
+For docking, first select the other vessel (or one of its docking ports) as the KSP target. Start outside the atmosphere, within 1 km of the target vessel, and below 5 m/s relative velocity. POS prefers Poseidon's open Mk2 inline port, lets you choose among multiple compatible target ports, and then controls from the selected Poseidon port. It matches velocity, moves out to a target-sized keep-out shell when necessary, routes around the vessel to the selected port's approach axis, and performs stand-off, alignment, and final approach. The docking-control window provides Pause/Resume and Abort buttons. It does not perform orbital phasing or a distant rendezvous.
 
 ## Known limitations
 
