@@ -46,9 +46,9 @@ function update_simstate {
         set total_accel to total_accel + acc.
     }
 
-    // Update velocity and position based on total acceleration and timestep
+    // Update velocity and position assuming constant acceleration over the timestep
     local new_velocity to simstate["velocity"] + total_accel * timestep.
-    local new_position to simstate["position"] + new_velocity * timestep.
+    local new_position to simstate["position"] + simstate["velocity"] * timestep + 0.5 * total_accel * timestep^2.
 
     // Return the new simstate with updated data
     return lexicon(
@@ -82,8 +82,6 @@ function simulate_trajectory {
         }
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
-        log "bank angle : "+bank_angle to "goofy.log"..
-        log "aoa : "+aoa to "goofy.log".
         if bank_side = "left"{ 
             
             set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,-bank_angle)).
@@ -96,10 +94,8 @@ function simulate_trajectory {
 
         // Update the simstate with all accelerations
         set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), timestep).
-        log "altitude : "+temp_simstate["altitude"]+ " time :"+temp_simstate["simtime"]+ "velocity"+ temp_simstate["surfvel"]:mag  to "simstate.log".
     }
     if temp_simstate["altitude"] > max_alt {
-        log "Simulation failed: altitude exceeded maximum altitude" to "simstate.log".
         return 0.
     }
     return temp_simstate.
@@ -136,7 +132,6 @@ function simulate_trajectory_time {
 
         // Update the simstate with all accelerations
         set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), min(timestep,remaining_time+0.1)).
-        log "altitude : "+temp_simstate["altitude"]+ " time :"+temp_simstate["simtime"]+ "velocity"+ temp_simstate["surfvel"]:mag  to "simstate.log".
         //log temp_simstate to "simstate.log".
        
     }
@@ -170,7 +165,6 @@ function simulate_trajectory_hed{
                 set heading_error to heading_error + 360.
             }
         }
-        log "heading error : "+heading_error to "simstate.log".
         local bank_angle is 40 * tanh_approx(0.05 * heading_error).
         if bank_angle > 20 {
             set bank_angle to 20.
@@ -179,8 +173,6 @@ function simulate_trajectory_hed{
             set bank_angle to -20.
         }
         set bank_angle to -bank_angle.
-        log "bank angle : "+bank_angle to "simstate.log".
-        log "altitude : "+temp_simstate["altitude"]+ " time :"+temp_simstate["simtime"]+ "velocity"+ temp_simstate["surfvel"]:mag  to "simstate.log".
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
 
@@ -193,7 +185,6 @@ function simulate_trajectory_hed{
         // Update the simstate with all accelerations
         set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), timestep).
 
-        log temp_simstate["simtime"]+ ",(" +temp_simstate["latlong"]:lat+ ","+temp_simstate["latlong"]:lng+"),"+temp_simstate["altitude"]+","+temp_simstate["surfvel"]:mag to log_team_sim_.txt.
 
     }
 
@@ -227,7 +218,6 @@ function simulate_trajectory_hed_pos{
                 set heading_error to heading_error + 360.
             }
         }
-        log "heading error : "+heading_error to "simstate.log".
         local bank_angle is 40 * tanh_approx(0.05 * heading_error).
         if bank_angle > 20 {
             set bank_angle to 20.
@@ -236,8 +226,6 @@ function simulate_trajectory_hed_pos{
             set bank_angle to -20.
         }
         set bank_angle to -bank_angle.
-        log "bank angle : "+bank_angle to "simstate.log".
-        log "altitude : "+temp_simstate["altitude"]+ " time :"+temp_simstate["simtime"]+ "velocity"+ temp_simstate["surfvel"]:mag  to "simstate.log".
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
 
@@ -250,7 +238,6 @@ function simulate_trajectory_hed_pos{
         // Update the simstate with all accelerations
         set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), timestep).
 
-        log temp_simstate["simtime"]+ ",(" +temp_simstate["latlong"]:lat+ ","+temp_simstate["latlong"]:lng+"),"+temp_simstate["altitude"]+","+temp_simstate["surfvel"]:mag to log_team_sim_.txt.
         set hed to heading_between(simstate["latlong"],pos).
     }
 
