@@ -107,7 +107,7 @@ if not (dap:haskey("setup")) {
     
     lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]).
     lock steering to dap_steering.
-    if not(defined("dapthrottle")){
+    if not(defined(dapthrottle)){
         global dapthrottle is 0.
     }
     lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
@@ -524,7 +524,7 @@ function envelope_log_control {
     if time:seconds - envelope["last_control_log"] < 0.5 { return. }
     set envelope["last_control_log"] to time:seconds.
     local phase_name is "unknown".
-    if defined("step") { set phase_name to step. }
+    if defined(step) { set phase_name to step. }
     local requested_pitch is dap["aerostr"]["targetPitch"].
     local requested_bank is dap["aerostr"]["targetRoll"].
     if dap["str_mode"] = "aoa" {
