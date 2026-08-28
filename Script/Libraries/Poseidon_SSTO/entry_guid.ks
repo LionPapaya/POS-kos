@@ -92,7 +92,7 @@ function check_cur_error {
 
     return cur_state_error_p.
 }
-// check_if_entry_possible(simstate, target_latlng, timestep)
+// check_if_entry_possible(simstate, target_latlng, target_altitude, timestep)
 // Performs a set of forward simulations to determine whether the vehicle, starting at `simstate`,
 // can reach an entry corridor that allows an approach to `target_latlong`.
 // Algorithm summary:
@@ -111,9 +111,10 @@ function check_cur_error {
 function check_if_entry_possible{
     parameter simstate.
     parameter target_latlong.
+    parameter target_altitude is AVES["TEAMAltitude"].
     parameter timestep is AVES["simulation"]["timestep"].
 
-    local check_45 is sim_with_bank(simstate, 45, AVES["TEAMAltitude"], target_latlong)["final_state"].
+    local check_45 is sim_with_bank(simstate, 45, target_altitude, target_latlong)["final_state"].
     local c is false.
     // Use a probe point projected along the current simstate heading to avoid great-circle wrap-around
     // Compute the current heading and pick the closer of the 45deg-endpoint or the raw target.
@@ -132,9 +133,9 @@ function check_if_entry_possible{
     }
     local check is 0.
     if not(c){
-    local max_distance is simulate_trajectory(simstate, 0, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
-    local right_distance is simulate_trajectory(simstate, 45, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
-    local left_distance is simulate_trajectory(simstate, 45, "left", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
+    local max_distance is sim_with_bank(simstate, 0, target_altitude, target_latlong)["final_state"].
+    local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
+    local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
     local left_distance_t to left_distance["latlong"].
     local right_distance_t to right_distance["latlong"].
     set check to check_target_in_triangle(target_latlong,max_distance["latlong"],right_distance_t,left_distance_t).
@@ -144,12 +145,14 @@ function check_if_entry_possible{
     check:add("max_pos",max_distance["latlong"]).
     check:add("max",45).
     check:add("min",0).
+    check:add("lower_bank_pos",max_distance["latlong"]).
+    check:add("upper_bank_pos",check_45["latlong"]).
 
 
     }else{
-        local min_distance is sim_with_bank(simstate, 90 , AVES["TEAMAltitude"],target_latlong)["final_state"].
-        local right_distance is simulate_trajectory(simstate, 45, "right", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
-        local left_distance is simulate_trajectory(simstate, 45, "left", AVES["TEAMAltitude"],simstate["altitude"]+100,"EGAOA",timestep).
+        local min_distance is sim_with_bank(simstate, 90, target_altitude,target_latlong)["final_state"].
+        local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
+        local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
         local left_distance_t to left_distance["latlong"].
         local right_distance_t to right_distance["latlong"].
         local hed is heading_between(left_distance_t,right_distance_t).
@@ -164,6 +167,8 @@ function check_if_entry_possible{
         check:add("max_pos",min_distance["latlong"]).
         check:add("max",90).
         check:add("min",45).
+        check:add("lower_bank_pos",check_45["latlong"]).
+        check:add("upper_bank_pos",min_distance["latlong"]).
 
     }
     return check.
@@ -310,7 +315,7 @@ function calc_entry_traj {
     }
     //log start_sim to log.txt.
     set AVES["simulation"]["timestep"] to org_timestep.
-    local is_eg_pos is check_if_entry_possible(start_sim,target_latlong).
+    local is_eg_pos is check_if_entry_possible(start_sim,target_latlong,target_altitude).
     local bank_angle is 0.
     local tgt_dist is calcdistance_m(start_sim["latlong"],target_latlong).
     local lower_bound is lex("bank",is_eg_pos["min"],"dist",99999999999).
@@ -331,14 +336,14 @@ function calc_entry_traj {
         }else{
             set bank_side to "left".
         }
-        local avg_dist is avg(list(calcdistance_m(start_sim["latlong"],is_eg_pos["right_pos"]),calcdistance_m(start_sim["latlong"],is_eg_pos["left_pos"]))).
-        if is_eg_pos["max"] = 45{
-            set upper_bound["dist"] to avg_dist.
-            set lower_bound["dist"] to calcdistance_m(start_sim["latlong"],is_eg_pos["max_pos"]).
-        }else{
-            set upper_bound["dist"] to calcdistance_m(start_sim["latlong"],is_eg_pos["max_pos"]).
-            set lower_bound["dist"] to avg_dist.
-        }
+        // Seed the solver with endpoints produced by the same dynamically
+        // bank-reversing model and the same target altitude used below.
+        set lower_bound["dist"] to calcdistance_m(
+            start_sim["latlong"],is_eg_pos["lower_bank_pos"]
+        ).
+        set upper_bound["dist"] to calcdistance_m(
+            start_sim["latlong"],is_eg_pos["upper_bank_pos"]
+        ).
 
     }
 
@@ -350,11 +355,46 @@ function calc_entry_traj {
         local d_u is upper_bound["dist"] - tgt_dist.
         local d_l is lower_bound["dist"] - tgt_dist.
 
-        local pred_b is find_zero_input(lower_bound["bank"],d_l,upper_bound["bank"], d_u).
+        // A secant estimate is valid only while the endpoint errors bracket
+        // zero. If they do not, expand to the physical 0..90 degree limits
+        // and re-simulate rather than extrapolating to a negative bank.
+        if d_l * d_u > 0 {
+            if lower_bound["bank"] > 0 {
+                set lower_bound["bank"] to 0.
+                local lower_predict is sim_with_bank(
+                    clone_simstate(start_sim),0,target_altitude,target_latlong
+                ).
+                set lower_bound["dist"] to calcdistance_m(
+                    lower_predict["final_state"]["latlong"],start_sim["latlong"]
+                ).
+            }
+            if (lower_bound["dist"] - tgt_dist) * d_u > 0
+                and upper_bound["bank"] < 90 {
+                set upper_bound["bank"] to 90.
+                local upper_predict is sim_with_bank(
+                    clone_simstate(start_sim),90,target_altitude,target_latlong
+                ).
+                set upper_bound["dist"] to calcdistance_m(
+                    upper_predict["final_state"]["latlong"],start_sim["latlong"]
+                ).
+            }
+            set d_l to lower_bound["dist"] - tgt_dist.
+            set d_u to upper_bound["dist"] - tgt_dist.
+        }
+
+        local pred_b is (lower_bound["bank"] + upper_bound["bank"]) / 2.
+        if d_l * d_u <= 0 and abs(d_u - d_l) > 0.001 {
+            set pred_b to find_zero_input(lower_bound["bank"],d_l,upper_bound["bank"],d_u).
+        }
+        set pred_b to max(
+            max(0,lower_bound["bank"]),
+            min(min(90,upper_bound["bank"]),pred_b)
+        ).
         local predict is sim_with_bank(simstate, pred_b, target_altitude, target_latlong).
         local dist is calcdistance_m(predict["final_state"]["latlong"], simstate["latlong"]).
 
-        if dist > tgt_dist {
+        local candidate_error is dist - tgt_dist.
+        if d_l * candidate_error <= 0 {
             set upper_bound["bank"] to pred_b.
             set upper_bound["dist"] to dist.
         } else {
