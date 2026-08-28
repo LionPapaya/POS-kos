@@ -214,6 +214,10 @@ function sim_with_bank{
     local hed is compass_for_simstate(simstate).
     local hed2tgt is heading_between(simstate["latlong"],target_latlong).
     local heading_error is hed - hed2tgt.
+    until abs(heading_error) <= 180 {
+        if heading_error > 180 { set heading_error to heading_error - 360. }
+        if heading_error < -180 { set heading_error to heading_error + 360. }
+    }
     if heading_error > 0{
         set bank_side to "right".
     }
@@ -224,6 +228,10 @@ function sim_with_bank{
         set hed to compass_for_simstate(simstate).
         set hed2tgt to heading_between(simstate["latlong"],target_latlong).
         set heading_error to hed - hed2tgt.
+        until abs(heading_error) <= 180 {
+            if heading_error > 180 { set heading_error to heading_error - 360. }
+            if heading_error < -180 { set heading_error to heading_error + 360. }
+        }
         if abs(heading_error) > 20{
             if POS_LOGGING_ENABLED { log hed to log_hed.txt. }
             if POS_LOGGING_ENABLED { log hed2tgt to log_hed.txt. }
@@ -350,7 +358,18 @@ function calc_entry_traj {
         local d_u is upper_bound["dist"] - tgt_dist.
         local d_l is lower_bound["dist"] - tgt_dist.
 
-        local pred_b is find_zero_input(lower_bound["bank"],d_l,upper_bound["bank"], d_u).
+        local min_bank_bound is min(lower_bound["bank"],upper_bound["bank"]).
+        local max_bank_bound is max(lower_bound["bank"],upper_bound["bank"]).
+        local pred_b is (min_bank_bound + max_bank_bound) / 2.
+        if abs(d_u - d_l) > 0.001 {
+            set pred_b to find_zero_input(lower_bound["bank"],d_l,upper_bound["bank"],d_u).
+        }
+        // The distance response can become locally non-linear when the simulated guidance
+        // reverses bank. Keep the root estimate bracketed instead of allowing a secant
+        // extrapolation to produce impossible negative or >90-degree entry banks.
+        if pred_b < min_bank_bound or pred_b > max_bank_bound {
+            set pred_b to (min_bank_bound + max_bank_bound) / 2.
+        }
         local predict is sim_with_bank(simstate, pred_b, target_altitude, target_latlong).
         local dist is calcdistance_m(predict["final_state"]["latlong"], simstate["latlong"]).
 
