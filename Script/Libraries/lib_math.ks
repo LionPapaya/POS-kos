@@ -8,7 +8,7 @@ function remove_spaces {
     
     local result_string is "".
     // Debugging: Log the input string
-    log "Testing remove_spaces function. Input: '" + input_string + "'" to "0:/log.txt".
+    if POS_LOGGING_ENABLED { log "Testing remove_spaces function. Input: '" + input_string + "'" to "0:/log.txt". }
     
     
     for char in input_string {
@@ -17,7 +17,7 @@ function remove_spaces {
         }
     }
       // Debugging: Log the output string (result after removing spaces)
-    log "Result (no spaces): '" + result_string + "'" to "0:/log.txt".
+    if POS_LOGGING_ENABLED { log "Result (no spaces): '" + result_string + "'" to "0:/log.txt". }
     
     return result_string.
 }

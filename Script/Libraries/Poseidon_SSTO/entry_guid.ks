@@ -225,11 +225,11 @@ function sim_with_bank{
         set hed2tgt to heading_between(simstate["latlong"],target_latlong).
         set heading_error to hed - hed2tgt.
         if abs(heading_error) > 20{
-            log hed to log_hed.txt.
-            log hed2tgt to log_hed.txt.
-            log simstate to log_hed.txt.
+            if POS_LOGGING_ENABLED { log hed to log_hed.txt. }
+            if POS_LOGGING_ENABLED { log hed2tgt to log_hed.txt. }
+            if POS_LOGGING_ENABLED { log simstate to log_hed.txt. }
         }
-        log "" to log_hed.txt.
+        if POS_LOGGING_ENABLED { log "" to log_hed.txt. }
         if heading_error > AVES["EG_rev°"]{
             set bank_side to "right".
             //log "right" to log.txt.
@@ -320,10 +320,10 @@ function calc_entry_traj {
         output:add("error",lex("str","Target not reachable", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong,"min_bank", is_eg_pos["min"])).
 
         set output:converged to false.
-        log "Target not reachable" to entry_guid_fail.log.
-        log "is_eg_pos"+is_eg_pos to entry_guid_fail.log.
-        log "Target: "+target_latlong to entry_guid_fail.log.
-        log "start_sim: "+start_sim to entry_guid_fail.log.
+        if POS_LOGGING_ENABLED { log "Target not reachable" to entry_guid_fail.log. }
+        if POS_LOGGING_ENABLED { log "is_eg_pos"+is_eg_pos to entry_guid_fail.log. }
+        if POS_LOGGING_ENABLED { log "Target: "+target_latlong to entry_guid_fail.log. }
+        if POS_LOGGING_ENABLED { log "start_sim: "+start_sim to entry_guid_fail.log. }
         return output.
     }else{
         if is_eg_pos["distance2"] < is_eg_pos["distance3"]{
@@ -370,14 +370,14 @@ function calc_entry_traj {
         local log is "log"+output["iterations"]+".txt".
         for _sim_ in predict["control"]:keys{
             local c is predict["control"][_sim_]["simstate"].
-            log c["simtime"]+",("+c["latlong"]:lat+","+c["latlong"]:lng+")" to log.
+            if POS_LOGGING_ENABLED { log c["simtime"]+",("+c["latlong"]:lat+","+c["latlong"]:lng+")" to log. }
 
         }
 
 
-        log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to log.txt.
+        if POS_LOGGING_ENABLED { log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to log.txt. }
 
-        log "Iteration: " + output["iterations"] + ", Distance to target: " + calcdistance_m(predict["final_state"]["latlong"], target_latlong) + ", Predicted bank angle: " + pred_b +", latlng: " + predict["final_state"]["latlong"] + "tgt_latlng"+ target_latlong to log.txt.
+        if POS_LOGGING_ENABLED { log "Iteration: " + output["iterations"] + ", Distance to target: " + calcdistance_m(predict["final_state"]["latlong"], target_latlong) + ", Predicted bank angle: " + pred_b +", latlng: " + predict["final_state"]["latlong"] + "tgt_latlng"+ target_latlong to log.txt. }
         //log "final_state"+predict["final_state"] to log.txt.
         if is_within_team_interface(predict["final_state"],team_interface_box,target_latlong){
             set output:converged to true.
@@ -398,9 +398,9 @@ function calc_entry_traj {
     output:add("error",lex("str","To many iteration", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong)).
     set output:converged to false.
     //log as much as possible to entry_guid_fail.log to help debug why the solver failed.
-    log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to entry_guid_fail.log.
+    if POS_LOGGING_ENABLED { log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to entry_guid_fail.log. }
     //log the is_eg_pos locations to entry_guid_fail.log to help debug why the solver failed.
-    log "is_eg_pos"+is_eg_pos to entry_guid_fail.log.
+    if POS_LOGGING_ENABLED { log "is_eg_pos"+is_eg_pos to entry_guid_fail.log. }
 
     return output.
 }

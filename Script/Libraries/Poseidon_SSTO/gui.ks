@@ -159,20 +159,20 @@ function setup_reentry_script{
         if kerbin_runways:HASKEY(b) {
             set runway_start to kerbin_runways[b].
         } else {
-            LOG "Key " + b + " not found in kerbin_runways." TO "log.txt".
+            if POS_LOGGING_ENABLED { LOG "Key " + b + " not found in kerbin_runways." TO "log.txt". }
         }
 
         if kerbin_runways:HASKEY(c) {
             set runway_end to kerbin_runways[c].
         } else {
-            LOG "Key " + c + " not found in kerbin_runways." TO "log.txt".
+            if POS_LOGGING_ENABLED { LOG "Key " + c + " not found in kerbin_runways." TO "log.txt". }
         }
     } else {
-        LOG "Key 'kerbin' not found in Location_constants." TO "log.txt".
+        if POS_LOGGING_ENABLED { LOG "Key 'kerbin' not found in Location_constants." TO "log.txt". }
     }
 }
 set runway_heading to heading_between(runway_start, runway_end).
-log ("runway heading = "+runway_heading) to log.txt.
+if POS_LOGGING_ENABLED { log ("runway heading = "+runway_heading) to log.txt. }
 
 
    
@@ -253,7 +253,7 @@ function create_reentry_display {
                 
             } else {
                 // Debugging: Log a warning if the key does not have the expected format
-                log "Warning: Key '" + key + "' does not follow expected format." to "0:/log.txt".
+                if POS_LOGGING_ENABLED { log "Warning: Key '" + key + "' does not follow expected format." to "0:/log.txt". }
             }
         }
     }
@@ -422,7 +422,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         set runway_nr to runway_popup:value.
         set Reentry_mode to Reentry_mode_menu:value.
         set confirm_in to true.
-        log "Selected Location: " + Location + ", Runway: " + runway_nr to "0:/log.txt".
+        if POS_LOGGING_ENABLED { log "Selected Location: " + Location + ", Runway: " + runway_nr to "0:/log.txt". }
         
         
     }
@@ -467,7 +467,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
             set runway_nr to best_runway.
             set Reentry_mode to Reentry_mode_menu:value.
             set confirm_in to true.
-            log "Auto-selected Location: " + Location + ", Runway: " + runway_nr to "0:/log.txt".
+            if POS_LOGGING_ENABLED { log "Auto-selected Location: " + Location + ", Runway: " + runway_nr to "0:/log.txt". }
         }
     }
     

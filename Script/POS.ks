@@ -2,6 +2,9 @@
 // Purpose: top-level launcher/menu for Poseidon scripts.
 // - Loads shared libraries and selects the appropriate Poseidon sub-script (orbit, reentry, docking) based on vessel conditions.
 // Notes: comments inserted only.
+if not defined("POS_LOGGING_ENABLED") {
+    global POS_LOGGING_ENABLED is false.
+}
 //run "POS_AI.ks".
 RUNONCEPATH("0:/Libraries/rsvp/main.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").

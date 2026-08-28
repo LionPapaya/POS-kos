@@ -38,19 +38,19 @@ local Target_orbit is create_assent_gui().
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
 set TargetInclination to Target_orbit["inclination"].
-log("targetperiapsis: "+TargetPeriapsis) to (log.txt).
-log("targetapoapsis: "+Targetapoapsis) to (log.txt).
-log("targetInclination: "+TargetInclination) to (log.txt).
+if POS_LOGGING_ENABLED { log("targetperiapsis: "+TargetPeriapsis) to (log.txt). }
+if POS_LOGGING_ENABLED { log("targetapoapsis: "+Targetapoapsis) to (log.txt). }
+if POS_LOGGING_ENABLED { log("targetInclination: "+TargetInclination) to (log.txt). }
 
 check_inputs().
 
 reset_sys().
 dap:setup().
 print("1").
-log location_constants to "log_location_constants.txt".
+if POS_LOGGING_ENABLED { log location_constants to "log_location_constants.txt". }
 local active_runway is find_active_runway().
 print("2").
-log(active_runway) to "log_runway.txt".
+if POS_LOGGING_ENABLED { log(active_runway) to "log_runway.txt". }
 if active_runway["heading"] >= 0 {
     set runway_heading to active_runway["heading"].
 }
@@ -203,7 +203,7 @@ until running = false{
         }
         //set dap["aerostr"]["targetPitch"] to pitch_tgt.
         // log as much as possible to a file for analysis
-        log ("climb_time: "+climb_time+" speed_time: "+speed_time + " altitude: " + ship:altitude + " airspeed: " + ship:airspeed + " verticalspeed: " + ship:verticalspeed + " accel_in_prograde: " + accel_in_prograde + " pfp_tgt: " + pfp_tgt) to "climb_log.txt".
+        if POS_LOGGING_ENABLED { log ("climb_time: "+climb_time+" speed_time: "+speed_time + " altitude: " + ship:altitude + " airspeed: " + ship:airspeed + " verticalspeed: " + ship:verticalspeed + " accel_in_prograde: " + accel_in_prograde + " pfp_tgt: " + pfp_tgt) to "climb_log.txt". }
 
         if step = "high_altitude_climb" and ship:altitude >= ascent["climb_altitude"] {
             nervson().

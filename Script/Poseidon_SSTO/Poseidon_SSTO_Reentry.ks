@@ -238,7 +238,7 @@ until running = false{
                 //   into the TEAM box. If this succeeds, the returned `entry_traj` lexicon contains
                 //   the converged simulation plan and bank angle.
                 Global Team_interface  to define_TEAM_interface(runway_start,runway_heading,runway_altitude).
-                log Team_interface["target_latlng"]  to log.txt.
+                if POS_LOGGING_ENABLED { log Team_interface["target_latlng"]  to log.txt. }
                 set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"]).
 
                 if entry_traj:converged{
@@ -252,7 +252,7 @@ until running = false{
                     update_readouts().
                     wait 3.
                     set Lastest_status to "bank is "+entry_traj["bank"].
-                    log "bank is "+entry_traj["bank"] to log.txt.
+                    if POS_LOGGING_ENABLED { log "bank is "+entry_traj["bank"] to log.txt. }
                     set basice_reentry_guidance to false.
                     set alpha_md_pid to pidloop(0.26,0.31,0.65).
                     set alpha_md_pid:maxoutput to entry_traj["bank"]+AVES["EG_am_range"].
@@ -266,14 +266,14 @@ until running = false{
                     }
 
                 }else{
-                    log "error: "+entry_traj["error"]["str"] to log.txt.
-                    log "iterations: "+entry_traj["iterations"] to log.txt.
-                    log entry_traj["error"]["max"] to log.txt.
-                    log entry_traj["error"]["left"] to log.txt.
-                    log entry_traj["error"]["right"] to log.txt.
-                    log entry_traj["error"]["target"] to log.txt.
+                    if POS_LOGGING_ENABLED { log "error: "+entry_traj["error"]["str"] to log.txt. }
+                    if POS_LOGGING_ENABLED { log "iterations: "+entry_traj["iterations"] to log.txt. }
+                    if POS_LOGGING_ENABLED { log entry_traj["error"]["max"] to log.txt. }
+                    if POS_LOGGING_ENABLED { log entry_traj["error"]["left"] to log.txt. }
+                    if POS_LOGGING_ENABLED { log entry_traj["error"]["right"] to log.txt. }
+                    if POS_LOGGING_ENABLED { log entry_traj["error"]["target"] to log.txt. }
                     if entry_traj["error"]:HASKEY("min_bank"){
-                    log entry_traj["error"]["min_bank"] to log.txt.
+                    if POS_LOGGING_ENABLED { log entry_traj["error"]["min_bank"] to log.txt. }
                     }
                     set Lastest_status to "Guidance algorithm failed to converge.".
                     update_readouts().
@@ -352,7 +352,7 @@ until running = false{
                             location_to_runways[location_name]:add(runway_number).                
                         } else {                
                             // Guard: if a key doesn't match expected format, log it for debugging.
-                            log "Warning: Key '" + key + "' does not follow expected format." to "0:/log.txt".
+                            if POS_LOGGING_ENABLED { log "Warning: Key '" + key + "' does not follow expected format." to "0:/log.txt". }
                         }
                     }
                 }  
@@ -375,15 +375,15 @@ until running = false{
                             if kerbin_runways:HASKEY(b) {
                                 set runway_start to kerbin_runways[b].
                             } else {
-                                LOG "Key " + b + " not found in kerbin_runways." TO "log.txt".
+                                if POS_LOGGING_ENABLED { LOG "Key " + b + " not found in kerbin_runways." TO "log.txt". }
                             }
                             if kerbin_runways:HASKEY(c) {
                                 set runway_end to kerbin_runways[c].
                             } else {
-                                LOG "Key " + c + " not found in kerbin_runways." TO "log.txt".
+                                if POS_LOGGING_ENABLED { LOG "Key " + c + " not found in kerbin_runways." TO "log.txt". }
                             }
                         } else {
-                            LOG "Key 'kerbin' not found in Location_constants." TO "log.txt".
+                            if POS_LOGGING_ENABLED { LOG "Key 'kerbin' not found in Location_constants." TO "log.txt". }
                         }
                         set val_tgt_found to true.
                         break.
@@ -472,7 +472,7 @@ until running = false{
                 //set d_dot to aeroforce_ld(s_step["position"],s_step["surfvel"],list(AVES["EGAOA"],ba))["drag"].
                 //set alpha_md_pid:setpoint to d_dot.
 
-                log ("e_dot : "+ e_dot+ " e_ref : "+e_ref) to log_e.txt.
+                if POS_LOGGING_ENABLED { log ("e_dot : "+ e_dot+ " e_ref : "+e_ref) to log_e.txt. }
 
                 local heading_error is heading_to_target(Team_interface["target_latlng"]) - compass_for_prograde().
                 if heading_error > AVES["EG_rev°"]{
@@ -526,8 +526,8 @@ until running = false{
                     set old_facing_vec to facing_vec.
                 }
                 set ship_rotate to facing_vec - old_facing_vec.
-                log ship:altitude +","+ ship:velocity:surface:x +","+ ship:velocity:surface:y +"," + ship:velocity:surface:z +","+ ship:sensors:acc:x +","+ ship:sensors:acc:y +","+ ship:sensors:acc:z +","+ship:facing:vector:x +","+ ship:facing:vector:y +","+ ship:facing:vector:z +","+ roll_for() +","+ ship:mass +","+ ship_rotate:x +","+ ship_rotate:y +","+ ship_rotate:z +","+ runway_start:position:x +","+ runway_start:position:y +","+ runway_start:position:z +","+ runway_end:position:x +","+ runway_end:position:y +","+ runway_end:position:z to POS_AI_LOG_SUPERVISED.txt.
-                log dapthrottle +","+ dap["aoa"]["target_aoa"]+","+dap["aoa"]["target_bank"]+","+ dap["aoa"]["base_pitch"] +","+ gear+","+brakes to POS_AI_LOG_SUPERVISED.txt.
+                if POS_LOGGING_ENABLED and AI_SUPERVISED { log ship:altitude +","+ ship:velocity:surface:x +","+ ship:velocity:surface:y +"," + ship:velocity:surface:z +","+ ship:sensors:acc:x +","+ ship:sensors:acc:y +","+ ship:sensors:acc:z +","+ship:facing:vector:x +","+ ship:facing:vector:y +","+ ship:facing:vector:z +","+ roll_for() +","+ ship:mass +","+ ship_rotate:x +","+ ship_rotate:y +","+ ship_rotate:z +","+ runway_start:position:x +","+ runway_start:position:y +","+ runway_start:position:z +","+ runway_end:position:x +","+ runway_end:position:y +","+ runway_end:position:z to POS_AI_LOG_SUPERVISED.txt. }
+                if POS_LOGGING_ENABLED and AI_SUPERVISED { log dapthrottle +","+ dap["aoa"]["target_aoa"]+","+dap["aoa"]["target_bank"]+","+ dap["aoa"]["base_pitch"] +","+ gear+","+brakes to POS_AI_LOG_SUPERVISED.txt. }
                 set old_facing_vec to facing_vec.
             }
           

@@ -41,7 +41,7 @@ function check_inputs{
     if TargetApoapsis < TargetPeriapsis or TargetPeriapsis < 75000 or TargetInclination < 0 or TargetInclination > 180 or TargetApoapsis > BODY:soiradius{
     set step to "end".
     set Lastest_status to "wrong setup".
-    log ("apoapsis = "+TargetApoapsis+" Periapsis = "+TargetPeriapsis+" Inclination = "+TargetInclination) to log.txt.
+    if POS_LOGGING_ENABLED { log ("apoapsis = "+TargetApoapsis+" Periapsis = "+TargetPeriapsis+" Inclination = "+TargetInclination) to log.txt. }
     }
 }
 
@@ -128,7 +128,7 @@ function goto_target{
 function log_status {
     parameter message.
     if ship:altitude < 70000{
-    log message + " | Altitude: " + ship:altitude + "m, Airspeed: " + ship:airspeed + "m/s, inputPitch: " + dap["aerostr"]["distance_pitch"] + ", Pitch: " + pitch_for() +  ", Throttle: " + throttle + ", Glideslope(V): " + calculate_vertical_glideslope_distance()+ ",runway_start_distance(m): "+ ((calcdistance(ship:geoPosition, runway_start))*1000)to ("0:/log.txt").
+    if POS_LOGGING_ENABLED { log message + " | Altitude: " + ship:altitude + "m, Airspeed: " + ship:airspeed + "m/s, inputPitch: " + dap["aerostr"]["distance_pitch"] + ", Pitch: " + pitch_for() +  ", Throttle: " + throttle + ", Glideslope(V): " + calculate_vertical_glideslope_distance()+ ",runway_start_distance(m): "+ ((calcdistance(ship:geoPosition, runway_start))*1000)to ("0:/log.txt"). }
 }
 }
 
@@ -196,7 +196,7 @@ function check_abort {
     ).
     if abort_flag {
         set abort_info["mode"] to ask_abort_modes(abort_info["scenario"],phase).
-        log "Abort needed in " + phase + ": " + scenario_display to "0:/log_abort.txt".
+        if POS_LOGGING_ENABLED { log "Abort needed in " + phase + ": " + scenario_display to "0:/log_abort.txt". }
     }
     return abort_info.
 }
@@ -311,15 +311,18 @@ function abort_select_runway {
         }
     }
     if best["selected"] {
-        log "ATR selected " + best["location"] + " runway " + best["runway_num"] +
-            " distance=" + round(best["distance_m"]) + " score=" + round(best["score"]) to "0:/log_abort.txt".
+        if POS_LOGGING_ENABLED {
+            log "ATR selected " + best["location"] + " runway " + best["runway_num"] +
+                " distance=" + round(best["distance_m"]) + " score=" + round(best["score"]) to "0:/log_abort.txt".
+        }
     }else{
-        log "ATR runway selection found no candidate" to "0:/log_abort.txt".
+        if POS_LOGGING_ENABLED { log "ATR runway selection found no candidate" to "0:/log_abort.txt". }
     }
     return best.
 }
 // Function to log telemetry data on every call
 function logTelemetry {
+    if not POS_LOGGING_ENABLED { return. }
     set log_filename to "assentlog3.txt".  // Fixed filename for telemetry data
 
     // Open or append to the file to log telemetry data

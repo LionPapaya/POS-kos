@@ -128,8 +128,8 @@ function calc_vvdot {
     parameter t_alt.
     parameter alt_.
     if speed = 0 {
-        log "Error: Division by zero in calc_vvdot" to log.txt.
-        log "Distance: " + distance + ", Speed: " + speed + ", Target altitude: " + t_alt + ", Current altitude: " + alt_ to log.txt.
+        if POS_LOGGING_ENABLED { log "Error: Division by zero in calc_vvdot" to log.txt. }
+        if POS_LOGGING_ENABLED { log "Distance: " + distance + ", Speed: " + speed + ", Target altitude: " + t_alt + ", Current altitude: " + alt_ to log.txt. }
         return 0.
 
     }
@@ -214,4 +214,3 @@ function aoa_bank_management {
         set dap["css"]["roll_out"] to target_bank.
     }
 }
-
