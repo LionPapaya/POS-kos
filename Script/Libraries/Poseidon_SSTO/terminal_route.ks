@@ -474,7 +474,8 @@ function terminal_route_fly {
     // or actual-prograde gate here; aerostr is responsible for the small
     // corrections that finish the alignment.
     local aerostr_final is route["phase"] = "final" and
-        abs(heading_to_target(runway_start) - runway_heading) < config_TR["final_alignment_heading_tolerance"].
+        abs(heading_to_target(runway_start) - runway_heading) < config_TR["final_alignment_heading_tolerance"] and
+        abs(compass_for_prograde()-heading_to_target(runway_start))<config_TR["final_alignment_heading_tolerance"] * 5.
     local go_around_climbout is route["phase"] = "go_around" and route["geometry"]["altitude"] < config_TR["GoAround"]["turn_altitude"].
     if go_around_climbout {
         // Wings level while the commanded climb takes effect.  Turning at low
