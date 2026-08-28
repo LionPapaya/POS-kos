@@ -468,7 +468,6 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "hold_radius",2500,
     "target_speed",132,
     "minimum_speed",112,
-    "final_brake_speed",140,
     "low_energy_margin",220,
     "brake_energy",150,
     "hold_exit_energy",250,
@@ -521,17 +520,18 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "final_target_lookahead",500
     ),
     "Propulsion",lex(
-        "assist_energy_deficit",120,"full_assist_energy_deficit",600,"maximum_throttle",0.70,
-        "minimum_speed_reserve",8,"speed_assist_gain",0.04
+        "full_assist_energy_deficit",600,"maximum_throttle",0.70,
+        "throttle_speed",120,"speed_assist_gain",0.04
     ),
     "GoAround",lex(
         "enabled",true,"decision_distance",3500,"minimum_altitude",80,
-        "maximum_heading_error",22,"maximum_cross_track",900,"maximum_sink_rate",12,
-        "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"passed_threshold",0
+        "maximum_heading_error",22,"maximum_cross_track",900,
+        "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"climb_aoa",20,
+        "turn_altitude",350,"passed_threshold",0
     ),
     "LandingGate",lex(
         "distance",1500,"altitude",120,"heading_error",8,"cross_track",300,
-        "minimum_speed",105,"maximum_speed",175,"maximum_sink_rate",8,"minimum_along_track",-250,"stable_time",2,
+        "minimum_speed",105,"maximum_speed",175,"minimum_along_track",-250,"stable_time",2,
         "gear_distance",2200,"gear_altitude",180,"airbrake_minimum_altitude",100
     )
 )).

@@ -288,8 +288,16 @@ function terminal_route_update {
     local geometry is terminal_route_geometry().
     set route["geometry"] to geometry.
 
-    if route["phase"] = "reposition" or route["phase"] = "go_around" {
+    if route["phase"] = "reposition" {
         if captured_target {
+            terminal_route_change_phase(route,"base").
+        }
+    } else if route["phase"] = "go_around" {
+        // Do not start the turn back toward the circuit until the descent has
+        // been arrested and the craft has positive terrain clearance.  The
+        // target remains the downwind fix, but terminal_route_fly holds wings
+        // level during this climb-out.
+        if geometry["altitude"] >= config_TR["GoAround"]["turn_altitude"] and captured_target {
             terminal_route_change_phase(route,"base").
         }
     } else if route["phase"] = "intercept" {
@@ -327,7 +335,7 @@ function terminal_route_update {
     local go_around_config is config_TR["GoAround"].
     local unstable_final is abs(geometry["heading_error"]) > go_around_config["maximum_heading_error"] or
         abs(geometry["cross_track"]) > go_around_config["maximum_cross_track"] or
-        ship:verticalspeed < -go_around_config["maximum_sink_rate"] or geometry["along_track"] < go_around_config["passed_threshold"].
+        geometry["along_track"] < go_around_config["passed_threshold"].
     if route["phase"] = "final" and go_around_config["enabled"] and geometry["distance"] < go_around_config["decision_distance"] and
        geometry["altitude"] > go_around_config["minimum_altitude"] and unstable_final and
        energy_margin > go_around_config["minimum_reposition_energy"] {
@@ -341,13 +349,17 @@ function terminal_route_update {
     // has already committed to downwind or base.
     local direct_distance is geometry["distance"].
     local landing_gate is config_TR["LandingGate"].
-    set route["airbrake"] to energy_margin > config_TR["brake_energy"] or (route["phase"] = "final" and ship:airspeed > config_TR["final_brake_speed"] and geometry["altitude"] > landing_gate["airbrake_minimum_altitude"]).
+    // Thrust and brakes must represent opposite energy states.  In
+    // particular, do not use airbrakes merely because speed crosses a target:
+    // that previously caused brake/throttle chatter around 140 m/s.
+    local low_energy is energy_margin < -config_TR["low_energy_margin"].
+    local low_speed is ship:airspeed < config_TR["Propulsion"]["throttle_speed"].
+    set route["airbrake"] to route["phase"] <> "go_around" and energy_margin > config_TR["brake_energy"] and not low_energy and not low_speed.
     set route["gear"] to direct_distance < landing_gate["gear_distance"] and geometry["altitude"] < landing_gate["gear_altitude"].
     local landing_stable is route["phase"] = "final" and direct_distance < landing_gate["distance"] and
         geometry["altitude"] < landing_gate["altitude"] and geometry["along_track"] > landing_gate["minimum_along_track"] and
         abs(geometry["heading_error"]) < landing_gate["heading_error"] and abs(geometry["cross_track"]) < landing_gate["cross_track"] and
-        ship:airspeed > landing_gate["minimum_speed"] and ship:airspeed < landing_gate["maximum_speed"] and
-        ship:verticalspeed > -landing_gate["maximum_sink_rate"].
+        ship:airspeed > landing_gate["minimum_speed"] and ship:airspeed < landing_gate["maximum_speed"].
     if landing_stable {
         if route["landing_stable_since"] < 0 { set route["landing_stable_since"] to time:seconds. }
     }else{
@@ -424,13 +436,19 @@ function terminal_route_fly {
         set target_aoa to config_TR["descent_min_aoa"].
     }
 
-    // Glide whenever possible.  Engine power is proportional to the energy
-    // deficit and also protects the speed reserve.  Failed engines simply do
-    // not contribute thrust; abort_refresh_state records any additional loss.
+    // Glide whenever possible.  Use engine power only to protect the 120 m/s
+    // speed floor or recover a genuine low-energy state; that makes it
+    // mutually exclusive with the high-energy airbrake state.
     local propulsion_config is config_TR["Propulsion"].
-    local energy_deficit is max(0,-route["energy_margin"] - propulsion_config["assist_energy_deficit"]).
-    local energy_throttle is energy_deficit / max(propulsion_config["full_assist_energy_deficit"] - propulsion_config["assist_energy_deficit"],1).
-    local speed_throttle is max(0,(config_TR["minimum_speed"] + propulsion_config["minimum_speed_reserve"] - ship:airspeed) * propulsion_config["speed_assist_gain"]).
+    local energy_throttle is 0.
+    local speed_throttle is 0.
+    if route["energy_margin"] < -config_TR["low_energy_margin"] {
+        local energy_deficit is -route["energy_margin"] - config_TR["low_energy_margin"].
+        set energy_throttle to energy_deficit / max(propulsion_config["full_assist_energy_deficit"],1).
+    }
+    if ship:airspeed < propulsion_config["throttle_speed"] {
+        set speed_throttle to (propulsion_config["throttle_speed"] - ship:airspeed) * propulsion_config["speed_assist_gain"].
+    }
     set dapthrottle to min(propulsion_config["maximum_throttle"],max(energy_throttle,speed_throttle)).
     if dapthrottle > 0 {
         rapierson().
@@ -451,7 +469,20 @@ function terminal_route_fly {
             set target_aoa to max(config_TR["descent_min_aoa"], target_aoa + descent_error * config_TR["descent_aoa_gain"]).
         }
     }
-    if not(route["phase"] = "final" and abs(route["geometry"]["heading_error"]) < config_TR["final_alignment_heading_tolerance"] and abs(route["geometry"]["cross_track"]) < config_TR["LandingGate"]["cross_track"] * 2){
+    // Restore the original final handoff: aerostr takes over once the bearing
+    // to the threshold matches the runway heading.  Do not add a cross-track
+    // or actual-prograde gate here; aerostr is responsible for the small
+    // corrections that finish the alignment.
+    local aerostr_final is route["phase"] = "final" and
+        abs(heading_to_target(runway_start) - runway_heading) < config_TR["final_alignment_heading_tolerance"].
+    local go_around_climbout is route["phase"] = "go_around" and route["geometry"]["altitude"] < config_TR["GoAround"]["turn_altitude"].
+    if go_around_climbout {
+        // Wings level while the commanded climb takes effect.  Turning at low
+        // altitude was allowing the route to keep descending toward terrain.
+        set dap["str_mode"] to "aoa".
+        set dap["aoa"]["target_aoa"] to max(target_aoa,config_TR["GoAround"]["climb_aoa"]).
+        set dap["aoa"]["target_bank"] to 0.
+    } else if not(aerostr_final) {
         set dap["str_mode"] to "aoa".
         
         set dap["aoa"]["target_aoa"] to target_aoa.
@@ -459,8 +490,9 @@ function terminal_route_fly {
 
     }else{
         set dap["str_mode"] to "aerostr".
-        local hed_error is normalized_heading_error(heading_to_target(runway_start),compass_for_prograde()).
-        set dap["aerostr"]["turn_heading"] to runway_heading + hed_error * config_TR["final_heading_correction"].
+        local desired_heading is heading_to_target(target).
+        local hed_error is normalized_heading_error(desired_heading,compass_for_prograde()).
+        set dap["aerostr"]["turn_heading"] to desired_heading + hed_error * config_TR["final_heading_correction"].
         //if dap["aerostr"]["turn_heading"] > compass_for_prograde() + 2{
         //    set dap["aerostr"]["aerostr_Roll"] to 10.
         //}else if dap["aerostr"]["turn_heading"] < compass_for_prograde() - 2{
