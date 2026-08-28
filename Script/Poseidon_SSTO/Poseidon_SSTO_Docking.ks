@@ -26,10 +26,50 @@ local docking_own_radius is 0.
 local docking_keepout_radius is 0.
 local docking_route_radius is 0.
 local docking_route_standoff is 0.
+local docking_status_detail is "nominal".
 
 function docking_limit {
     parameter value, limit.
     return max(-limit,min(limit,value)).
+}
+
+function docking_zero_translation {
+    set ship:control:fore to 0.
+    set ship:control:starboard to 0.
+    set ship:control:top to 0.
+}
+
+function docking_apply_translation {
+    parameter velocity_error, gain is 2.2, control_limit is 1.
+    set ship:control:fore to docking_limit(
+        vdot(velocity_error,ship:facing:forevector) * gain,control_limit
+    ).
+    set ship:control:starboard to docking_limit(
+        vdot(velocity_error,ship:facing:starvector) * gain,control_limit
+    ).
+    set ship:control:top to docking_limit(
+        vdot(velocity_error,ship:facing:topvector) * gain,control_limit
+    ).
+}
+
+function docking_has_usable_rcs {
+    local has_fore is false.
+    local has_starboard is false.
+    local has_top is false.
+    for thruster in ship:rcs {
+        if thruster:enabled and not thruster:flameout
+            and thruster:availablethrust > 0 {
+            if thruster:foreenabled { set has_fore to true. }
+            if thruster:starboardenabled { set has_starboard to true. }
+            if thruster:topenabled { set has_top to true. }
+        }
+    }
+    return has_fore and has_starboard and has_top.
+}
+
+function docking_is_docked {
+    parameter port.
+    return port:haspartner or port:state:contains("Docked").
 }
 
 function docking_vessel_radius {
@@ -72,6 +112,15 @@ function docking_shell_waypoint {
     if route_normal:mag < 0.01 {
         set route_normal to vcrs(current_direction,v(0,1,0)).
     }
+    if route_normal:mag < 0.01 {
+        set route_normal to vcrs(current_direction,v(1,0,0)).
+    }
+    if route_normal:mag < 0.01 {
+        set route_normal to vcrs(current_direction,v(0,0,1)).
+    }
+    // All three world axes cannot be parallel to current_direction.  Trying
+    // each one prevents NORMALIZED from ever seeing a zero vector when the
+    // start and goal happen to be exactly opposite each other.
     local tangent is vcrs(route_normal:normalized,current_direction):normalized.
     local step_angle is 12.
     local waypoint_direction is
@@ -110,7 +159,7 @@ function docking_choose_port {
 function docking_select_own_port {
     local ready_ports is list().
     for port in ship:dockingports {
-        if port:state = "Ready" {
+        if port:state = "Ready" or port:state = "PreAttached" {
             ready_ports:add(port).
         }
     }
@@ -142,18 +191,19 @@ function docking_select_own_port {
 }
 
 function docking_get_target_vessel {
-    if not hastarget { return 0. }
-    if target:istype("DockingPort") or target:istype("Part") {
-        return target:ship.
+    parameter selected_target.
+    if selected_target = 0 { return 0. }
+    if selected_target:istype("DockingPort") or selected_target:istype("Part") {
+        return selected_target:ship.
     }
-    if target:istype("Vessel") {
-        return target.
+    if selected_target:istype("Vessel") {
+        return selected_target.
     }
     return 0.
 }
 
 function docking_select_target_port {
-    parameter target_vessel, own_port.
+    parameter target_vessel, own_port, selected_target.
     if not target_vessel:loaded or not target_vessel:unpacked {
         print "Target vessel is outside full physics range.".
         print "Move within loading range before running docking.".
@@ -161,13 +211,24 @@ function docking_select_target_port {
     }
     local candidates is list().
     for port in target_vessel:dockingports {
-        if port:state = "Ready" and port:targetable and port:nodetype = own_port:nodetype {
+        if (port:state = "Ready" or port:state = "PreAttached")
+            and port:targetable and port:nodetype = own_port:nodetype {
             candidates:add(port).
         }
     }
     if candidates:length = 0 {
         print "No ready, compatible target docking port found.".
         print "The target must be loaded and its port must be open.".
+        return 0.
+    }
+    // Respect a port explicitly selected in KSP.  Previously the script could
+    // silently choose another compatible port (or prompt again), which is
+    // particularly confusing at short range.
+    if selected_target <> 0 and selected_target:istype("DockingPort") {
+        for port in candidates {
+            if port = selected_target { return port. }
+        }
+        print "The selected target port is not ready or is incompatible.".
         return 0.
     }
     if candidates:length = 1 {
@@ -179,9 +240,7 @@ function docking_select_target_port {
 }
 
 function docking_release_controls {
-    set ship:control:fore to 0.
-    set ship:control:starboard to 0.
-    set ship:control:top to 0.
+    docking_zero_translation().
     set ship:control:mainthrottle to 0.
     unlock steering.
     if docking_control_gui <> 0 {
@@ -239,14 +298,18 @@ print "Use the docking-control window to pause or abort.".
 print "".
 
 set docking_own_port to docking_select_own_port().
+local docking_selected_target is 0.
+if hastarget { set docking_selected_target to target. }
 if docking_own_port <> 0 {
-    set docking_target_vessel to docking_get_target_vessel().
+    set docking_target_vessel to docking_get_target_vessel(docking_selected_target).
     if docking_target_vessel = 0 {
         print "No target vessel selected. Docking cancelled.".
     } else if docking_target_vessel = ship {
         print "The target must be another vessel. Docking cancelled.".
     } else {
-        set docking_target_port to docking_select_target_port(docking_target_vessel,docking_own_port).
+        set docking_target_port to docking_select_target_port(
+            docking_target_vessel,docking_own_port,docking_selected_target
+        ).
     }
 }
 
@@ -292,14 +355,45 @@ if docking_result = "running" {
     set target to docking_target_port.
     SAS OFF.
     RCS ON.
+    wait 0.
+    if not docking_has_usable_rcs() {
+        set docking_result to "no enabled, fueled translation RCS is available".
+        set docking_running to false.
+    }
     docking_create_control_gui().
+
+    local previous_port_delta is
+        docking_target_port:nodeposition - docking_own_port:nodeposition.
+    local previous_sample_time is time:seconds.
+    local port_relative_velocity is
+        ship:velocity:orbit - docking_target_vessel:velocity:orbit.
+    local observed_phase is docking_phase.
+    local best_progress_error is 999999.
+    local last_progress_time is time:seconds.
+    local stall_recoveries is 0.
+    local capture_started is 0.
 
     until not docking_running {
         docking_read_keys().
         if not docking_running { break. }
 
-        if docking_target_port:state:contains("Docked") or docking_own_port:state:contains("Docked") {
+        if docking_is_docked(docking_target_port) or docking_is_docked(docking_own_port) {
             set docking_result to "docked".
+            set docking_running to false.
+        }
+        if not docking_running { break. }
+
+        if docking_target_vessel:isdead or not docking_target_vessel:loaded
+            or not docking_target_vessel:unpacked {
+            set docking_result to "target vessel left full physics range".
+            set docking_running to false.
+        } else if docking_own_port:state <> "Ready"
+            and docking_own_port:state <> "PreAttached" {
+            set docking_result to "own docking port became " + docking_own_port:state.
+            set docking_running to false.
+        } else if docking_target_port:state <> "Ready"
+            and docking_target_port:state <> "PreAttached" {
+            set docking_result to "target docking port became " + docking_target_port:state.
             set docking_running to false.
         }
         if not docking_running { break. }
@@ -315,18 +409,58 @@ if docking_result = "running" {
         local lateral_error is (port_delta + target_axis * axial_distance):mag.
         local alignment_error is
             vang(docking_own_port:portfacing:vector,-target_axis).
-        local relative_velocity is ship:velocity:orbit - docking_target_vessel:velocity:orbit.
-        local relative_speed is relative_velocity:mag.
+        local sample_time is time:seconds.
+        local sample_dt is sample_time - previous_sample_time.
+        if sample_dt > 0.001 and sample_dt < 1 {
+            // Differentiating the actual node-to-node vector includes target
+            // rotation, own-vessel rotation, and translation. COM velocities
+            // alone omit both ports' tangential motion.
+            local measured_port_velocity is -(port_delta - previous_port_delta) / sample_dt.
+            set port_relative_velocity to
+                port_relative_velocity * 0.65 + measured_port_velocity * 0.35.
+        }
+        set previous_port_delta to port_delta.
+        set previous_sample_time to sample_time.
+        local relative_speed is port_relative_velocity:mag.
+        local closing_speed is -vdot(port_relative_velocity,target_axis).
 
-        if docking_phase = "final" and (axial_distance < -1 or lateral_error > 2) {
-            set docking_result to "final approach corridor lost".
+        // Magnetic capture is a KSP-controlled transition. Fighting it with
+        // translation inputs is a common cause of bounce-offs.
+        local capture_active is docking_own_port:state = "PreAttached"
+            or docking_target_port:state = "PreAttached".
+        if capture_active and capture_started = 0 {
+            set capture_started to time:seconds.
+            set docking_phase to "magnetic capture".
+        }
+        if not capture_active and docking_phase = "magnetic capture" {
+            set capture_started to 0.
+            set docking_phase to "approach gate".
+            set docking_status_detail to "capture released; retrying gently".
+        }
+        if capture_active and time:seconds - capture_started > 20 {
+            set docking_result to "magnetic capture did not complete within 20 seconds".
             set docking_running to false.
         }
         if not docking_running { break. }
 
+        // A drift out of the final corridor is recoverable. Backing out to the
+        // gate is safer and much more useful than dropping all control at once.
+        if docking_phase = "final" and not capture_active
+            and (axial_distance < 0.15 or lateral_error > 0.75
+                or alignment_error > 4 or closing_speed > 0.35) {
+            set docking_phase to "approach gate".
+            set docking_status_detail to "final corridor lost; returning to gate".
+        }
+
         // Both docking-port faces must oppose each other. CONTROLFROM makes
         // the ship axes and RCS translation axes relative to Poseidon's port.
-        lock steering to lookdirup(-target_axis,target_top).
+        // Once the magnets engage, release cooked steering as well as
+        // translation so KSP's capture torque can settle the two vessels.
+        if capture_active {
+            unlock steering.
+        } else {
+            lock steering to lookdirup(-target_axis,target_top).
+        }
 
         local target_center is docking_target_vessel:position.
         local own_position is docking_own_port:nodeposition.
@@ -336,15 +470,33 @@ if docking_result = "running" {
             docking_target_port:nodeposition + target_axis * docking_route_standoff.
         local aim_point is own_position.
         local max_closure is 0.8.
+        local position_gain is 0.08.
+        local progress_error is 0.
 
-        if docking_phase = "velocity match" {
+        if docking_phase = "magnetic capture" {
+            set aim_point to own_position.
+            set max_closure to 0.
+            set progress_error to port_delta:mag.
+        } else if docking_phase = "velocity match" {
             // First remove the inherited relative velocity. Holding the current
             // position here avoids adding a large translation demand while RCS
             // is still cancelling as much as 5 m/s.
             set aim_point to own_position.
             set max_closure to 1.25.
+            set progress_error to relative_speed.
             if relative_speed < 0.3 {
-                set docking_phase to choose "clear target" if center_distance < docking_route_radius - 2 else "route around".
+                // Do not send an already aligned vessel on a hazardous and
+                // unnecessary trip around the keep-out shell.
+                if axial_distance > 2
+                    and lateral_error < 4 {
+                    set docking_phase to choose "approach gate"
+                        if axial_distance < 12 and lateral_error < 1 and alignment_error < 3
+                        else "stand-off".
+                } else {
+                    set docking_phase to choose "clear target"
+                        if center_distance < docking_route_radius - 2
+                        else "route around".
+                }
             }
         } else if docking_phase = "clear target" {
             // Move radially away before going around; this prevents a route
@@ -353,6 +505,7 @@ if docking_result = "running" {
             if escape_direction:mag < 0.1 { set escape_direction to target_top. }
             set aim_point to target_center + escape_direction:normalized * docking_route_radius.
             set max_closure to 0.8.
+            set progress_error to max(0,docking_route_radius - center_distance).
             if center_distance >= docking_route_radius - 2 and relative_speed < 0.5 {
                 set docking_phase to "route around".
             }
@@ -361,44 +514,76 @@ if docking_result = "running" {
                 target_center,own_position,route_goal,docking_route_radius,target_top
             ).
             set max_closure to 1.2.
+            set progress_error to (own_position - route_goal):mag.
             if (own_position - route_goal):mag < 4 and relative_speed < 0.5 {
                 set docking_phase to "stand-off".
             }
         } else if docking_phase = "stand-off" {
             set aim_point to docking_target_port:nodeposition + target_axis * 25.
             set max_closure to 0.8.
+            set position_gain to 0.1.
+            set progress_error to (aim_point - own_position):mag.
             if lateral_error < 1.5 and abs(axial_distance - 25) < 2
                 and relative_speed < 0.5 and alignment_error < 3 {
                 set docking_phase to "approach gate".
             }
         } else if docking_phase = "approach gate" {
             set aim_point to docking_target_port:nodeposition + target_axis * 7.
-            set max_closure to 0.4.
+            set max_closure to 0.3.
+            set position_gain to 0.12.
+            set progress_error to (aim_point - own_position):mag.
             if lateral_error < 0.35 and abs(axial_distance - 7) < 0.8
                 and relative_speed < 0.25 and alignment_error < 1 {
                 set docking_phase to "final".
             }
         } else {
             set aim_point to docking_target_port:nodeposition.
-            set max_closure to 0.18.
+            set max_closure to min(0.12,max(0.04,axial_distance * 0.035)).
+            set position_gain to 0.14.
+            set progress_error to port_delta:mag.
         }
 
-        if docking_paused {
-            set ship:control:fore to docking_limit(-vdot(relative_velocity,ship:facing:forevector) * 2,0.35).
-            set ship:control:starboard to docking_limit(-vdot(relative_velocity,ship:facing:starvector) * 2,0.35).
-            set ship:control:top to docking_limit(-vdot(relative_velocity,ship:facing:topvector) * 2,0.35).
+        if docking_phase <> observed_phase {
+            set observed_phase to docking_phase.
+            set best_progress_error to 999999.
+            set last_progress_time to time:seconds.
+        } else if progress_error < best_progress_error - 0.2 {
+            set best_progress_error to progress_error.
+            set last_progress_time to time:seconds.
+        }
+        if docking_paused { set last_progress_time to time:seconds. }
+
+        if capture_active {
+            docking_zero_translation().
+        } else if docking_paused {
+            docking_apply_translation(-port_relative_velocity,2,0.35).
         } else {
             local position_error is aim_point - docking_own_port:nodeposition.
-            local desired_velocity is docking_target_vessel:velocity:orbit + position_error * 0.08.
-            local velocity_command is desired_velocity - ship:velocity:orbit.
+            local desired_port_velocity is position_error * position_gain.
 
             // Limit commanded speed independently of controller gain.
-            if velocity_command:mag > max_closure {
-                set velocity_command to velocity_command:normalized * max_closure.
+            if desired_port_velocity:mag > max_closure {
+                set desired_port_velocity to desired_port_velocity:normalized * max_closure.
             }
-            set ship:control:fore to docking_limit(vdot(velocity_command,ship:facing:forevector) * 2.5,1).
-            set ship:control:starboard to docking_limit(vdot(velocity_command,ship:facing:starvector) * 2.5,1).
-            set ship:control:top to docking_limit(vdot(velocity_command,ship:facing:topvector) * 2.5,1).
+            docking_apply_translation(desired_port_velocity - port_relative_velocity).
+        }
+
+        // One automatic reset handles transient oscillation or a bad initial
+        // velocity estimate. A second 45-second stall indicates unavailable
+        // translation authority or geometry the autopilot cannot safely solve.
+        if not docking_paused and not capture_active
+            and time:seconds - last_progress_time > 45 {
+            if stall_recoveries = 0 {
+                set stall_recoveries to 1.
+                set docking_phase to choose "approach gate"
+                    if axial_distance > 0.15 and lateral_error < 2
+                    else "velocity match".
+                set observed_phase to "reset pending".
+                set docking_status_detail to "progress stalled; resetting approach".
+            } else {
+                set docking_result to "no docking progress; check RCS authority and obstructions".
+                set docking_running to false.
+            }
         }
 
         local pause_text is choose " (PAUSED)" if docking_paused else "          ".
@@ -408,7 +593,8 @@ if docking_result = "running" {
         print ("Relative speed: " + round(relative_speed,3) + " m/s"):padright(52) at(0,10).
         print ("Target clearance: " + round(center_distance - docking_keepout_radius,1) + " m"):padright(52) at(0,11).
         print ("Port alignment error: " + round(alignment_error,2) + " deg"):padright(52) at(0,12).
-        print "Use docking-control window | terminal P/Q also work" at(0,13).
+        print ("Status: " + docking_status_detail):padright(60) at(0,13).
+        print "Use docking-control window | terminal P/Q also work" at(0,14).
 
         if port_delta:mag > 2000 {
             set docking_result to "target moved outside safe physics range".
@@ -419,4 +605,4 @@ if docking_result = "running" {
 }
 
 docking_release_controls().
-print ("Docking program ended: " + docking_result):padright(60) at(0,14).
+print ("Docking program ended: " + docking_result):padright(70) at(0,15).
