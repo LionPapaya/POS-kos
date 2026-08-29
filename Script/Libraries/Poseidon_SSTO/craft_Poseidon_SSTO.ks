@@ -16,7 +16,7 @@ function reset_sys{
     for gear_part in ship:partstitledpattern("GEAR") {
     //log  gear_part:allmodules to "mods.log".
     local brake_mod is gear_part:getmodule("ModuleWheelBrakes").
-    brake_mod:setfield("brakes",200)
+    brake_mod:setfield("brakes",200).
     }
 
 
