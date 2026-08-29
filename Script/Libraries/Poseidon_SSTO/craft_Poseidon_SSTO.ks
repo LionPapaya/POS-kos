@@ -274,8 +274,7 @@ function abort_set_fuel_dump {
             drain_module:setfield("Drain", "Started").
             drain_module:setfield("Drain Mode","Vessel").
         }else{
-            drain_module:setfield("Drain", "Stopped").
-            drain_module:setfield("Drain Mode","Part").
+            drain_module:setfield("Drain", false).
         }
     }
 }
