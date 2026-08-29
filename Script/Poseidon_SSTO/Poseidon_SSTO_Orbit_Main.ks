@@ -478,8 +478,8 @@ until running = false{
                     // reciprocal departure, rather than handing off part-way
                     // through the turn based only on heading change.
                     set dap["aoa"]["target_aoa"] to max(rtls_config["turnback_climb_aoa"],max(rtls_config["target_aoa_min"],-pitch_for_prograde())).
-                    if pitch_for_prograde() > 30 {
-                        set dap["aoa"]["base_pitch"] to 30.
+                    if pitch_for_prograde() > rtls_config["turnback_max_prograde_pitch"] {
+                        set dap["aoa"]["base_pitch"] to rtls_config["turnback_max_prograde_pitch"].
                     }else{
                         set dap["aoa"]["base_pitch"] to 0.
                     }

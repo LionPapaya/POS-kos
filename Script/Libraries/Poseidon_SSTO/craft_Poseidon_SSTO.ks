@@ -457,7 +457,7 @@ Poseidon_SSTO:add("Abort",lex(
     "RTLS",lex(
         "minimum_turn_speed",200,"turn_bank",55,"target_aoa_min",15,
         "reciprocal_heading_tolerance",10,"handoff_minimum_altitude",1000,
-        "turnback_climb_aoa",18,"gear_retract_distance",2000,
+        "turnback_climb_aoa",18,"turnback_max_prograde_pitch",30,"gear_retract_distance",2000,
         "airborne_pitch_margin",1,"low_alt_pitch_margin",5,
         "1RO",lex("use_nervs",false,"fuel_dump",false,"target_mass",70),
         "2RO",lex("use_nervs",true,"fuel_dump",true,"target_mass",60),
