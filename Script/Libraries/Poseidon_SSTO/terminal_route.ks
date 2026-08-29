@@ -10,6 +10,8 @@ global terminal_route_debug is lex(
     "active", false,
     "phase", "inactive",
     "side", "",
+    "target_location", "unknown",
+    "target_runway", "unknown",
     "hold_laps", 0,
     "target_distance", 0,
     "remaining_distance", 0,
@@ -29,6 +31,15 @@ global terminal_route_debug is lex(
     "go_around_reason", "",
     "last_log_time", -1
 ).
+
+// Set true from the terminal to show the active route waypoint.  It defaults
+// off so normal flights do not add navigation visuals.
+if not(defined terminal_route_target_arrow_enabled) {
+    global terminal_route_target_arrow_enabled is false.
+}
+if not(defined terminal_route_target_arrow_active) {
+    global terminal_route_target_arrow_active is false.
+}
 
 function terminal_route_energy_height {
     // Specific kinetic energy expressed as an equivalent altitude in metres.
@@ -385,6 +396,12 @@ function terminal_route_update {
     set terminal_route_debug["active"] to true.
     set terminal_route_debug["phase"] to route["phase"].
     set terminal_route_debug["side"] to route["side"].
+    local target_location is "unknown".
+    local target_runway is "unknown".
+    if defined Location { set target_location to Location. }
+    if defined runway_nr { set target_runway to runway_nr. }
+    set terminal_route_debug["target_location"] to target_location.
+    set terminal_route_debug["target_runway"] to target_runway.
     set terminal_route_debug["hold_laps"] to route["hold_laps"].
     set terminal_route_debug["target_distance"] to target_distance.
     set terminal_route_debug["remaining_distance"] to remaining_distance.
@@ -533,6 +550,17 @@ function terminal_route_fly {
     set terminal_route_debug["target_aoa"] to target_aoa.
     set terminal_route_debug["throttle"] to dapthrottle.
     set terminal_route_debug["Pid_log"] to pid_log.
+
+    // pos_arrow's length is the height above the surface waypoint.  Clearing
+    // before each redraw guarantees one current marker at the target altitude.
+    if terminal_route_target_arrow_enabled {
+        clearVecDraws().
+        pos_arrow(target,"TR " + route["phase"],route["target_altitude"],0.1).
+        set terminal_route_target_arrow_active to true.
+    } else if terminal_route_target_arrow_active {
+        clearVecDraws().
+        set terminal_route_target_arrow_active to false.
+    }
 
     // Log at 2 Hz so a complete approach is inspectable without flooding the volume.
     if time:seconds - terminal_route_debug["last_log_time"] >= config_TR["debug_log_interval"] {

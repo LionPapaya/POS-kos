@@ -106,7 +106,7 @@ function update_terminal_route_gui {
         terminal_route_gui:show().
     }
 
-    set terminal_route_phase_label:text to ("Phase: " + terminal_route_debug["phase"] + " | " + terminal_route_debug["side"] + " | laps " + terminal_route_debug["hold_laps"]).
+    set terminal_route_phase_label:text to ("Target: " + terminal_route_debug["target_location"] + " runway " + terminal_route_debug["target_runway"] + " | " + terminal_route_debug["phase"] + " | " + terminal_route_debug["side"] + " | laps " + terminal_route_debug["hold_laps"]).
     set terminal_route_distance_label:text to ("Target / remaining: " + round(terminal_route_debug["target_distance"]) + " / " + round(terminal_route_debug["remaining_distance"]) + " m").
     set terminal_route_altitude_label:text to ("Altitude now / target: " + round(ship:altitude) + " / " + round(terminal_route_debug["target_altitude"]) + " m").
     set terminal_route_vs_label:text to ("Vertical speed now / target: " + round(ship:verticalspeed,1) + " / " + round(terminal_route_debug["desired_vertical_speed"],1) + " m/s").
