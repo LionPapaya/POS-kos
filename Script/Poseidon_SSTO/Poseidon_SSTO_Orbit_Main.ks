@@ -478,6 +478,11 @@ until running = false{
                     // reciprocal departure, rather than handing off part-way
                     // through the turn based only on heading change.
                     set dap["aoa"]["target_aoa"] to max(rtls_config["turnback_climb_aoa"],max(rtls_config["target_aoa_min"],-pitch_for_prograde())).
+                    if pitch_for_prograde() > 30 {
+                        set dap["aoa"]["base_pitch"] to 30.
+                    }else{
+                        set dap["aoa"]["base_pitch"] to 0.
+                    }
                     local reciprocal_heading is runway_heading + 180.
                     if reciprocal_heading >= 360 { set reciprocal_heading to reciprocal_heading - 360. }
                     local reciprocal_heading_error is abs(normalized_heading_error(reciprocal_heading,compass_for_prograde())).
