@@ -186,16 +186,9 @@ function terminal_route_init {
         set route["phase"] to "final".
     }
 
-    // If the entry guidance has already removed most of the energy, do not
-    // make an unnecessary detour through the holding pattern.
-    local direct_distance is calcdistance_m(ship:geoposition, downwind_fix) +
-        calcdistance_m(downwind_fix, base_fix) +
-        calcdistance_m(base_fix, final_fix) + final_distance.
-    local body_gravity is ship:body:mu / (ship:body:radius ^ 2).
-    local direct_target_energy is calculate_glideslope_alt(direct_distance) - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * body_gravity).
-    if route["phase"] = "reposition" and terminal_route_energy_height() < direct_target_energy - config_TR["low_energy_margin"] {
-        set route["phase"] to "base".
-    }
+    // Low-energy arrivals still enter through reposition and the circuit.
+    // Skipping directly to base can demand an infeasible high-speed intercept
+    // before the craft has established a usable approach geometry.
     set terminal_route_debug["active"] to true.
     set terminal_route_debug["phase"] to route["phase"].
     set terminal_route_debug["side"] to route["side"].
