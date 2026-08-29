@@ -101,15 +101,17 @@ until running = false{
                 set t0 to time:seconds.
                 set takeoff_start_position to ship:geoposition.
             }
-                
-                
-                if ship:airspeed > AVES["Speed"]["Rotate"]{
-                    
-                    set step to "rotate".
-                    set Lastest_status to "rotating".
-                    Set warpmode to "physics".
-                    
-                }
+        }
+
+        // Once the brakes have released, keep monitoring engine health even
+        // if an engine loss pulls total thrust back below StationaryThrottle.
+        // The threshold is an arming condition, not an abort-monitor gate.
+        if t0 <> -1 {
+            if ship:airspeed > AVES["Speed"]["Rotate"]{
+                set step to "rotate".
+                set Lastest_status to "rotating".
+                Set warpmode to "physics".
+            }
             set abort_info to check_abort(step).
             if abort_info["abort"]{
                 set abort_state to create_abort_state(abort_info,step,active_runway).
