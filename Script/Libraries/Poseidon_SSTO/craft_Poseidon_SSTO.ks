@@ -12,6 +12,12 @@ function reset_sys{
     brakes off.
     gear off.
     }
+    //Set wheel brakes to 200%
+    for gear_part in ship:partstitledpattern("GEAR") {
+    //log  gear_part:allmodules to "mods.log".
+    local brake_mod is gear_part:getmodule("ModuleWheelBrakes").
+    brake_mod:setfield("brakes",200)
+    }
 
 
     set dapthrottle to 0.
@@ -410,7 +416,7 @@ Poseidon_SSTO:add("Abort",lex(
     "RunwayStop",lex("stop_speed",1,"command_pitch",-5),
     "RTLS",lex(
         "minimum_turn_speed",200,"turn_bank",55,"target_aoa_min",15,
-        "handoff_heading_change",80,"gear_retract_distance",2000,
+        "handoff_heading_change",120,"gear_retract_distance",2000,
         "airborne_pitch_margin",1,"low_alt_pitch_margin",5,
         "1RO",lex("use_nervs",false,"fuel_dump",false,"target_mass",70),
         "2RO",lex("use_nervs",true,"fuel_dump",true,"target_mass",60),
