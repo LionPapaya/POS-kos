@@ -410,8 +410,8 @@ Poseidon_SSTO:add("Abort",lex(
     "contingency_rapiers_out",4,
     "RunwayStop",lex("stop_speed",1,"command_pitch",-5),
     "RTLS",lex(
-        "minimum_turn_speed",300,"turn_bank",55,"target_aoa_min",10,
-        "handoff_heading_change",125,"gear_retract_distance",2500,
+        "minimum_turn_speed",200,"turn_bank",55,"target_aoa_min",15,
+        "handoff_heading_change",80,"gear_retract_distance",2000,
         "airborne_pitch_margin",1,"low_alt_pitch_margin",5,
         "1RO",lex("use_nervs",false,"fuel_dump",false,"target_mass",70),
         "2RO",lex("use_nervs",true,"fuel_dump",true,"target_mass",60),
