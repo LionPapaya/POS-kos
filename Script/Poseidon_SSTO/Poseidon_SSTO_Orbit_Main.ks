@@ -474,9 +474,15 @@ until running = false{
                     }else{
                         set dap["aoa"]["target_bank"] to rtls_config["turn_bank"].
                     }
-                    set dap["aoa"]["target_aoa"] to max(rtls_config["target_aoa_min"],-pitch_for_prograde()).
-                    local departure_heading_change is abs(normalized_heading_error(compass_for_prograde(),runway_heading)).
-                    if departure_heading_change > rtls_config["handoff_heading_change"] and not abort_state["handoff"]["started"] {
+                    // Climb through the turnaround and hand reentry a stable
+                    // reciprocal departure, rather than handing off part-way
+                    // through the turn based only on heading change.
+                    set dap["aoa"]["target_aoa"] to max(rtls_config["turnback_climb_aoa"],max(rtls_config["target_aoa_min"],-pitch_for_prograde())).
+                    local reciprocal_heading is runway_heading + 180.
+                    if reciprocal_heading >= 360 { set reciprocal_heading to reciprocal_heading - 360. }
+                    local reciprocal_heading_error is abs(normalized_heading_error(reciprocal_heading,compass_for_prograde())).
+                    local handoff_altitude is runway_altitude + rtls_config["handoff_minimum_altitude"].
+                    if reciprocal_heading_error <= rtls_config["reciprocal_heading_tolerance"] and ship:altitude >= handoff_altitude and not abort_state["handoff"]["started"] {
                         set abort_state["phase"] to "handoff".
                         set abort_state["handoff"]["started"] to true.
                         RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
