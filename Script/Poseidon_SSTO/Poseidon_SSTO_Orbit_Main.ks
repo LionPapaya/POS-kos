@@ -66,6 +66,7 @@ if launch_heading < 0 {
 }
 set previous_speed to ship:airspeed.
 set t0 to -1.
+local takeoff_start_position is ship:geoposition.
 local abort_info is lex().
 global abort_state is lex("active",false).
 set dap_mode to "auto".
@@ -98,6 +99,7 @@ until running = false{
             brakes off.
             if t0 = -1{
                 set t0 to time:seconds.
+                set takeoff_start_position to ship:geoposition.
             }
                 
                 
@@ -111,6 +113,18 @@ until running = false{
             set abort_info to check_abort(step).
             if abort_info["abort"]{
                 set abort_state to create_abort_state(abort_info,step,active_runway).
+                if abort_state["mode"] = "runway_abort" {
+                    local runway_abort_check is runway_abort_feasibility(takeoff_start_position,active_runway["end"]).
+                    set abort_state["runway_stop"] to runway_abort_check.
+                    if not runway_abort_check["permitted"] {
+                        set abort_state["mode"] to "rtls".
+                        if POS_LOGGING_ENABLED {
+                            log "Runway abort rejected: rolled=" + round(runway_abort_check["roll_distance_m"]) +
+                                "m, need=" + round(runway_abort_check["required_stop_distance_m"]) +
+                                "m, remaining=" + round(runway_abort_check["runway_remaining_m"]) + "m" to "0:/log_abort.txt".
+                        }
+                    }
+                }
                 set step to abort_state["mode"].
             }
         }
@@ -134,10 +148,55 @@ until running = false{
         }
         if step = "rotate" and ship:altitude > rotate_altitude{
             gear off.
-            set step to "speed_build".
             set warp to 0.
-            set dap["str_mode"] to "aerostr".
             set assent_heading to launch_heading.
+            local runway_to_ascent_error is abs(normalized_heading_error(launch_heading,runway_heading)).
+            if runway_to_ascent_error > ascent["runway_alignment_heading_threshold"] {
+                set step to "ascent_alignment".
+                set Lastest_status to "aligning ascent heading".
+                set dap["str_mode"] to "aoa".
+            }else{
+                set step to "speed_build".
+                set dap["str_mode"] to "aerostr".
+            }
+        }
+    }
+    if step = "ascent_alignment"{
+        update_team_dap_gui().
+        set assent_heading to calculate_heading(TargetInclination, ship:latitude).
+        if assent_heading < 0 {
+            set assent_heading to ascent["inclination_heading_fallback"].
+        }
+
+        // AoA steering turns through bank.  A positive heading error is a turn
+        // to the right, which uses a negative bank in the kOS steering convention.
+        local alignment_heading_error is normalized_heading_error(assent_heading,compass_for_prograde()).
+        local alignment_bank is min(ascent["runway_alignment_bank"],max(10,abs(alignment_heading_error) * 2)).
+        set dap["str_mode"] to "aoa".
+        set dap["aoa"]["target_aoa"] to ascent["runway_alignment_target_aoa"].
+        if alignment_heading_error > 0 {
+            set dap["aoa"]["target_bank"] to -alignment_bank.
+        }else{
+            set dap["aoa"]["target_bank"] to alignment_bank.
+        }
+
+        // Do not build speed while making the initial cross-runway turn.
+        // Ramp from full to idle between 200 and 300 m/s, rather than
+        // abruptly cutting thrust, to hold the turn below the speed limit.
+        local throttle_ramp_width is ascent["runway_alignment_speed_limit"] - ascent["runway_alignment_throttle_ramp_start"].
+        set dapthrottle to max(0,min(1,(ascent["runway_alignment_speed_limit"] - ship:airspeed) / throttle_ramp_width)).
+
+        set abort_info to check_abort(step).
+        if abort_info["abort"]{
+            set abort_state to create_abort_state(abort_info,step,active_runway).
+            set step to abort_state["mode"].
+        }
+        if step = "ascent_alignment" and abs(alignment_heading_error) <= ascent["runway_alignment_completion_tolerance"] {
+            set dap["aoa"]["target_bank"] to 0.
+            set dapthrottle to 1.
+            set dap["str_mode"] to "aerostr".
+            set step to "speed_build".
+            set Lastest_status to "ascent heading aligned".
         }
     }
     if step = "speed_build"{
@@ -357,7 +416,14 @@ until running = false{
                     "start",active_runway["start"],"end",active_runway["end"],"heading",active_runway["heading"],
                     "altitude",active_runway["altitude"],"distance_m",calcdistance_m(ship:geoposition,active_runway["start"]),"score",0
                 ).
-                set abort_state["phase"] to "turnback".
+                // An RTLS chosen during launch, or just after the rotate
+                // command, must first fly away from the runway.  Turning on
+                // the ground is neither controllable nor recoverable.
+                if ship:altitude <= liftoff_altitude {
+                    set abort_state["phase"] to "takeoff_escape".
+                }else{
+                    set abort_state["phase"] to "turnback".
+                }
                 set abort_state["phase_entered"] to time:seconds.
             }
             set Lastest_status to "Abort RTLS " + abort_state["submode"] + " | " + abort_state["phase"].
@@ -369,39 +435,61 @@ until running = false{
             }
             if oxidizer_available { togglerapiermode("closed"). }else{ togglerapiermode("air"). }
             abort_set_fuel_dump(abort_state["policy"]["fuel_dump"] and ship:mass > abort_state["policy"]["target_mass"]).
-            if calcdistance_m(ship:geoposition,active_runway["end"]) > rtls_config["gear_retract_distance"] { gear off. }
-
-            if ship:altitude > rotate_altitude {
-                set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["airborne_pitch_margin"].
-            }else{
-                set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["low_alt_pitch_margin"].
-            }
-            if ship:airspeed > rtls_config["minimum_turn_speed"] {
-                set abort_state["phase"] to "turnback".
-                set dap["str_mode"] to "aoa".
-                local rtls_heading_error is normalized_heading_error(heading_to_target(active_runway["start"]),compass_for_prograde()).
-                if rtls_heading_error > 0 {
-                    set dap["aoa"]["target_bank"] to -rtls_config["turn_bank"].
-                }else{
-                    set dap["aoa"]["target_bank"] to rtls_config["turn_bank"].
-                }
-                set dap["aoa"]["target_aoa"] to max(rtls_config["target_aoa_min"],-pitch_for_prograde()).
-                local departure_heading_change is abs(normalized_heading_error(compass_for_prograde(),runway_heading)).
-                if departure_heading_change > rtls_config["handoff_heading_change"] and not abort_state["handoff"]["started"] {
-                    set abort_state["phase"] to "handoff".
-                    set abort_state["handoff"]["started"] to true.
-                    RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
-                        "force",TRUE,"Location",active_runway["Location"],"Runway",active_runway["runway_num"],
-                        "context",lex("mission","abort","abort_mode","rtls","preserve_propulsion",true,"allow_go_around",true)
-                    )).
-                    set abort_state["handoff"]["complete"] to true.
-                    set abort_state["result"]["success"] to recovery_result["success"].
-                    set abort_state["result"]["reason"] to recovery_result["reason"].
-                    set abort_state["active"] to false.
-                    set step to "end".
-                }
-            }else{
+            if abort_state["phase"] = "takeoff_escape" {
+                // Use the ordinary takeoff controls until clearly airborne.
+                // This covers an RTLS selected late in launch and an engine
+                // failure immediately after rotation but before liftoff.
+                // Keep the RTLS policy selected above: healthy RAPIERs are
+                // in closed cycle when oxidizer is available, NERVs follow
+                // the 1RO/2RO/3RO policy, and fuel dumping is already active.
+                // A severe RAPIER-out case needs that full configured thrust
+                // before it can safely lift off.
+                rapierson().
+                brakes off.
+                gear on.
                 set dap["str_mode"] to "aerostr".
+                set dapthrottle to 1.
+                set dap["aerostr"]["turn_heading"] to runway_heading.
+                set dap["aerostr"]["targetPitch"] to ascent["rotate_pitch"].
+                set dap["aerostr"]["turn_pitch"] to ascent["rotate_pitch"].
+                if ship:altitude > liftoff_altitude {
+                    set abort_state["phase"] to "turnback".
+                    set abort_state["phase_entered"] to time:seconds.
+                }
+            }else{
+                if calcdistance_m(ship:geoposition,active_runway["end"]) > rtls_config["gear_retract_distance"] { gear off. }
+                if ship:altitude > rotate_altitude {
+                    set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["airborne_pitch_margin"].
+                }else{
+                    set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["low_alt_pitch_margin"].
+                }
+                if ship:airspeed > rtls_config["minimum_turn_speed"] {
+                    set abort_state["phase"] to "turnback".
+                    set dap["str_mode"] to "aoa".
+                    local rtls_heading_error is normalized_heading_error(heading_to_target(active_runway["start"]),compass_for_prograde()).
+                    if rtls_heading_error > 0 {
+                        set dap["aoa"]["target_bank"] to -rtls_config["turn_bank"].
+                    }else{
+                        set dap["aoa"]["target_bank"] to rtls_config["turn_bank"].
+                    }
+                    set dap["aoa"]["target_aoa"] to max(rtls_config["target_aoa_min"],-pitch_for_prograde()).
+                    local departure_heading_change is abs(normalized_heading_error(compass_for_prograde(),runway_heading)).
+                    if departure_heading_change > rtls_config["handoff_heading_change"] and not abort_state["handoff"]["started"] {
+                        set abort_state["phase"] to "handoff".
+                        set abort_state["handoff"]["started"] to true.
+                        RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
+                            "force",TRUE,"Location",active_runway["Location"],"Runway",active_runway["runway_num"],
+                            "context",lex("mission","abort","abort_mode","rtls","preserve_propulsion",true,"allow_go_around",true)
+                        )).
+                        set abort_state["handoff"]["complete"] to true.
+                        set abort_state["result"]["success"] to recovery_result["success"].
+                        set abort_state["result"]["reason"] to recovery_result["reason"].
+                        set abort_state["active"] to false.
+                        set step to "end".
+                    }
+                }else{
+                    set dap["str_mode"] to "aerostr".
+                }
             }
         }
     }

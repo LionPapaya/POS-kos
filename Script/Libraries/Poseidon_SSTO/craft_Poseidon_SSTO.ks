@@ -206,6 +206,33 @@ function check_abort {
     }
     return abort_info.
 }
+
+// Empirical V1 runway-stop model, fitted from the dedicated Poseidon abort
+// runs.  It returns a conservative stopping requirement from the distance
+// rolled since brake release; do not use it beyond the tested roll range.
+function runway_abort_stop_distance {
+    parameter takeoff_roll_distance_m.
+    local model is AVES["Abort"]["RunwayStop"].
+    return max(0, model["distance_slope"] * takeoff_roll_distance_m + model["distance_margin_m"]).
+}
+
+// Assess whether an abort begun now can stop before the departure runway end.
+// The start position must be captured exactly when the launch brakes release.
+function runway_abort_feasibility {
+    parameter takeoff_start_position, runway_end_position.
+    local roll_distance is calcdistance_m(takeoff_start_position, ship:geoposition).
+    local stop_distance is runway_abort_stop_distance(roll_distance).
+    local runway_remaining is calcdistance_m(ship:geoposition, runway_end_position).
+    local model_valid is roll_distance <= AVES["Abort"]["RunwayStop"]["validated_roll_distance_m"].
+    return lex(
+        "roll_distance_m",roll_distance,
+        "required_stop_distance_m",stop_distance,
+        "runway_remaining_m",runway_remaining,
+        "model_valid",model_valid,
+        "permitted",model_valid and stop_distance <= runway_remaining
+    ).
+}
+
 function ask_abort_modes{
     parameter scenarios, phase.
     
@@ -230,6 +257,7 @@ function create_abort_state {
         "phase","initialize","phase_entered",time:seconds,"source_step",origin_step,
         "scenario",abort_info["scenario"],"engines",abort_info["engines"],
         "departure_runway",departure_runway,
+        "runway_stop",lex("roll_distance_m",0,"required_stop_distance_m",0,"runway_remaining_m",0,"model_valid",false,"permitted",false),
         "target",lex("selected",false,"location","","runway_num","","start","","end","","heading",-1,"altitude",-1,"distance_m",0,"score",0),
         "policy",lex("use_nervs",false,"fuel_dump",false,"target_mass",ship:mass,"turn_bank",0),
         "handoff",lex("started",false,"complete",false),
@@ -389,6 +417,14 @@ Poseidon_SSTO:add("Ascent",lex(
     "default_launch_heading",90,
     "shallow_climb_pitch",9,
     "speed_build_target",440,
+    // When the orbital ascent course differs substantially from the runway,
+    // turn at a manageable speed before starting the normal acceleration run.
+    "runway_alignment_heading_threshold",10,
+    "runway_alignment_completion_tolerance",5,
+    "runway_alignment_throttle_ramp_start",200,
+    "runway_alignment_speed_limit",300,
+    "runway_alignment_target_aoa",10,
+    "runway_alignment_bank",45,
     "speed_build_pitch",10,
     "climb_altitude",20000,
     "climb_target_speed",1500,
@@ -413,7 +449,11 @@ Poseidon_SSTO:add("Ascent",lex(
 )).
 Poseidon_SSTO:add("Abort",lex(
     "contingency_rapiers_out",4,
-    "RunwayStop",lex("stop_speed",1,"command_pitch",-5),
+    "RunwayStop",lex(
+        "stop_speed",1,"command_pitch",-5,
+        "distance_slope",0.54,"distance_margin_m",50,
+        "validated_roll_distance_m",1255
+    ),
     "RTLS",lex(
         "minimum_turn_speed",200,"turn_bank",55,"target_aoa_min",15,
         "handoff_heading_change",120,"gear_retract_distance",2000,
