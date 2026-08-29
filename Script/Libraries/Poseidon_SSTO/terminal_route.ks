@@ -131,8 +131,16 @@ function terminal_route_bank_command {
 function terminal_route_init {
     local config_TR is AVES["TerminalRoute"].
     local geometry_config is config_TR["Geometry"].
+    local arrival_geometry is terminal_route_geometry().
     local final_distance is geometry_config["wide_final_distance"].
-    local base_offset is geometry_config["wide_base_offset"].
+    // Blend continuously between a straight-in setup and the full-width
+    // circuit.  The cosine curve gives 0%, 50%, and 100% lateral offset at
+    // heading errors of 0, 90, and 180 degrees respectively, while keeping
+    // the change gentle near both endpoints.  Freeze the result at route
+    // initialization so the waypoint cannot move inward while it is chased.
+    local alignment_error is abs(arrival_geometry["heading_error"]).
+    local alignment_factor is (1 - cos(alignment_error)) / 2.
+    local base_offset is geometry_config["wide_base_offset"] * alignment_factor.
     local downwind_extension is geometry_config["wide_downwind_extension"].
     local hold_radius is config_TR["hold_radius"].
 
@@ -145,7 +153,6 @@ function terminal_route_init {
     // Use the nearer circuit side.  This makes the first intercept sensible
     // even when the craft reaches terminal guidance from the opposite side of
     // the runway or from behind it.
-    local arrival_geometry is terminal_route_geometry().
     local side is "left".
     local base_fix is left_base.
     local downwind_fix is left_downwind.
