@@ -533,6 +533,11 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "distance",1500,"altitude",120,"heading_error",8,"cross_track",300,
         "minimum_speed",105,"maximum_speed",175,"minimum_along_track",-250,"stable_time",2,
         "gear_distance",2200,"gear_altitude",180,"airbrake_minimum_altitude",100
+    ),
+    "LandingCommit",lex(
+        "maximum_cross_track",150,"maximum_heading_error",5,"maximum_glideslope_error",60,
+        "minimum_vertical_speed",-45,"maximum_vertical_speed",-15,
+        "minimum_speed",110,"maximum_speed",165,"maximum_bank",10,"minimum_along_track",0
     )
 )).
 Poseidon_SSTO:add("EG_rev°",5).

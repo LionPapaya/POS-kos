@@ -577,9 +577,19 @@ until running = false{
         set TEAM_targetalt to terminal_route["target_altitude"].
         set hud_vvdot to (TEAM_targetalt - ship:altitude) / max(TEAM_dist / max(ship:airspeed,120),5).
         if terminal_route["landing_ready"]{
-            if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
-            set step to "landing".
-            set dap["str_mode"] to "aerostr".
+            // LandingGate has already been stable for its configured time.
+            // Make one final LOC/GS/approach check here, without another timer.
+            local landing_commit is terminal_route_landing_commit_check(terminal_route).
+            if landing_commit["stable"] {
+                if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
+                set step to "landing".
+                set dap["str_mode"] to "aerostr".
+            }else{
+                set terminal_route["go_around_count"] to terminal_route["go_around_count"] + 1.
+                set terminal_route["go_around_reason"] to "landing_commit_unstable".
+                terminal_route_change_phase(terminal_route,"go_around").
+                set Lastest_status to "Go around: landing commit unstable (GS error " + round(landing_commit["glideslope_error"],1) + "m)".
+            }
         }
     }
 
