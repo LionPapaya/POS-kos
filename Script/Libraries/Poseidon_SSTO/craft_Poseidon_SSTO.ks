@@ -473,6 +473,20 @@ Poseidon_SSTO:add("MaxYaw",40).
 Poseidon_SSTO:add("Rotation_rate",lex("high",10,"low",18)).
 Poseidon_SSTO:add("Pitch_rate",lex("high",4,"low",9)).
 Poseidon_SSTO:add("Glideslope",lex("angle1",0.268,"angle2",0.0875,"target1",450,"switch12",700)).
+// Final flare controller.  A more negative touchdown_vertical_speed and a
+// lower flare_start_altitude make a firmer, shorter landing; raising either
+// makes the touchdown softer at the cost of more runway.
+Poseidon_SSTO:add("Landing",lex(
+    "flare_start_altitude",30,
+    "touchdown_altitude",3,
+    "approach_vertical_speed",-5.5,
+    "touchdown_vertical_speed",-1.1,
+    "pitch_gain",2.0,
+    "minimum_turn_pitch",-2,
+    "maximum_turn_pitch",9,
+    "target_touchdown_speed",120,
+    "wheel_brake_altitude",10
+)).
 Poseidon_SSTO:add("StationaryThrottle",300).
 Poseidon_SSTO:add("HacDistance",10000).
 Poseidon_SSTO:add("HacRadius",1500).

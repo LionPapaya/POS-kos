@@ -595,51 +595,50 @@ until running = false{
 
       
      if step = "landing"{
-        set dap["str_mode"] to "aerostr".
         set alt_ovr_runway to ship:altitude - runway_altitude.
-        
-        
+        local landing_config is AVES["Landing"].
         set dapthrottle to 0.
         gear on.
-        aggressive_overcorrect_for_prograde(runway_heading).
-        if alt_ovr_runway > 25{
-        if ship:airspeed > 160 {
+
+        // The final flare deliberately remains a descent.  Interpolating the
+        // desired sink rate by height produces a smooth flare without holding
+        // the craft level over the runway.
+        local desired_vs is landing_config["approach_vertical_speed"].
+        if alt_ovr_runway < landing_config["flare_start_altitude"] {
+            local flare_fraction is max(0,min(1,
+                (landing_config["flare_start_altitude"] - alt_ovr_runway) /
+                max(landing_config["flare_start_altitude"] - landing_config["touchdown_altitude"],1)
+            )).
+            set desired_vs to landing_config["approach_vertical_speed"] +
+                (landing_config["touchdown_vertical_speed"] - landing_config["approach_vertical_speed"]) * flare_fraction.
+        }
+
+        // Keep aerostr control for final alignment.  Drive turn_pitch directly
+        // so the flare has pitch authority without using distance_pitch.
+        local flare_pitch is max(landing_config["minimum_turn_pitch"],min(
+            landing_config["maximum_turn_pitch"],
+            (desired_vs - ship:verticalspeed) * landing_config["pitch_gain"]
+        )).
+        set dap["str_mode"] to "aerostr".
+        set dap["aerostr"]["turn_pitch"] to flare_pitch.
+        set dap["aerostr"]["distance_pitch"] to 0.
+        set dap["aerostr"]["turn_roll"] to 0.
+        set dap["aerostr"]["turn_heading"] to heading_to_target(runway_end).
+
+        // Use airbrakes and wheel brakes whenever the craft is faster than
+        // the desired touchdown speed.  Keep wheel brakes on at touchdown so
+        // rollout continues to decelerate on short runways.
+        if ship:airspeed > landing_config["target_touchdown_speed"] {
             brakes on.
-            log_status("Brakes ON, airspeed above 160").
-        }
-        if ship:airspeed < 100 {
+            log_status("Brakes ON, above target touchdown speed").
+        } else if alt_ovr_runway > landing_config["wheel_brake_altitude"] {
             brakes off.
-            log_status("Brakes Off, altitude below 100").
-        }
-        IF SHIP:verticalspeed > 0 {
-            set dap["aerostr"]["distance_pitch"] to 0.
-        }ELSE IF SHIP:verticalspeed > -1 {
-            set dap["aerostr"]["distance_pitch"] to 3.
-        }ELSE IF SHIP:verticalspeed > -2 {
-            set dap["aerostr"]["distance_pitch"] to 5.
-        }ELSE IF SHIP:verticalspeed > -3 {
-            set dap["aerostr"]["distance_pitch"] to 6.
-        }ELSE IF SHIP:verticalspeed > -3 {
-            set dap["aerostr"]["distance_pitch"] to 8.
-        }ELSE IF SHIP:verticalspeed > -4 {
-            set dap["aerostr"]["distance_pitch"] to 10.
         }ELSE{
-            set dap["aerostr"]["distance_pitch"] to 15.}
-        }else{
-            if not(defined old_alt){
-                set old_alt to ship:altitude.
-            }
-            brakes on. 
-            if old_alt > ship:altitude{
-                set dap["aerostr"]["distance_pitch"] to 5.
-            }else{
-                set dap["aerostr"]["distance_pitch"] to 0.
-            }
-            
-            aggressive_overcorrect_for_prograde(runway_heading).
-            set dap["aerostr"]["aerostr_Roll"] to 0.
+            brakes on.
+            log_status("Wheel brakes ON").
+        }
         if ship:airspeed < 5 {
-            
+
             log_status("Landing completed").
         }
         if ship:airspeed < 1 {
@@ -647,10 +646,6 @@ until running = false{
             set step to "end".
             log_status("Landing completed, switching to end phase").
         }
-    }    
-    set old_alt to ship:altitude.
-    aerostr().
-        
     }
     if step = "end" {
         if not recovery_result["complete"] {
