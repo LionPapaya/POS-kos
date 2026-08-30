@@ -477,13 +477,13 @@ Poseidon_SSTO:add("Glideslope",lex("angle1",0.268,"angle2",0.0875,"target1",450,
 // lower flare_start_altitude make a firmer, shorter landing; raising either
 // makes the touchdown softer at the cost of more runway.
 Poseidon_SSTO:add("Landing",lex(
-    "flare_start_altitude",30,
+    "flare_start_altitude",40,
     "touchdown_altitude",3,
     "approach_vertical_speed",-5.5,
-    "touchdown_vertical_speed",-1.1,
-    "pitch_gain",2.0,
+    "touchdown_vertical_speed",-0.7,
+    "pitch_gain",2.3,
     "minimum_turn_pitch",-2,
-    "maximum_turn_pitch",9,
+    "maximum_turn_pitch",11,
     "target_touchdown_speed",120,
     "wheel_brake_altitude",10
 )).
