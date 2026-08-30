@@ -573,6 +573,10 @@ until running = false{
             brakes off.
         }
 
+        if terminal_route["phase"] = "final"{
+            abort_set_fuel_dump(ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
+        }
+
         set TEAM_dist to terminal_route["remaining_distance"].
         set TEAM_targetalt to terminal_route["target_altitude"].
         set hud_vvdot to (TEAM_targetalt - ship:altitude) / max(TEAM_dist / max(ship:airspeed,120),5).
@@ -582,6 +586,7 @@ until running = false{
             local landing_commit is terminal_route_landing_commit_check(terminal_route).
             if landing_commit["stable"] {
                 if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
+                abort_set_fuel_dump(false).
                 set step to "landing".
                 set dap["str_mode"] to "aerostr".
             }else{
@@ -599,7 +604,7 @@ until running = false{
         local landing_config is AVES["Landing"].
         set dapthrottle to 0.
         gear on.
-
+        update_team_dap_gui().
         // The final flare deliberately remains a descent.  Interpolating the
         // desired sink rate by height produces a smooth flare without holding
         // the craft level over the runway.
