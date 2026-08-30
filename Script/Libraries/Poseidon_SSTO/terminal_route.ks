@@ -465,6 +465,13 @@ function terminal_route_fly {
     }
     local target_aoa is config_TR["nominal_target_aoa"].
     local max_energy_aoa is config_TR["max_energy_aoa"].
+    local descent_min_aoa is config_TR["descent_min_aoa"].
+    local descent_aoa_max is config_TR["descent_aoa_max"].
+    if route["phase"] = "base" {
+        set max_energy_aoa to config_TR["base_aoa_max"].
+        set descent_min_aoa to config_TR["base_aoa_min"].
+        set descent_aoa_max to config_TR["base_aoa_max"].
+    }
     if route["phase"] = "intercept" or route["phase"] = "hold" {
         set max_energy_aoa to config_TR["hold_aoa_max"].
     }
@@ -473,7 +480,7 @@ function terminal_route_fly {
         set target_aoa to min(max_energy_aoa, config_TR["nominal_target_aoa"] + route["energy_margin"] / config_TR["energy_aoa_gain_denominator"]).
     }
     if route["energy_margin"] < -config_TR["low_energy_margin"] {
-        set target_aoa to config_TR["descent_min_aoa"].
+        set target_aoa to descent_min_aoa.
     }
 
     // Glide whenever possible.  Use engine power only to protect the 120 m/s
@@ -505,8 +512,8 @@ function terminal_route_fly {
         if descent_error < 0 {
             // Once the craft is descending too slowly, unload to a low-drag
             // descent AoA first, then reduce further as the error grows.
-            set target_aoa to min(target_aoa, config_TR["descent_aoa_max"]).
-            set target_aoa to max(config_TR["descent_min_aoa"], target_aoa + descent_error * config_TR["descent_aoa_gain"]).
+            set target_aoa to min(target_aoa, descent_aoa_max).
+            set target_aoa to max(descent_min_aoa, target_aoa + descent_error * config_TR["descent_aoa_gain"]).
         }
     }
     // Restore the original final handoff: aerostr takes over once the bearing
@@ -545,13 +552,16 @@ function terminal_route_fly {
 
     }
 
-    // aoa_bank_management treats base_pitch as an absolute pitch baseline.
-    // Supply prograde plus the terminal correction so pitch_bias stays a bias.
+    // aoa_bank_management treats a nonzero base_pitch as an absolute pitch
+    // baseline, replacing pitch_for_prograde().  Terminal-route pitch_bias is
+    // therefore passed directly in every AoA phase; adding prograde here
+    // would double-count the baseline and make the DAP command disagree with
+    // the displayed bias.
     if route["phase"] ="final"{
         set dap["aoa"]["base_pitch"] to pitch_bias.
         set dap["aoa"]["target_aoa"] to target_aoa + config_TR["final_aoa_offset"].
     }else{
-        set dap["aoa"]["base_pitch"] to pitch_for_prograde() + pitch_bias.
+        set dap["aoa"]["base_pitch"] to pitch_bias.
     }
     set terminal_route_debug["desired_vertical_speed"] to desired_vertical_speed.
     set terminal_route_debug["pitch_bias"] to pitch_bias.
