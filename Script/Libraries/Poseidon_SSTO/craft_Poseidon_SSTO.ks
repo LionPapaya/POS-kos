@@ -456,8 +456,8 @@ Poseidon_SSTO:add("Abort",lex(
     ),
     "RTLS",lex(
         "minimum_turn_speed",200,"turn_bank",55,"target_aoa_min",15,
-        "reciprocal_heading_tolerance",10,"handoff_minimum_altitude",1000,
-        "turnback_climb_aoa",18,"turnback_max_prograde_pitch",30,"gear_retract_distance",2000,
+        "reciprocal_heading_tolerance",5,"handoff_minimum_altitude",1000,
+        "turnback_climb_aoa",18,"turnback_max_prograde_pitch",10,"gear_retract_distance",2000,
         "airborne_pitch_margin",1,"low_alt_pitch_margin",5,
         "1RO",lex("use_nervs",false,"fuel_dump",false,"target_mass",70),
         "2RO",lex("use_nervs",true,"fuel_dump",true,"target_mass",60),
@@ -509,7 +509,7 @@ Poseidon_SSTO:add("Envelope",lex(
 )).
 Poseidon_SSTO:add("TerminalRoute",lex(
     "final_distance",10000,
-    "base_offset",3000,
+    "base_offset",300,
     "downwind_extension",8000,
     "hold_radius",2500,
     "target_speed",132,
@@ -552,7 +552,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_pitch_pid_min",-35,
     "pitch_bias_gain",0.35,
     "nominal_target_aoa",16,
-    "max_energy_aoa",30,
+    "max_energy_aoa",20,
     "high_energy_threshold",300,
     "energy_aoa_gain_denominator",120,
     "final_alignment_heading_tolerance",1.5,
@@ -561,7 +561,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "debug_log_interval",0.5,
     "Geometry",lex(
         "direct_final_cross_track",3000,"direct_final_heading_error",35,"direct_final_min_along_track",2500,
-        "wide_final_distance",14000,"wide_base_offset",7000,"wide_downwind_extension",14000,
+        "wide_final_distance",14000,"wide_base_offset",700,"wide_downwind_extension",14000,
         "waypoint_capture_distance",2600,"waypoint_overshoot_distance",1200,"overshoot_eligible_distance",6000,
         "final_target_lookahead",500
     ),

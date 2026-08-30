@@ -403,6 +403,9 @@ until running = false{
         }
     }if step = "rtls"{
         set abort_state to abort_refresh_state(abort_state).
+        if not(defined rtls_handoff_time){
+            set rtls_handoff_time to 0.
+        }
         if abort_state["mode"] = "contingency_abort" {
             set step to "contingency_abort".
         }else{
@@ -458,7 +461,7 @@ until running = false{
                     set abort_state["phase"] to "turnback".
                     set abort_state["phase_entered"] to time:seconds.
                 }
-            }else{
+            }else if abort_state["phase"]= "turnback"{
                 if calcdistance_m(ship:geoposition,active_runway["end"]) > rtls_config["gear_retract_distance"] { gear off. }
                 if ship:altitude > rotate_altitude {
                     set dap["aerostr"]["turn_pitch"] to calc_aoa() - pitch_for_prograde() + rtls_config["airborne_pitch_margin"].
@@ -480,6 +483,8 @@ until running = false{
                     set dap["aoa"]["target_aoa"] to max(rtls_config["turnback_climb_aoa"],max(rtls_config["target_aoa_min"],-pitch_for_prograde())).
                     if pitch_for_prograde() > rtls_config["turnback_max_prograde_pitch"] {
                         set dap["aoa"]["base_pitch"] to rtls_config["turnback_max_prograde_pitch"].
+                    }else if ship:verticalspeed < 0{
+                        set dap["aoa"]["base_pitch"] to ((ship:verticalspeed)*(-1))/2.
                     }else{
                         set dap["aoa"]["base_pitch"] to 0.
                     }
@@ -488,21 +493,38 @@ until running = false{
                     local reciprocal_heading_error is abs(normalized_heading_error(reciprocal_heading,compass_for_prograde())).
                     local handoff_altitude is runway_altitude + rtls_config["handoff_minimum_altitude"].
                     if reciprocal_heading_error <= rtls_config["reciprocal_heading_tolerance"] and ship:altitude >= handoff_altitude and not abort_state["handoff"]["started"] {
+
                         set abort_state["phase"] to "handoff".
-                        set abort_state["handoff"]["started"] to true.
-                        RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
-                            "force",TRUE,"Location",active_runway["Location"],"Runway",active_runway["runway_num"],
-                            "context",lex("mission","abort","abort_mode","rtls","preserve_propulsion",true,"allow_go_around",true)
-                        )).
-                        set abort_state["handoff"]["complete"] to true.
-                        set abort_state["result"]["success"] to recovery_result["success"].
-                        set abort_state["result"]["reason"] to recovery_result["reason"].
-                        set abort_state["active"] to false.
-                        set step to "end".
+                        set rtls_handoff_time to time:seconds.
+
                     }
                 }else{
                     set dap["str_mode"] to "aerostr".
                 }
+            }else{
+                //now phase is handoff
+                if time:seconds - rtls_handoff_time < 3{
+                    set dap["str_mode"] to "aerostr".
+                    set dap["aerostr"]["turn_pitch"] to 5.
+                    set dap["aerostr"]["turn_heading"] to compass_for_prograde().
+                    set dap["aerostr"]["turn_roll"] to 0.
+
+                }else{
+                    set abort_state["handoff"]["started"] to true.
+                    set dap["aoa"]["target_bank"] to 0.
+                    set dap["aoa"]["target_aoa"] to 0.
+                    set dap["aoa"]["base_pitch"] to 0.
+                    set dap["str_mode"] to "aoa".
+                    RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
+                            "force",TRUE,"Location",active_runway["Location"],"Runway",active_runway["runway_num"],
+                            "context",lex("mission","abort","abort_mode","rtls","preserve_propulsion",true,"allow_go_around",true)
+                    )).
+                    set abort_state["handoff"]["complete"] to true.
+                    set abort_state["result"]["success"] to recovery_result["success"].
+                    set abort_state["result"]["reason"] to recovery_result["reason"].
+                    set abort_state["active"] to false.
+                    set step to "end".
+                }    
             }
         }
     }
