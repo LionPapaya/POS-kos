@@ -503,7 +503,7 @@ until running = false{
                 }
             }else{
                 //now phase is handoff
-                if time:seconds - rtls_handoff_time < 3{
+                if time:seconds - rtls_handoff_time < 4{
                     set dap["str_mode"] to "aerostr".
                     set dap["aerostr"]["turn_pitch"] to 5.
                     set dap["aerostr"]["turn_heading"] to compass_for_prograde().

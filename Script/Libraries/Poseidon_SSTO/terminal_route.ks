@@ -148,8 +148,8 @@ function terminal_route_init {
     local left_base is get_geoposition_along_heading(final_fix, runway_heading - 90, base_offset).
     local right_base is get_geoposition_along_heading(final_fix, runway_heading + 90, base_offset).
     local middle_downwind is get_geoposition_along_heading(final_fix, runway_heading + 180, downwind_extension).
-    local left_downwind is get_geoposition_along_heading(middle_downwind, runway_heading - 90, base_offset*10).
-    local right_downwind is get_geoposition_along_heading(middle_downwind, runway_heading + 90 , base_offset*10).
+    local left_downwind is get_geoposition_along_heading(middle_downwind, runway_heading - 90, base_offset*30).
+    local right_downwind is get_geoposition_along_heading(middle_downwind, runway_heading + 90 , base_offset*30).
 
     // Use the nearer circuit side.  This makes the first intercept sensible
     // even when the craft reaches terminal guidance from the opposite side of

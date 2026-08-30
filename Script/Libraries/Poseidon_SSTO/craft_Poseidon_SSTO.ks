@@ -536,7 +536,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_lead_max",8000,
     "pitch_bias_min",-20,
     "pitch_bias_max",20,
-    "base_aoa_min",15,
+    "base_aoa_min",20,
     "base_aoa_max",25,
     "descent_min_aoa",12,
     "descent_aoa_max",17,
@@ -563,7 +563,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "debug_log_interval",0.5,
     "Geometry",lex(
         "direct_final_cross_track",3000,"direct_final_heading_error",35,"direct_final_min_along_track",2500,
-        "wide_final_distance",14000,"wide_base_offset",700,"wide_downwind_extension",14000,
+        "wide_final_distance",14000,"wide_base_offset",350,"wide_downwind_extension",14000,
         "waypoint_capture_distance",2600,"waypoint_overshoot_distance",1200,"overshoot_eligible_distance",6000,
         "final_target_lookahead",500
     ),
