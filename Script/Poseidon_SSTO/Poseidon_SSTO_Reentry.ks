@@ -573,7 +573,7 @@ until running = false{
             brakes off.
         }
 
-        if terminal_route["phase"] = "final"{
+        if terminal_route["phase"] = "final" or terminal_route["phase"] = "base"{
             abort_set_fuel_dump(ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
         }
 
