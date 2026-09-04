@@ -45,6 +45,8 @@ until running = false{
         "spd", ship:airspeed,
         "guid_spd", 0,
         "guid_alt", 0,
+        "guid_pos", 0,
+        "guid_pos_valid", false,
         "pitch", pitch_for(),
         "yaw", compass_for(),
         "roll", roll_for(),
@@ -461,6 +463,8 @@ until running = false{
                 
                 set e_gui_inputs["guid_alt"] to s_step["altitude"].
                 set e_gui_inputs["guid_spd"] to s_step["surfvel"]:mag.
+                set e_gui_inputs["guid_pos"] to s_step["latlong"].
+                set e_gui_inputs["guid_pos_valid"] to true.
 
                 //set d_e to the % difference between the current energy and the reference energy.
                 

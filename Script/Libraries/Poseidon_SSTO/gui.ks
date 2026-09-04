@@ -500,6 +500,18 @@ function create_reentry_gui{
     SET traj_disp_pred:IMAGE TO "Libraries/gui_images/guid_pred_bug.png".
     SET traj_disp_pred:STYLe:WIDTH TO 8.
 
+    // L/SIT route dots are added after the shuttle and guidance bugs.  kOS
+    // lays labels out cumulatively inside this vbox, so their vertical
+    // positions are applied as deltas in update_reentry_lsit_path().
+    global traj_disp_path is list().
+    for path_bug_index in range(0, 10) {
+        local path_bug is console:addlabel().
+        set path_bug:image to "Libraries/gui_images/guid_pred_bug.png".
+        set path_bug:style:width to 4.
+        set path_bug:visible to false.
+        traj_disp_path:add(path_bug).
+    }
+
     set traj_data:style:bg to"Libraries/gui_images/bg_blank.png".
     set traj_data:style:margin:bottom to -100.
     SET traj_data:STYLE:ALIGN TO "Left".   
@@ -512,6 +524,115 @@ function create_reentry_gui{
 
 }
 
+// Convert a geoposition to runway-relative coordinates.  Positive along-track
+// is on the approach side of the threshold; cross-track is signed.
+function reentry_lsit_geometry {
+    parameter position.
+    local distance is calcdistance_m(runway_start, position).
+    local outward_heading is runway_heading + 180.
+    local bearing_from_threshold is heading_between(runway_start, position).
+    local bearing_error is normalized_heading_error(bearing_from_threshold, outward_heading).
+    return lex(
+        "distance", distance,
+        "along_track", distance * cos(bearing_error),
+        "cross_track", distance * sin(bearing_error)
+    ).
+}
+
+// Map runway-relative metres into the same GUI offset range used by TRAJ 1.
+// The runway remains fixed on the right while the approach extends left.
+function reentry_lsit_screen_position {
+    parameter position, max_along_track, max_cross_track.
+    local geometry is reentry_lsit_geometry(position).
+    local along_ratio is geometry["along_track"] / max(max_along_track, 1).
+    local cross_ratio is geometry["cross_track"] / max(max_cross_track, 1).
+    set along_ratio to max(-0.03, min(1, along_ratio)).
+    set cross_ratio to max(-1, min(1, cross_ratio)).
+    return lex(
+        "x", 680 - along_ratio * 620,
+        "y", 6 + cross_ratio * 110
+    ).
+}
+
+function hide_reentry_lsit_path {
+    for path_bug in traj_disp_path {
+        set path_bug:visible to false.
+    }
+}
+
+// Return a display-sized sample of the solver's complete planned ground path.
+function reentry_lsit_entry_path {
+    local result is list().
+    if defined entry_traj and entry_traj:haskey("converged_sim") {
+        local converged_sim is entry_traj["converged_sim"].
+        if converged_sim:haskey("controll_inputs") {
+            local controls is converged_sim["controll_inputs"].
+            local control_keys is controls:keys.
+            local sample_count is min(traj_disp_path:length, control_keys:length).
+            if sample_count > 0 {
+                for sample_index in range(0, sample_count) {
+                    local control_index is 0.
+                    if sample_count > 1 {
+                        set control_index to round(sample_index * (control_keys:length - 1) / (sample_count - 1)).
+                    }
+                    local control_key is control_keys[control_index].
+                    result:add(controls[control_key]["simstate"]["latlong"]).
+                }
+            }
+        }
+    }
+    return result.
+}
+
+// Build the remaining terminal route in flight order.  These are real route
+// vertices from terminal_route, not a decorative static line.
+function reentry_lsit_terminal_path {
+    local result is list().
+    if not(defined terminal_route) { return result. }
+    local phase is terminal_route["phase"].
+
+    if phase = "intercept" or phase = "hold" {
+        local first_hold_index is terminal_route["hold_index"].
+        for hold_offset in range(0, 4) {
+            result:add(terminal_route["hold_points"][mod(first_hold_index + hold_offset, 4)]).
+        }
+        result:add(terminal_route["downwind_fix"]).
+    } else if phase = "reposition" or phase = "go_around" or phase = "downwind" {
+        result:add(terminal_route["downwind_fix"]).
+    }
+
+    if phase <> "final" {
+        result:add(terminal_route["base_fix"]).
+        result:add(terminal_route["final_fix"]).
+    } else {
+        result:add(terminal_route_current_target(terminal_route)).
+    }
+    result:add(runway_start).
+    return result.
+}
+
+// Place route bugs after the shuttle/prediction widgets.  Each padding value
+// is relative to the last visible widget because later kOS vbox children move
+// when an earlier child is moved.
+function update_reentry_lsit_path {
+    parameter positions, max_along_track, max_cross_track, previous_absolute_y.
+    local visible_count is min(positions:length, traj_disp_path:length).
+    for marker_index in range(0, traj_disp_path:length) {
+        local marker is traj_disp_path[marker_index].
+        if marker_index < visible_count {
+            local marker_position is reentry_lsit_screen_position(
+                positions[marker_index], max_along_track, max_cross_track
+            ).
+            set marker:style:padding:top to marker_position["y"] - previous_absolute_y.
+            set marker:style:margin:h to marker_position["x"].
+            set marker:visible to true.
+            set previous_absolute_y to marker_position["y"].
+        } else {
+            set marker:visible to false.
+        }
+    }
+}
+
 function update_reentry_gui {
     parameter inputs is lex(
         "mode", console_mode,
@@ -519,6 +640,8 @@ function update_reentry_gui {
         "spd", ship:airspeed,
         "guid_spd", 0,
         "guid_alt", 0,
+        "guid_pos", 0,
+        "guid_pos_valid", false,
         "pitch", pitch_for(),
         "yaw", compass_for(),
         "roll", roll_for(),
@@ -526,17 +649,32 @@ function update_reentry_gui {
         "aoa", calc_aoa(),
         "l/d", 0
     ).
+    // TEAM is the terminal phase even when the caller's console_mode still
+    // contains the last entry display name from the same update tick.
+    if defined step and step = "TEAM" {
+        set inputs["mode"] to "TRAJ 3".
+    }
     set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
     if inputs["mode"] = "DATA" {
         set console_time:text to ((timestamp():clock)).
         set traj_disp_ssto:visible to false.
         set traj_disp_pred:visible to false.
+        hide_reentry_lsit_path().
         traj_data:hide().
         return.
     } else {
         set traj_disp_ssto:visible to true.
         set traj_disp_pred:visible to true.
         traj_data:show().
+    }
+
+    local lsit_mode is inputs["mode"] = "TRAJ 2" or
+        inputs["mode"] = "TRAJ 2 high" or
+        inputs["mode"] = "TRAJ 2 int" or
+        inputs["mode"] = "TRAJ 3".
+    if not lsit_mode {
+        set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
+        hide_reentry_lsit_path().
     }
 
     // TRAJ 1 low
@@ -711,146 +849,89 @@ function update_reentry_gui {
         }
     }
 
-    // TRAJ 2
-    if inputs["mode"] = "TRAJ 2" {
+    // TRAJ 2 L/SIT: top-down runway-relative ground track.  The three entry
+    // energy variants share the same lateral display and planned trajectory.
+    if inputs["mode"] = "TRAJ 2" or inputs["mode"] = "TRAJ 2 high" or inputs["mode"] = "TRAJ 2 int" {
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_lsit_bg.png".
+        set traj_disp_ssto:image to "Libraries/gui_images/ssto_lsit_bug.png".
+        set traj_disp_ssto:style:margin:top to 0.
 
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
+        local current_geometry is reentry_lsit_geometry(ship:geoposition).
+        set traj_data_pitch:text to ("RNG "+round(current_geometry["distance"] / 1000, 1)+" km").
+        set traj_data_yaw:text to ("XTK "+round(current_geometry["cross_track"] / 1000, 1)+" km").
+        set traj_data_roll:text to ("HDG "+round(inputs["yaw"]) + " deg").
+        set traj_data_mach:text to ("Mach "+round(inputs["mach"], 2)).
+        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"], 2)).
+        set traj_data_ld:text to ("L/D "+round(inputs["l/d"], 2)).
 
-        local max_alt is 26000.
-        local min_alt is 10000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 130 - alt_dif / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+        local max_along_track is 350000.
+        local max_cross_track is 150000.
+        local shuttle_position is reentry_lsit_screen_position(
+            ship:geoposition, max_along_track, max_cross_track
+        ).
+        set traj_disp_ssto:style:padding:top to shuttle_position["y"].
+        set traj_disp_ssto:style:margin:h to shuttle_position["x"].
 
-        local max_spd is 1500.
-        local min_spd is 500.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 { set ratio to (inputs["guid_alt"] - min_alt) / range_. }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
+        local previous_absolute_y is shuttle_position["y"].
+        if inputs:haskey("guid_pos_valid") and inputs["guid_pos_valid"] {
+            local prediction_position is reentry_lsit_screen_position(
+                inputs["guid_pos"], max_along_track, max_cross_track
+            ).
+            // traj_disp_pred was added after traj_disp_ssto, so subtract the
+            // shuttle offset just like the established TRAJ 1 workaround.
+            set traj_disp_pred:style:padding:top to prediction_position["y"] - shuttle_position["y"].
+            set traj_disp_pred:style:margin:h to prediction_position["x"].
             set traj_disp_pred:visible to true.
+            set previous_absolute_y to prediction_position["y"].
         } else {
             set traj_disp_pred:visible to false.
         }
+
+        update_reentry_lsit_path(
+            reentry_lsit_entry_path(), max_along_track, max_cross_track, previous_absolute_y
+        ).
     }
 
-    // TRAJ 2 high
-    if inputs["mode"] = "TRAJ 2 high" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
-
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
-
-        local max_alt is 26000.
-        local min_alt is 10000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 130 - alt_dif / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-
-        local max_spd is 1700.
-        local min_spd is 500.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 { set ratio to (inputs["guid_alt"] - min_alt) / range_. }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
-    }
-
-    // TRAJ 2 int
-    if inputs["mode"] = "TRAJ 2 int" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
-
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
-
-        local max_alt is 26000.
-        local min_alt is 10000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 130 - alt_dif / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-
-        local max_spd is 2000.
-        local min_spd is 500.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 { set ratio to (inputs["guid_alt"] - min_alt) / range_. }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
-    }
-
-    // TRAJ 3 (unchanged)
+    // TRAJ 3 L/SIT: a tighter runway/pattern view driven by terminal_route.
     if inputs["mode"] = "TRAJ 3" {
-        set traj_disp_pred:visible to false.
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_bg.png".
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".
+        set traj_disp_ssto:image to "Libraries/gui_images/ssto_lsit_bug.png".
+        set traj_disp_ssto:style:margin:top to 0.
 
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        local max_alt is 10000.
-        local min_alt is 0.
-        local alt_dif is inputs["alt"] - min_alt.
-        set traj_disp_ssto:STYLE:margin:top to 130 - alt_dif / (max_alt - min_alt) * 220.
-        local max_dis is 35000.
-        local min_dis is 0.
-        local dis_dif is rnw_dis_display - min_dis.
-        set traj_disp_ssto:STYLE:margin:h to 50 + dis_dif / (max_dis - min_dis) * 650.
+        local current_geometry is reentry_lsit_geometry(ship:geoposition).
+        set traj_data_pitch:text to ("RNG "+round(current_geometry["distance"] / 1000, 1)+" km").
+        set traj_data_yaw:text to ("XTK "+round(current_geometry["cross_track"] / 1000, 2)+" km").
+        set traj_data_roll:text to ("ATK "+round(current_geometry["along_track"] / 1000, 1)+" km").
+        set traj_data_mach:text to ("SPD "+round(inputs["spd"]) + " m/s").
+        set traj_data_aoa:text to ("ALT "+round(inputs["alt"]) + " m").
+        set traj_data_ld:text to ("HDG "+round(inputs["yaw"]) + " deg").
+
+        local max_along_track is 50000.
+        local max_cross_track is 20000.
+        local shuttle_position is reentry_lsit_screen_position(
+            ship:geoposition, max_along_track, max_cross_track
+        ).
+        set traj_disp_ssto:style:padding:top to shuttle_position["y"].
+        set traj_disp_ssto:style:margin:h to shuttle_position["x"].
+
+        local previous_absolute_y is shuttle_position["y"].
+        if defined terminal_route {
+            local target_position is reentry_lsit_screen_position(
+                terminal_route_current_target(terminal_route), max_along_track, max_cross_track
+            ).
+            set traj_disp_pred:style:padding:top to target_position["y"] - shuttle_position["y"].
+            set traj_disp_pred:style:margin:h to target_position["x"].
+            set traj_disp_pred:visible to true.
+            set previous_absolute_y to target_position["y"].
+            update_reentry_lsit_path(
+                reentry_lsit_terminal_path(), max_along_track, max_cross_track, previous_absolute_y
+            ).
+        } else {
+            set traj_disp_pred:visible to false.
+            hide_reentry_lsit_path().
+        }
     }
 }
 function create_main_gui{
