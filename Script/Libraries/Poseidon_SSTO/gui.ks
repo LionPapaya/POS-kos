@@ -102,6 +102,20 @@ function update_terminal_route_gui {
         global terminal_route_command_label is data_box:addlabel().
         global terminal_route_controls_label is data_box:addlabel().
         global terminal_route_pid_lable is data_box:addlabel().
+        local runway_change_box is data_box:addhbox().
+        global terminal_route_runway_popup is runway_change_box:addpopupmenu().
+        for runway in terminal_route_available_runways(Location) {
+            terminal_route_runway_popup:addoption(runway).
+        }
+        global terminal_route_runway_change_button is runway_change_box:addbutton("CHANGE RUNWAY").
+        global terminal_route_runway_change_label is data_box:addlabel().
+        set terminal_route_runway_change_button:onclick to {
+            if terminal_route_runway_change_allowed(terminal_route) {
+                set terminal_route_runway_change_request to terminal_route_runway_popup:value.
+            }else{
+                set Lastest_status to "Runway change locked: terminal approach is committed".
+            }
+        }.
     } else {
         terminal_route_gui:show().
     }
@@ -114,6 +128,11 @@ function update_terminal_route_gui {
     set terminal_route_command_label:text to ("AoA / bank / bias: " + round(terminal_route_debug["target_aoa"],1) + " / " + round(dap["aoa"]["target_bank"],1) + " / " + round(terminal_route_debug["pitch_bias"],1) + " deg").
     set terminal_route_controls_label:text to ("Throttle: " + round(terminal_route_debug["throttle"],2) + " | brake: " + terminal_route_debug["airbrake"] + " | gear: " + terminal_route_debug["gear"]).
     set terminal_route_pid_lable:text to ("PID log: " + terminal_route_debug["Pid_log"]).
+    if terminal_route_runway_change_allowed(terminal_route) {
+        set terminal_route_runway_change_label:text to ("Runway: " + runway_nr + " selected — change available").
+    }else{
+        set terminal_route_runway_change_label:text to ("Runway: " + runway_nr + " selected — CHANGE LOCKED").
+    }
 }
 function setup_reentry_script{
     parameter Location_ is "".

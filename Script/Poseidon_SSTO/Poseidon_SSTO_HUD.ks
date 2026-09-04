@@ -94,12 +94,12 @@ if defined ship and defined step and ship:altitude < 70000 and (step = "reentry_
     if defined ship{ print ("ALTITUDE ="+round(ship:altitude)+"") at(42,11). }else{ print ("ALTITUDE =") at(42,11). }
     Print ("|") at(79,11). 
     Print("|") at(0,12).
-    if defined d_e {Print ("%E_diff="+d_e+ "%   ") at(3,12).}
+    if defined d_e {Print ("ENERGY ERROR ="+round(d_e * 100,1)+ "%   ") at(3,12).}
     Print ("|") at(40,11).
     if defined ship{ print ("MASS ="+round(ship:mass)+"") at(42,12). }else{ print ("MASS =") at(42,12). }
     Print ("|") at(79,12). 
     Print("|") at(0,13).
-    if dap:haskey("aoa") and dap["aoa"]:haskey("bank_angle") {Print ("target bank="+dap["aoa"]["bank_angle"]+ "   ") at(3,13).}
+    if dap:haskey("aoa") and dap["aoa"]:haskey("target_bank") {Print ("TARGET BANK ="+round(dap["aoa"]["target_bank"],1)+ " deg   ") at(3,13).}
     Print ("|") at(40,13).
     if defined throttle{ print ("Throttle ="+throttle+"") at(42,13). }else{ print ("Throttle =") at(42,13). }
     Print ("|") at(79,13). 
@@ -118,12 +118,12 @@ if defined ship and defined step and ship:altitude < 70000 and step = "TEAM"{
     if defined ship{ print ("ALTITUDE ="+round(ship:altitude)+"") at(42,11). }else{ print ("ALTITUDE =") at(42,11). }
     Print ("|") at(79,11). 
     Print("|") at(0,12).
-    if dap:haskey("str_mode"){ Print("steering mode =" +dap["str_mode"]+ "  ")at(3,12). }else{ Print("steering mode =") at(3,12). }
+    if defined terminal_route_debug and terminal_route_debug:haskey("phase"){ Print("ROUTE PHASE =" +terminal_route_debug["phase"]+ "  ")at(3,12). }else{ Print("ROUTE PHASE =") at(3,12). }
     Print ("|") at(40,12).
-    if defined hud_vvdot {Print ("vvdot ="+hud_vvdot+ "   ") at(42,12).}
-    Print ("|") at(79,12). 
+    if defined terminal_route_debug and terminal_route_debug:haskey("desired_vertical_speed") {Print ("TARGET VS ="+round(terminal_route_debug["desired_vertical_speed"],1)+ " m/s   ") at(42,12).}else{ Print ("TARGET VS =") at(42,12).}
+    Print ("|") at(79,12).
     Print("|") at(0,13).
-    if defined Active_HAC {Print ("Active_HAC ="+Active_HAC+ "   ") at(3,13).}
+    if defined terminal_route_debug and terminal_route_debug:haskey("energy_margin") {Print ("ENERGY MARGIN ="+round(terminal_route_debug["energy_margin"],1)+ " m   ") at(3,13).}else{ Print("ENERGY MARGIN =") at(3,13).}
     Print ("|") at(40,13).
     if defined throttle{ print ("Throttle ="+throttle+"") at(42,13). }else{ print ("Throttle =") at(42,13). }
     Print ("|") at(79,13). 

@@ -30,7 +30,8 @@ FUNCTION clone_simstate {
 
 function gravitacc {
     parameter pos.
-    local grav_acc to -BODY:mu * pos:normalized / pos:sqrmagnitude.
+    parameter sim_context_mu is BODY:mu.
+    local grav_acc to -sim_context_mu * pos:normalized / pos:sqrmagnitude.
     //log "Gravitational acceleration: " + grav_acc to "simstate.log".
     return grav_acc.
 }
@@ -61,6 +62,31 @@ function update_simstate {
 
     ).
 }
+
+// Entry trajectory integration always combines exactly aerodynamic and
+// gravitational acceleration.  Accept the already-summed vector directly so
+// the hot simulation loops do not allocate a list or run a generic summation.
+function update_simstate_total_accel {
+    parameter simstate.
+    parameter total_accel.
+    parameter timestep is AVES["simulation"]["timestep"].
+    parameter sim_context_angularvel is BODY:angularvel.
+    parameter sim_context_radius is BODY:radius.
+
+    // Keep the same constant-acceleration Euler equations as update_simstate.
+    local new_velocity to simstate["velocity"] + total_accel * timestep.
+    local new_position to simstate["position"] + simstate["velocity"] * timestep + 0.5 * total_accel * timestep^2.
+
+    return lexicon(
+        "simtime", simstate["simtime"] + timestep,
+        "position", new_position,
+        "velocity", new_velocity,
+        "surfvel", new_velocity - vcrs(sim_context_angularvel, new_position),
+        "altitude", new_position:mag - sim_context_radius,
+        "latlong", vec2pos(new_position)
+    ).
+}
+
 function simulate_trajectory {
     parameter simstate.
     parameter bank_angle.
@@ -69,10 +95,23 @@ function simulate_trajectory {
     parameter max_alt is 70000.
     parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"].
+    parameter sim_context_mu is BODY:mu.
+    parameter sim_context_radius is BODY:radius.
+    parameter sim_context_angularvel is BODY:angularvel.
+    parameter sim_context_mass is SHIP:MASS.
+    parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
     //if EGAOA it has to check every timestep to get the new aoa for that alt using AVES["EGAOA"](simstate["altitude"])
 
 
     local temp_simstate is simstate.
+    // Preserve the established constant-bank probe convention exactly:
+    // "left" maps to negative roll; every other side maps to positive roll.
+    local signed_bank_angle is bank_angle.
+    if bank_side = "left" {
+        set signed_bank_angle to -bank_angle.
+    }
 
     until temp_simstate["altitude"] < alt_ or temp_simstate["altitude"] > max_alt {
         if aoa_temp = "EGAOA"{
@@ -82,18 +121,13 @@ function simulate_trajectory {
         }
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
-        if bank_side = "left"{ 
-            
-            set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,-bank_angle)).
-        } else {
-            set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
-        }
+        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
 
         // Calculate the gravitational acceleration
-        local gravity_acceleration is gravitacc(temp_simstate["position"]).
+        local gravity_acceleration is gravitacc(temp_simstate["position"],sim_context_mu).
 
-        // Update the simstate with all accelerations
-        set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), timestep).
+        // Entry simulation has exactly aerodynamic plus gravitational acceleration.
+        set temp_simstate to update_simstate_total_accel(temp_simstate, air_acceleration + gravity_acceleration, timestep, sim_context_angularvel, sim_context_radius).
     }
     if temp_simstate["altitude"] > max_alt {
         return 0.
@@ -108,11 +142,24 @@ function simulate_trajectory_time {
     parameter t.
     parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"].
+    parameter sim_context_mu is BODY:mu.
+    parameter sim_context_radius is BODY:radius.
+    parameter sim_context_angularvel is BODY:angularvel.
+    parameter sim_context_mass is SHIP:MASS.
+    parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
 
     local temp_simstate is simstate.
     local t0 is simstate["simtime"].
+    // Preserve the established guided-entry convention exactly:
+    // "right" maps to negative roll; every other side maps to positive roll.
+    local signed_bank_angle is bank_angle.
+    if bank_side = "right" {
+        set signed_bank_angle to -bank_angle.
+    }
 
-    until temp_simstate["simtime"] - t0 > t {
+    until temp_simstate["simtime"] - t0 >= t {
         if aoa_temp = "EGAOA"{
             set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
         }else{
@@ -121,17 +168,13 @@ function simulate_trajectory_time {
         local remaining_time is t - (temp_simstate["simtime"] - t0).
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
-        if bank_side = "right"{ 
-            set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,-bank_angle)).
-        } else {
-            set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
-        }
+        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
 
         // Calculate the gravitational acceleration
-        local gravity_acceleration is gravitacc(temp_simstate["position"]).
+        local gravity_acceleration is gravitacc(temp_simstate["position"],sim_context_mu).
 
-        // Update the simstate with all accelerations
-        set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), min(timestep,remaining_time+0.1)).
+        // Entry simulation has exactly aerodynamic plus gravitational acceleration.
+        set temp_simstate to update_simstate_total_accel(temp_simstate, air_acceleration + gravity_acceleration, min(timestep,remaining_time), sim_context_angularvel, sim_context_radius).
         //log temp_simstate to "simstate.log".
        
     }
@@ -243,6 +286,61 @@ function simulate_trajectory_hed_pos{
 
     return temp_simstate.
 }
+// Entry-trajectory-only acceleration sampler.  It preserves the aeroforce_ld
+// load-vector transformation but avoids producing lift/drag values that the
+// entry simulators never consume.
+declare function sim_aeroaccel_load {
+    parameter pos.
+    parameter surfvel.
+    parameter attitude.
+    parameter sim_context_radius is BODY:radius.
+    parameter sim_context_mass is SHIP:MASS.
+    parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
+
+    local roll is attitude[1].
+    local aoa is attitude[0].
+
+    local altt is pos:mag-sim_context_radius.
+
+    local vesselfore is sim_context_vessel_fore.
+    local vesseltop is sim_context_vessel_top.
+    local vesselright is sim_context_vessel_right.
+
+    local airspeedaoa is surfvel:MAG*rodrigues(vesselfore,vesselright,aoa):NORMALIZED.
+    local totalforce is ADDONS:FAR:AEROFORCEAT(altt,airspeedaoa).
+
+    // Convert the aerodynamic force into the frame defined by the vessel orientation vectors.
+    local localforce is V(VDOT(vesselright,totalforce),VDOT(vesseltop,totalforce),VDOT(vesselfore,totalforce)).
+
+    // Build a frame of reference centered about the surface velocity and local up direction.
+    local velforward is surfvel:NORMALIZED.
+    local velup is pos:NORMALIZED.
+    local velright is VCRS(velup,velforward).
+    if velright:MAG < 0.001 {
+        set velright to VCRS(vesseltop,velforward).
+        if velright:MAG < 0.001 {
+            set velright to VCRS(vesselfore,velforward):NORMALIZED.
+        }
+        else {
+            set velright to velright:NORMALIZED.
+        }
+    }
+    else {
+        set velright to velright:NORMALIZED.
+    }
+    set velup to VCRS(velforward,velright):NORMALIZED.
+
+    // Build the predicted vessel orientation vectors using the existing AoA and roll convention.
+    local pred_vesseltop is rodrigues(velup,velforward,-roll).
+    local pred_vesselright is VCRS(pred_vesseltop,velforward):NORMALIZED.
+    local pred_vesselfore is rodrigues(velforward,pred_vesselright,-aoa).
+    set pred_vesseltop to rodrigues(pred_vesseltop,pred_vesselright,-aoa).
+
+    return (pred_vesselright*localforce:X + pred_vesseltop*localforce:Y + pred_vesselfore*localforce:Z) / sim_context_mass.
+}
+
 //wrapper that converts everything to acceleration
 function aeroaccel_ld {
 	parameter pos.

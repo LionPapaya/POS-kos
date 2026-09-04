@@ -601,6 +601,14 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "maximum_cross_track",150,"maximum_heading_error",5,"maximum_glideslope_error",60,
         "minimum_vertical_speed",-45,"maximum_vertical_speed",-15,
         "minimum_speed",110,"maximum_speed",165,"maximum_bank",10,"minimum_along_track",0
+    ),
+    // A runway may be changed only while there is enough room to rebuild the
+    // terminal pattern.  The phase lock prevents a reversal after final has
+    // begun; the distance and altitude limits also cover unusual routes that
+    // have not yet transitioned to final.
+    "RunwayChange",lex(
+        "lock_distance",6000,
+        "lock_altitude",1500
     )
 )).
 Poseidon_SSTO:add("EG_rev°",5).

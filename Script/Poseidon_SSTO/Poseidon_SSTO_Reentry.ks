@@ -553,11 +553,26 @@ until running = false{
             set dap["str_mode"] to "aoa".
             
         }
-    }  
+    }
     if step = "TEAM"{
         if not(defined terminal_route){
             set terminal_route to terminal_route_init().
             clearVecDraws().
+        }
+        if terminal_route_runway_change_request <> "" {
+            local requested_runway is terminal_route_runway_change_request.
+            set terminal_route_runway_change_request to "".
+            if terminal_route_runway_change_allowed(terminal_route) {
+                local runway_change is terminal_route_change_runway(requested_runway).
+                set Lastest_status to runway_change["message"].
+                if runway_change["success"] {
+                    // Recreate every waypoint and energy target for the new
+                    // threshold before terminal guidance resumes.
+                    set terminal_route to terminal_route_init().
+                }
+            }else{
+                set Lastest_status to "Runway change locked: terminal approach is committed".
+            }
         }
         set terminal_route to terminal_route_update(terminal_route).
         terminal_route_fly(terminal_route).
@@ -581,9 +596,6 @@ until running = false{
             abort_set_fuel_dump(ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
         }
 
-        set TEAM_dist to terminal_route["remaining_distance"].
-        set TEAM_targetalt to terminal_route["target_altitude"].
-        set hud_vvdot to (TEAM_targetalt - ship:altitude) / max(TEAM_dist / max(ship:airspeed,120),5).
         if terminal_route["landing_ready"]{
             // LandingGate has already been stable for its configured time.
             // Make one final LOC/GS/approach check here, without another timer.
