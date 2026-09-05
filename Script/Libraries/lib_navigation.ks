@@ -341,12 +341,10 @@ function define_TEAM_interface {
     parameter rnw_altitude.
 
     local target_altitude is 0.
-    // Calculate the target altitude
-    if rnw_altitude + AVES["TEAMAltitude"]*(4/5) > AVES["TEAMAltitude"]{
-        set target_altitude to AVES["TEAMAltitude"].
-    } else {
-        set target_altitude to rnw_altitude + AVES["TEAMAltitude"]*(4/5).
-    }
+    // TEAMAltitude is an altitude above the selected runway, not an
+    // atmosphere-relative cap.  Keep the interface at that full height for
+    // every runway, including low-elevation runways.
+    set target_altitude to rnw_altitude + AVES["TEAMAltitude"].
 
     local target_latlng is latlng(0, 0).
     local ercl_2hac to get_geoposition_along_heading(rnw_start,rnw_heading+180,Aves["HacDistance"]).
