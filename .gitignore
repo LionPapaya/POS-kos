@@ -1,1 +1,4 @@
 .DS_Store
+
+# Local replay UI for exported POS_logs flight data.
+tools/flight-replay/

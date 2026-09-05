@@ -5,6 +5,7 @@
 // Notes: header comments only; no code changed.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_guid.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
@@ -18,6 +19,7 @@ RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_route.ks").
 
 parameter force_tgt is lex("force",false,"Location","","Runway","").
+flight_log_begin("reentry").
 if not(defined recovery_result) {
     global recovery_result is lex("complete",false,"success",false,"reason","running").
 }else{
@@ -31,7 +33,6 @@ if not(force_tgt["force"]){
 }ELSE{
     setup_reentry_script(force_tgt["Location"],force_tgt["Runway"]).
 }
-local AI_SUPERVISED is false. // will log state and action data for supervised learning of the entry guidance model. Set to false to disable logging.
 //}
 set deorbit_periapsis_set_flag to false.
 dap:setup().
@@ -233,13 +234,14 @@ until running = false{
                
                 // Prepare the TEAM interface and attempt to compute an entry trajectory.
                 // - `define_TEAM_interface` builds the target box (altitude band, lat/lng center, tolerances).
-                // - We log the target lat/long for debugging and then call `calc_entry_traj` with the
+                // - We record the target outside the solver, then call `calc_entry_traj` with the
                 //   current simulated state to search for a bank profile that will guide the vehicle
                 //   into the TEAM box. If this succeeds, the returned `entry_traj` lexicon contains
                 //   the converged simulation plan and bank angle.
                 Global Team_interface  to define_TEAM_interface(runway_start,runway_heading,runway_altitude).
-                if POS_LOGGING_ENABLED { log Team_interface["target_latlng"]  to log.txt. }
+                flight_log_set_entry_target(Team_interface).
                 set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"]).
+                flight_log_entry_solver_result(entry_traj).
 
                 if entry_traj:converged{
                     // Entry solver converged: configure guidance to follow the planned bank profile.
@@ -252,7 +254,6 @@ until running = false{
                     update_readouts().
                     wait 3.
                     set Lastest_status to "bank is "+entry_traj["bank"].
-                    if POS_LOGGING_ENABLED { log "bank is "+entry_traj["bank"] to log.txt. }
                     set basice_reentry_guidance to false.
                     set alpha_md_pid to pidloop(0.26,0.31,0.65).
                     set alpha_md_pid:maxoutput to entry_traj["bank"]+AVES["EG_am_range"].
@@ -266,15 +267,6 @@ until running = false{
                     }
 
                 }else{
-                    if POS_LOGGING_ENABLED { log "error: "+entry_traj["error"]["str"] to log.txt. }
-                    if POS_LOGGING_ENABLED { log "iterations: "+entry_traj["iterations"] to log.txt. }
-                    if POS_LOGGING_ENABLED { log entry_traj["error"]["max"] to log.txt. }
-                    if POS_LOGGING_ENABLED { log entry_traj["error"]["left"] to log.txt. }
-                    if POS_LOGGING_ENABLED { log entry_traj["error"]["right"] to log.txt. }
-                    if POS_LOGGING_ENABLED { log entry_traj["error"]["target"] to log.txt. }
-                    if entry_traj["error"]:HASKEY("min_bank"){
-                    if POS_LOGGING_ENABLED { log entry_traj["error"]["min_bank"] to log.txt. }
-                    }
                     set Lastest_status to "Guidance algorithm failed to converge.".
                     update_readouts().
                     wait 5.
@@ -351,8 +343,8 @@ until running = false{
                             }
                             location_to_runways[location_name]:add(runway_number).                
                         } else {                
-                            // Guard: if a key doesn't match expected format, log it for debugging.
-                            if POS_LOGGING_ENABLED { log "Warning: Key '" + key + "' does not follow expected format." to "0:/log.txt". }
+                            // Preserve malformed-data diagnostics in the event CSV.
+                            flight_log_event("runway_key_invalid","key=" + key).
                         }
                     }
                 }  
@@ -375,15 +367,15 @@ until running = false{
                             if kerbin_runways:HASKEY(b) {
                                 set runway_start to kerbin_runways[b].
                             } else {
-                                if POS_LOGGING_ENABLED { LOG "Key " + b + " not found in kerbin_runways." TO "log.txt". }
+                                flight_log_event("runway_lookup_failed","key=" + b).
                             }
                             if kerbin_runways:HASKEY(c) {
                                 set runway_end to kerbin_runways[c].
                             } else {
-                                if POS_LOGGING_ENABLED { LOG "Key " + c + " not found in kerbin_runways." TO "log.txt". }
+                                flight_log_event("runway_lookup_failed","key=" + c).
                             }
                         } else {
-                            if POS_LOGGING_ENABLED { LOG "Key 'kerbin' not found in Location_constants." TO "log.txt". }
+                            flight_log_event("runway_lookup_failed","key=kerbin").
                         }
                         set val_tgt_found to true.
                         break.
@@ -400,6 +392,7 @@ until running = false{
                 }else{
                     GLOBAL Team_interface to define_TEAM_interface(runway_start,runway_heading,runway_altitude).
                 }
+                flight_log_set_entry_target(Team_interface).
                 if defined entry_traj{
                     if time_to_alt(ship:altitude,ship:verticalspeed,AVES["simulation"]["entry_ref_alt"]) < 10{
                         set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"],"time",10).   
@@ -412,7 +405,8 @@ until running = false{
                     }else{
                         GLOBAL entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"]).   
                     }          
-                }     
+                }
+                flight_log_entry_solver_result(entry_traj).
                     
 
                 }
@@ -472,8 +466,6 @@ until running = false{
                 //set d_dot to aeroforce_ld(s_step["position"],s_step["surfvel"],list(AVES["EGAOA"],ba))["drag"].
                 //set alpha_md_pid:setpoint to d_dot.
 
-                if POS_LOGGING_ENABLED { log ("e_dot : "+ e_dot+ " e_ref : "+e_ref) to log_e.txt. }
-
                 local heading_error is heading_to_target(Team_interface["target_latlng"]) - compass_for_prograde().
                 if heading_error > AVES["EG_rev°"]{
                     set entry_turnside to "right".
@@ -509,7 +501,8 @@ until running = false{
                 }else{
                     set dap["aoa"]["target_bank"] to bank_out.
                 }
-                
+                flight_log_capture_entry_guidance(s_step,e_ref,e_dot,d_e,heading_error,dap["aoa"]["target_bank"],d_t_a,entry_turnside,e_gui_inputs["l/d"]).
+
                 //log ("target_aoa"+dap["aoa"]["target_bank"]) to log.txt.
                 //log(s_step["altitude"]+","+s_step["latlong"]:lat+","+s_step["latlong"]:lng) to log_sim.txt.
                 //log(ship:altitude+","+ship:geoposition:lat+","+ship:geoposition:lng) to log_ship.txt.
@@ -521,14 +514,6 @@ until running = false{
                 //draw_vector(s_step["latlong"],s_step["altitude"],ship:geoposition,ship:altitude,RGB(1,1,0),"Prediction").
                 //arrow_ship(s_step["position"],"Prediction").
 
-                set facing_vec to ship:facing:vector.
-                if not (defined old_facing_vec){
-                    set old_facing_vec to facing_vec.
-                }
-                set ship_rotate to facing_vec - old_facing_vec.
-                if POS_LOGGING_ENABLED and AI_SUPERVISED { log ship:altitude +","+ ship:velocity:surface:x +","+ ship:velocity:surface:y +"," + ship:velocity:surface:z +","+ ship:sensors:acc:x +","+ ship:sensors:acc:y +","+ ship:sensors:acc:z +","+ship:facing:vector:x +","+ ship:facing:vector:y +","+ ship:facing:vector:z +","+ roll_for() +","+ ship:mass +","+ ship_rotate:x +","+ ship_rotate:y +","+ ship_rotate:z +","+ runway_start:position:x +","+ runway_start:position:y +","+ runway_start:position:z +","+ runway_end:position:x +","+ runway_end:position:y +","+ runway_end:position:z to POS_AI_LOG_SUPERVISED.txt. }
-                if POS_LOGGING_ENABLED and AI_SUPERVISED { log dapthrottle +","+ dap["aoa"]["target_aoa"]+","+dap["aoa"]["target_bank"]+","+ dap["aoa"]["base_pitch"] +","+ gear+","+brakes to POS_AI_LOG_SUPERVISED.txt. }
-                set old_facing_vec to facing_vec.
             }
           
            
@@ -665,6 +650,7 @@ until running = false{
     }
     update_readouts().
     update_reentry_gui(e_gui_inputs).
+    flight_log_tick("reentry",step,substep).
     wait 0.
 }    
 
@@ -736,6 +722,7 @@ until running = false{
         log_status("Script ended, system reset").
         clearGuis().
         }
+        flight_log_tick("reentry",step,substep).
         wait 0.
     }
 }

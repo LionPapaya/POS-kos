@@ -113,7 +113,38 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 - start re-entry and select a landing location and runway; or
 - use the docking workflow when applicable.
 
-During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information. File logging is disabled by default. Set the global `POS_LOGGING_ENABLED` flag to `true` before launching POS to enable all diagnostic logs. This also enables the rate-limited `control_envelope.csv` flight-control log; aerodynamic trajectory simulation loops never write logs, even when the flag is enabled.
+During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
+
+### Flight logging and replay
+
+File logging is disabled by default. Before launching POS, set the logging mode in the kOS terminal:
+
+```ks
+global POS_LOGGING_MODE is "medium".
+runpath("0:/POS.ks").
+```
+
+The available modes are:
+
+| Mode | Records | Cost |
+| --- | --- | --- |
+| `none` | Nothing: no folder and no files are created. | One early return in the real-flight hook. |
+| `low` | Flight start, phase/subphase and DAP-mode transitions, runway/target choices, solver outcomes, aborts, terminal-phase changes, and status/validation events. | State-string comparisons only. |
+| `medium` | Everything in `low`, plus one complete vehicle/control/guidance sample per second. | The detailed vehicle values are read only once per second. |
+| `high` | Everything in `medium`, sampled on every real control tick. | Intended for diagnosing a specific failure, not routine flights. |
+
+Each run creates the next unused directory under `0:/POS_logs/`, for example:
+
+```text
+0:/POS_logs/flight_1/flight.csv
+0:/POS_logs/flight_1/events.csv
+```
+
+The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, target/runway, and terminal-guidance values. `events.csv` records the decisions that explain state changes. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
+
+To replay a `medium` or `high` flight, open the local, gitignored [replay tool](tools/flight-replay/index.html) in a browser. Load the matching `flight.csv`, optionally load `events.csv`, then use the timeline and the 3-D view. The inspector shows every recorded column at the selected frame; the scene shows the recorded flight path, vehicle, runway, and entry target without rerunning guidance.
+
+For compatibility, setting the old `POS_LOGGING_ENABLED` flag to `true` before launch selects the new `high` mode. Use `POS_LOGGING_MODE` for new launches.
 
 For docking, first select the other vessel (or one of its docking ports) as the KSP target. Start outside the atmosphere, within 1 km of the target vessel, and below 5 m/s relative velocity. POS prefers Poseidon's open Mk2 inline port, honors a port explicitly targeted in KSP, and lets you choose among multiple compatible ports when the vessel itself is targeted. It matches the measured motion of the two port faces (including vessel rotation), moves out to a target-sized keep-out shell only when it is not already in a safe approach corridor, routes around the vessel when necessary, and performs stand-off, alignment, and final approach. Recoverable final-corridor drift returns to the approach gate, magnetic contact releases autopilot inputs for capture, and a progress watchdog retries one stalled approach before stopping with a diagnostic. The docking-control window provides Pause/Resume and Abort buttons. It does not perform orbital phasing or a distant rendezvous.
 

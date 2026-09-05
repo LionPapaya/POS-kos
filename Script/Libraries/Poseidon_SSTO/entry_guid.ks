@@ -229,19 +229,11 @@ function sim_with_bank{
         set hed to compass_for_simstate(simstate).
         set hed2tgt to heading_between(simstate["latlong"],target_latlong).
         set heading_error to hed - hed2tgt.
-        if abs(heading_error) > 20{
-            if POS_LOGGING_ENABLED { log hed to log_hed.txt. }
-            if POS_LOGGING_ENABLED { log hed2tgt to log_hed.txt. }
-            if POS_LOGGING_ENABLED { log simstate to log_hed.txt. }
-        }
-        if POS_LOGGING_ENABLED { log "" to log_hed.txt. }
         if heading_error > AVES["EG_rev°"]{
             set bank_side to "right".
-            //log "right" to log.txt.
         }
         if heading_error < -AVES["EG_rev°"]{
             set bank_side to "left".
-            //log "left" to log.txt.
         }
         contrl:add(simstate["simtime"],lex("simstate",simstate,"inputs",lex("bank_side",bank_side,"bank_angle",bank_angle))).
         set simstate to simulate_trajectory_time(simstate,bank_angle,bank_side,timestep).
@@ -313,7 +305,6 @@ function calc_entry_traj {
     }else{
         set start_sim to simulate_trajectory_time(input_simstate, 0, "left", wait_value).
     }
-    //log start_sim to log.txt.
     set AVES["simulation"]["timestep"] to org_timestep.
     local is_eg_pos is check_if_entry_possible(start_sim,target_latlong,target_altitude).
     local bank_angle is 0.
@@ -325,10 +316,6 @@ function calc_entry_traj {
         output:add("error",lex("str","Target not reachable", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong,"min_bank", is_eg_pos["min"])).
 
         set output:converged to false.
-        if POS_LOGGING_ENABLED { log "Target not reachable" to entry_guid_fail.log. }
-        if POS_LOGGING_ENABLED { log "is_eg_pos"+is_eg_pos to entry_guid_fail.log. }
-        if POS_LOGGING_ENABLED { log "Target: "+target_latlong to entry_guid_fail.log. }
-        if POS_LOGGING_ENABLED { log "start_sim: "+start_sim to entry_guid_fail.log. }
         return output.
     }else{
         if is_eg_pos["distance2"] < is_eg_pos["distance3"]{
@@ -407,18 +394,6 @@ function calc_entry_traj {
             set upper_bound["dist"] to calcdistance_m(upper_predict["final_state"]["latlong"], simstate["latlong"]).
 
         }
-        local log is "log"+output["iterations"]+".txt".
-        for _sim_ in predict["control"]:keys{
-            local c is predict["control"][_sim_]["simstate"].
-            if POS_LOGGING_ENABLED { log c["simtime"]+",("+c["latlong"]:lat+","+c["latlong"]:lng+")" to log. }
-
-        }
-
-
-        if POS_LOGGING_ENABLED { log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to log.txt. }
-
-        if POS_LOGGING_ENABLED { log "Iteration: " + output["iterations"] + ", Distance to target: " + calcdistance_m(predict["final_state"]["latlong"], target_latlong) + ", Predicted bank angle: " + pred_b +", latlng: " + predict["final_state"]["latlong"] + "tgt_latlng"+ target_latlong to log.txt. }
-        //log "final_state"+predict["final_state"] to log.txt.
         if is_within_team_interface(predict["final_state"],team_interface_box,target_latlong){
             set output:converged to true.
             set control_outputs to merge_lex(control_outputs,predict["control"]). // Merge the control outputs
@@ -437,10 +412,5 @@ function calc_entry_traj {
     }
     output:add("error",lex("str","To many iteration", "max", is_eg_pos["max_pos"],"left",is_eg_pos["left_pos"],"right",is_eg_pos["right_pos"], "target",target_latlong)).
     set output:converged to false.
-    //log as much as possible to entry_guid_fail.log to help debug why the solver failed.
-    if POS_LOGGING_ENABLED { log "upper_bound: " + upper_bound["bank"] + " " + upper_bound["dist"] + " lower_bound: " + lower_bound["bank"] + " " + lower_bound["dist"] to entry_guid_fail.log. }
-    //log the is_eg_pos locations to entry_guid_fail.log to help debug why the solver failed.
-    if POS_LOGGING_ENABLED { log "is_eg_pos"+is_eg_pos to entry_guid_fail.log. }
-
     return output.
 }

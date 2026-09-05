@@ -7,18 +7,11 @@ function remove_spaces {
     parameter input_string.
     
     local result_string is "".
-    // Debugging: Log the input string
-    if POS_LOGGING_ENABLED { log "Testing remove_spaces function. Input: '" + input_string + "'" to "0:/log.txt". }
-    
-    
     for char in input_string {
         if not(char = " ") {
             set result_string to result_string + char.
         }
     }
-      // Debugging: Log the output string (result after removing spaces)
-    if POS_LOGGING_ENABLED { log "Result (no spaces): '" + result_string + "'" to "0:/log.txt". }
-    
     return result_string.
 }
 function time_to_alt {

@@ -256,9 +256,6 @@ function find_active_runway {
     // Use the global `location_constants` lexicon; prefer the per-body entry if present
     local runways is location_constants.
     if runways:haskey("kerbin") { set runways to runways["kerbin"]. }
-    // Debug log file for runway selection
-    local debug_log_file is "0:/runway_debug.txt".
-    if POS_LOGGING_ENABLED { LOG "find_active_runway called" TO debug_log_file. }
     local closest_distance is 9999999999.
     local active_heading is -1.
     local active_start is "".
@@ -268,8 +265,6 @@ function find_active_runway {
     local active_runway_num is "".
 
     for runway_key in runways:keys {
-        // Log each key being tested
-        if POS_LOGGING_ENABLED { LOG "testing key: " + runway_key TO debug_log_file. }
         // Match keys like "<Location>_runway_##_start" (e.g. KSC_runway_09_start)
         if runway_key:endswith("_start") {
             // Split into location and the rest (e.g. ["KSC","09_start"]).
@@ -283,10 +278,8 @@ function find_active_runway {
                 local start_pos is runways[runway_key].
                 local end_pos is runways[end_key].
                 local distance_to_start is calcdistance_m(ship:geoposition, start_pos).
-                if POS_LOGGING_ENABLED { LOG "distance to start for " + runway_key + " = " + distance_to_start TO debug_log_file. }
                 if distance_to_start < closest_distance {
                     set closest_distance to distance_to_start.
-                    if POS_LOGGING_ENABLED { LOG "new closest " + runway_key + " dist=" + closest_distance TO debug_log_file. }
                     set active_start to start_pos.
                     set active_end to end_pos.
                     set active_heading to heading_between(start_pos, end_pos).
@@ -299,7 +292,6 @@ function find_active_runway {
             }
         }
     }
-    if POS_LOGGING_ENABLED { LOG "selected: loc=" + active_location + " num=" + active_runway_num + " dist=" + closest_distance TO debug_log_file. }
     return lex(
         "heading", active_heading,
         "start", active_start,
@@ -317,7 +309,6 @@ function calc_hacstate{
     parameter ERCL_HED.
     parameter hac_side.
 
-    if POS_LOGGING_ENABLED { log hac_pos to log10.txt. }
     //log hac_rad to log10.txt.
     //log hac_heading to log10.txt.
     //log ERCL_HED to log10.txt.
@@ -342,7 +333,6 @@ function calc_hacstate{
             "latlng",get_geoposition_on_circle(hac_pos,hac_rad,hac_side,hac_heading)
         ).
 
-    if POS_LOGGING_ENABLED { log state to log10.txt. }
     return state.
 }
 function define_TEAM_interface {

@@ -4,6 +4,7 @@
 // - Loads the Poseidon libraries and runs the aircraft-style ascent/circularization flow.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
@@ -38,19 +39,16 @@ local Target_orbit is create_assent_gui().
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
 set TargetInclination to Target_orbit["inclination"].
-if POS_LOGGING_ENABLED { log("targetperiapsis: "+TargetPeriapsis) to (log.txt). }
-if POS_LOGGING_ENABLED { log("targetapoapsis: "+Targetapoapsis) to (log.txt). }
-if POS_LOGGING_ENABLED { log("targetInclination: "+TargetInclination) to (log.txt). }
+flight_log_begin("ascent").
+flight_log_event("orbit_target","periapsis=" + TargetPeriapsis + "|apoapsis=" + TargetApoapsis + "|inclination=" + TargetInclination).
 
 check_inputs().
 
 reset_sys().
 dap:setup().
 print("1").
-if POS_LOGGING_ENABLED { log location_constants to "log_location_constants.txt". }
 local active_runway is find_active_runway().
 print("2").
-if POS_LOGGING_ENABLED { log(active_runway) to "log_runway.txt". }
 if active_runway["heading"] >= 0 {
     set runway_heading to active_runway["heading"].
 }
@@ -58,6 +56,9 @@ if active_runway["altitude"] >= 0 {
     set runway_altitude to active_runway["altitude"].
     set liftoff_altitude to runway_altitude + ascent["liftoff_height_above_runway"].
     set rotate_altitude to runway_altitude + ascent["rotate_height_above_runway"].
+}
+if active_runway["heading"] >= 0 {
+    flight_log_set_runway(active_runway["location"],active_runway["runway_num"],active_runway["start"],active_runway["end"],active_runway["heading"],active_runway["altitude"]).
 }
 set dap["aerostr"]["turn_heading"] to runway_heading.
 set launch_heading to calculate_heading(TargetInclination, ship:latitude).
@@ -120,11 +121,7 @@ until running = false{
                     set abort_state["runway_stop"] to runway_abort_check.
                     if not runway_abort_check["permitted"] {
                         set abort_state["mode"] to "rtls".
-                        if POS_LOGGING_ENABLED {
-                            log "Runway abort rejected: rolled=" + round(runway_abort_check["roll_distance_m"]) +
-                                "m, need=" + round(runway_abort_check["required_stop_distance_m"]) +
-                                "m, remaining=" + round(runway_abort_check["runway_remaining_m"]) + "m" to "0:/log_abort.txt".
-                        }
+                        flight_log_event("runway_abort_rejected","rolled_m=" + round(runway_abort_check["roll_distance_m"]) + "|required_m=" + round(runway_abort_check["required_stop_distance_m"]) + "|remaining_m=" + round(runway_abort_check["runway_remaining_m"])).
                     }
                 }
                 set step to abort_state["mode"].
@@ -263,9 +260,6 @@ until running = false{
             }
         }
         //set dap["aerostr"]["targetPitch"] to pitch_tgt.
-        // log as much as possible to a file for analysis
-        if POS_LOGGING_ENABLED { log ("climb_time: "+climb_time+" speed_time: "+speed_time + " altitude: " + ship:altitude + " airspeed: " + ship:airspeed + " verticalspeed: " + ship:verticalspeed + " accel_in_prograde: " + accel_in_prograde + " pfp_tgt: " + pfp_tgt) to "climb_log.txt". }
-
         if step = "high_altitude_climb" and ship:altitude >= ascent["climb_altitude"] {
             nervson().
             set step to "nerv_assist".
@@ -580,6 +574,7 @@ until running = false{
         update_readouts().
         assent_gui:hide().
     }
+    flight_log_tick("ascent",step,"").
     wait 0.
     //check_abort().
 }

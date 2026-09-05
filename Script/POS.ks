@@ -7,6 +7,7 @@ if not(defined(POS_LOGGING_ENABLED)) {
 }
 //run "POS_AI.ks".
 RUNONCEPATH("0:/Libraries/rsvp/main.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").

@@ -24,6 +24,7 @@ global terminal_route_debug is lex(
     "airbrake", false,
     "gear", false,
     "throttle", 0,
+    "Pid_log", "none",
     "along_track", 0,
     "cross_track", 0,
     "runway_heading_error", 0,
@@ -78,6 +79,9 @@ function terminal_route_waypoint_captured {
 
 function terminal_route_change_phase {
     parameter route, new_phase.
+    if route["phase"] <> new_phase {
+        flight_log_event("terminal_phase","from=" + route["phase"] + "|to=" + new_phase).
+    }
     set route["phase"] to new_phase.
     set route["last_phase_change_time"] to time:seconds.
     set route["closest_target_distance"] to 999999999.
@@ -580,10 +584,5 @@ function terminal_route_fly {
         set terminal_route_target_arrow_active to false.
     }
 
-    // Log at 2 Hz so a complete approach is inspectable without flooding the volume.
-    if time:seconds - terminal_route_debug["last_log_time"] >= config_TR["debug_log_interval"] {
-        if POS_LOGGING_ENABLED { log "TR phase=" + terminal_route_debug["phase"] + " side=" + terminal_route_debug["side"] + " laps=" + terminal_route_debug["hold_laps"] + " target_dist=" + round(terminal_route_debug["target_distance"],1) + " remain=" + round(terminal_route_debug["remaining_distance"],1) + " alt=" + round(ship:altitude,1) + " target_alt=" + round(terminal_route_debug["target_altitude"],1) + " vs=" + round(ship:verticalspeed,1) + " desired_vs=" + round(desired_vertical_speed,1) + " bias=" + round(pitch_bias,1) + " energy_margin=" + round(terminal_route_debug["energy_margin"],1) + " target_energy=" + round(terminal_route_debug["target_energy"],1) + " aoa=" + round(target_aoa,1) + " bank=" + round(dap["aoa"]["target_bank"],1) + " throttle=" + round(dapthrottle,2) + " brake=" + terminal_route_debug["airbrake"] + " gear=" + terminal_route_debug["gear"] + " pid_log=" + pid_log to "terminal_route.log". }
-        set terminal_route_debug["last_log_time"] to time:seconds.
-    }
     set Lastest_status to "terminal " + route["phase"] + " | energy " + round(route["energy_margin"]) + "m | loop " + route["hold_laps"].
 }

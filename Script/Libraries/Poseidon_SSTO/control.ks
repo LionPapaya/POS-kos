@@ -65,6 +65,7 @@ if not (dap:haskey("setup")) {
     if not (dap:haskey("envelope")) {
         local envelope is lexicon().
         envelope:add("state", "normal").
+        envelope:add("regime", "normal").
         envelope:add("max_aoa", 30).
         envelope:add("max_bank", 90).
         envelope:add("min_throttle", 0).
@@ -427,7 +428,6 @@ if not (dap:haskey("update")) {
         lock steering to dap_steering.
         set dap["envelope"]["restore_steering"] to false.
     }
-    envelope_log_control().
 }).
 }
 if not (dap:haskey("set_aoa_auto")) {
@@ -515,27 +515,6 @@ function engine_blocked_by_abort {
     if not abort_state["engines"]:haskey(engine_type) { return false. }
     if not abort_state["engines"][engine_type]:haskey("failed_ids") { return false. }
     return abort_state["engines"][engine_type]["failed_ids"]:haskey("part_" + engine_part:uid).
-}
-
-// Rate-limited real-flight control telemetry; never called by trajectory sims.
-function envelope_log_control {
-    if not POS_LOGGING_ENABLED { return. }
-    local envelope is dap["envelope"].
-    if time:seconds - envelope["last_control_log"] < 0.5 { return. }
-    set envelope["last_control_log"] to time:seconds.
-    local phase_name is "unknown".
-    if defined(step) { set phase_name to step. }
-    local requested_pitch is dap["aerostr"]["targetPitch"].
-    local requested_bank is dap["aerostr"]["targetRoll"].
-    if dap["str_mode"] = "aoa" {
-        set requested_pitch to dap["aoa"]["aoa_pitch"].
-        set requested_bank to dap["aoa"]["target_bank"].
-    }
-    if not envelope["control_log_header"] {
-        log "ut,mission_time,phase,dap_mode,steering_mode,altitude,airspeed,mach,dynamic_pressure,load_g,actual_aoa,requested_aoa,actual_pitch,requested_pitch,pitch_error,actual_bank,requested_bank,envelope_state,envelope_regime,max_aoa,max_bank,min_throttle,rcs_assist,rcs_actual,throttle_command,throttle_actual" to "control_envelope.csv".
-        set envelope["control_log_header"] to true.
-    }
-    log time:seconds + "," + missiontime + "," + phase_name + "," + dap["dap_mode"] + "," + dap["str_mode"] + "," + ship:altitude + "," + ship:airspeed + "," + ADDONS:FAR:mach + "," + ship:q + "," + (ship:sensors:acc:mag / 9.80665) + "," + calc_aoa() + "," + dap["aoa"]["target_aoa"] + "," + pitch_for() + "," + requested_pitch + "," + (requested_pitch - pitch_for()) + "," + roll_for() + "," + requested_bank + "," + envelope["state"] + "," + envelope["regime"] + "," + envelope["max_aoa"] + "," + envelope["max_bank"] + "," + envelope["min_throttle"] + "," + envelope["rcs_assist"] + "," + RCS + "," + dapthrottle + "," + throttle to "control_envelope.csv".
 }
 
 function rapierson{
