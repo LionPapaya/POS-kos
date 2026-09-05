@@ -32,7 +32,7 @@ if POS_LOGGING_MODE = "high" { set POS_LOG_LEVEL to 3. }
 // selects the new high mode, whose structured per-tick CSV supersedes them.
 set POS_LOGGING_ENABLED to false.
 
-global POS_LOG_DIRECTORY is "0:/POS_logs".
+global POS_LOG_DIRECTORY is "/POS_logs".
 global POS_LOG_FLIGHT_FILE is "".
 global POS_LOG_EVENT_FILE is "".
 // Version 2 adds the GPWS readouts to every detailed sample.
@@ -67,20 +67,19 @@ function flight_log_write_headers {
 
 // Choose a brand-new directory before a flight starts.  Keeping each flight's
 // two files together prevents accidental concatenation and makes the replay
-// input unambiguous.  VOLUME:EXISTS/CREATEDIR take volume-rooted paths with
-// no volume id, so the strings in this function intentionally omit "0:".
+// input unambiguous.  The current filesystem is always volume 0, so the
+// calculation needs only the folder and file names.
 function flight_log_choose_files {
-    local log_volume is volume("0").
     local log_root is "/POS_logs".
-    if not log_volume:exists(log_root) { log_volume:createdir(log_root). }
+    if not exists(log_root) { createdir(log_root). }
     local sequence is 1.
     local relative_directory is log_root + "/flight_" + sequence.
-    until not log_volume:exists(relative_directory) {
+    until not exists(relative_directory) {
         set sequence to sequence + 1.
         set relative_directory to log_root + "/flight_" + sequence.
     }
-    log_volume:createdir(relative_directory).
-    set POS_LOG_DIRECTORY to "0:" + relative_directory.
+    createdir(relative_directory).
+    set POS_LOG_DIRECTORY to relative_directory.
     set POS_LOG_FLIGHT_FILE to POS_LOG_DIRECTORY + "/flight.csv".
     set POS_LOG_EVENT_FILE to POS_LOG_DIRECTORY + "/events.csv".
     set POS_LOG_SESSION to "flight_" + sequence.
