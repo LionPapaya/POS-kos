@@ -594,7 +594,8 @@ if not (dap:haskey("set_aoa_auto")) {
     if not dap["setup_done"]{
         setup_dap().
     }
-    lock dap_steering to heading(dap["aoa"]["aoa_yaw"], dap["aoa"]["aoa_pitch"], dap["aoa"]["aoa_roll"]). 
+    lock dap_steering to heading(dap["aoa"]["aoa_yaw"], dap["aoa"]["aoa_pitch"], dap["aoa"]["aoa_roll"]).
+    lock steering to dap_steering.
     lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aoa".
@@ -609,7 +610,8 @@ if not (dap:haskey("set_aerostr_auto")) {
     if not dap["setup_done"]{
         setup_dap().
     }
-    lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]). 
+    lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]).
+    lock steering to dap_steering.
     lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aerostr".
@@ -624,6 +626,7 @@ if not (dap:haskey("set_vector_auto")) {
         setup_dap().
     }
     lock dap_steering to dap["vector"]["targetVector"].
+    lock steering to dap_steering.
     lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "vector".
@@ -637,7 +640,9 @@ if not (dap:haskey("set_off")) {
     if not dap["setup_done"]{
         setup_dap().
     }
-    set dap["dap_mode"] to "off".  
+    set dap["dap_mode"] to "off".
+    set dap["dap_mode_set"]["dapmode"] to "off".
+    set dap["dap_mode_set"]["str_mode"] to dap["str_mode"].
     lock throttle to SHIP:CONTROL:PILOTMAINTHROTTLE.
     set dapthrottle to 0.
     unlock steering.
@@ -658,6 +663,9 @@ if not(dap:haskey("set_css")) {
     set dap["css"]["last_roll"] to -roll_for().
     set dap["css"]["last_aoa"] to calc_aoa().
     lock dap_steering to heading(dap["css"]["yaw_out"], dap["css"]["pitch_out"], dap["css"]["roll_out"]).
+    // set_off() deliberately unlocks steering.  Every managed-mode setter
+    // must reattach it so CSS/auto handoffs always regain control.
+    lock steering to dap_steering.
     lock throttle to max(SHIP:CONTROL:PILOTMAINTHROTTLE,dap["envelope"]["min_throttle"]).
     set dap["dap_mode_set"]["dapmode"] to "css".
     set dap["dap_mode_set"]["str_mode"] to dap["str_mode"].
