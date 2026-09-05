@@ -89,7 +89,17 @@ if not (dap:haskey("setup")) {
         envelope:add("terrain_worst_clearance", 999999).
         envelope:add("terrain_required_clearance", 0).
         envelope:add("terrain_clear_timer", 0).
+        envelope:add("terrain_inhibit_reason", "not_armed").
+        envelope:add("terrain_final_captured", false).
         dap:add("envelope", envelope).
+    }
+    // Permit a script reload during a flight: an envelope created by an
+    // earlier GPWS version does not yet carry the approach-capture fields.
+    if not dap["envelope"]:haskey("terrain_inhibit_reason") {
+        dap["envelope"]:add("terrain_inhibit_reason", "not_armed").
+    }
+    if not dap["envelope"]:haskey("terrain_final_captured") {
+        dap["envelope"]:add("terrain_final_captured", false).
     }
 
     if not (dap:haskey("dap_mode")) {
@@ -162,48 +172,60 @@ function envelope_terrain_projected_clearance {
 }
 
 function envelope_terrain_reset {
-    parameter envelope, terrain_state is "inhibited".
+    parameter envelope, terrain_state is "inhibited", inhibit_reason is "not_armed", final_captured is false.
     set envelope["terrain_state"] to terrain_state.
     set envelope["terrain_next_scan"] to -999999.
     set envelope["terrain_worst_clearance"] to 999999.
     set envelope["terrain_required_clearance"] to 0.
     set envelope["terrain_clear_timer"] to 0.
+    set envelope["terrain_inhibit_reason"] to inhibit_reason.
+    set envelope["terrain_final_captured"] to final_captured.
 }
 
-// The terminal controller owns the runway descent from the point it commits
-// to its final leg.  A short GPWS look-ahead necessarily sees that intentional
-// glideslope as terrain closure, so GPWS must stay inhibited for the whole
-// terminal final—not only the last few metres above the runway.  The terminal
-// route's own final/go-around checks retain responsibility for that segment.
-function envelope_terrain_landing_inhibit {
-    if defined step and step = "landing" {
-        return true.
+// Only an established terminal final is permitted to own terrain protection.
+// Merely selecting the final route phase is not enough: the aircraft must be
+// on the localizer, glideslope, speed, descent, and bank limits that authorize
+// the landing handoff.  The landing flare inherits that captured approach.
+function envelope_terrain_landing_inhibit_reason {
+    parameter envelope.
+    if defined step and step = "landing" and envelope["terrain_final_captured"] {
+        return "landing_final_captured".
     }
     if defined step and step = "TEAM" and defined terminal_route and
        terminal_route:haskey("phase") and terminal_route["phase"] = "final" {
-        return true.
+        local final_capture is terminal_route_final_approach_capture(terminal_route).
+        if final_capture["captured"] {
+            return "terminal_final_captured".
+        }
     }
-    return false.
+    return "".
 }
 
-function envelope_terrain_inhibited {
-    parameter terrain_config.
-    if not terrain_config["enabled"] or ship:status <> "FLYING" {
-        return true.
+function envelope_terrain_inhibit_reason {
+    parameter envelope, terrain_config.
+    if not terrain_config["enabled"] {
+        return "disabled".
+    }
+    if ship:status <> "FLYING" {
+        return "not_flying".
     }
     if defined step and (step = "launch" or step = "rotate") {
-        return true.
+        return "launch_or_rotate".
     }
-    if envelope_terrain_landing_inhibit() {
-        return true.
+    local landing_inhibit_reason is envelope_terrain_landing_inhibit_reason(envelope).
+    if landing_inhibit_reason <> "" {
+        return landing_inhibit_reason.
     }
 
     local surface_velocity is ship:velocity:surface.
     local ground_track is surface_velocity - ship:up:vector * vdot(surface_velocity,ship:up:vector).
     if ground_track:mag < terrain_config["arm_min_groundspeed"] {
-        return true.
+        return "low_groundspeed".
     }
-    return alt:radar > terrain_config["arm_max_radar_altitude"].
+    if alt:radar > terrain_config["arm_max_radar_altitude"] {
+        return "above_arm_altitude".
+    }
+    return "".
 }
 
 // Scan only at a fixed low rate and retain the result between scans.  The
@@ -212,14 +234,18 @@ function envelope_terrain_inhibited {
 function envelope_terrain_refresh {
     parameter envelope, terrain_config, dt.
 
-    if envelope_terrain_inhibited(terrain_config) {
-        envelope_terrain_reset(envelope,"inhibited").
+    local inhibit_reason is envelope_terrain_inhibit_reason(envelope,terrain_config).
+    if inhibit_reason <> "" {
+        local final_captured is inhibit_reason = "terminal_final_captured" or inhibit_reason = "landing_final_captured".
+        envelope_terrain_reset(envelope,"inhibited",inhibit_reason,final_captured).
         if envelope["state"] = "terrain_pullup" {
             set envelope["state"] to "normal".
             set envelope["restore_steering"] to true.
         }
         return.
     }
+    set envelope["terrain_inhibit_reason"] to "".
+    set envelope["terrain_final_captured"] to false.
 
     if time:seconds >= envelope["terrain_next_scan"] {
         local worst_clearance is 999999.

@@ -47,6 +47,7 @@ global POS_LOG_LAST_SUBSTEP is "".
 global POS_LOG_LAST_DAP_MODE is "".
 global POS_LOG_LAST_STEERING_MODE is "".
 global POS_LOG_LAST_GPWS_STATE is "".
+global POS_LOG_LAST_GPWS_REASON is "".
 global POS_LOG_RUNWAY is lex(
     "location","unknown","number","unknown","start_lat",0,"start_lng",0,
     "end_lat",0,"end_lng",0,"heading",0,"altitude",0
@@ -118,6 +119,7 @@ function flight_log_begin {
     set POS_LOG_LAST_DAP_MODE to "".
     set POS_LOG_LAST_STEERING_MODE to "".
     set POS_LOG_LAST_GPWS_STATE to "".
+    set POS_LOG_LAST_GPWS_REASON to "".
     flight_log_event("flight_start","mode=" + POS_LOGGING_MODE + "|directory=" + POS_LOG_DIRECTORY).
 }
 
@@ -253,9 +255,10 @@ function flight_log_tick {
         set POS_LOG_LAST_STEERING_MODE to dap["str_mode"].
         flight_log_event("steering_mode","value=" + dap["str_mode"]).
     }
-    if POS_LOG_LAST_GPWS_STATE <> dap["envelope"]["terrain_state"] {
+    if POS_LOG_LAST_GPWS_STATE <> dap["envelope"]["terrain_state"] or POS_LOG_LAST_GPWS_REASON <> dap["envelope"]["terrain_inhibit_reason"] {
         set POS_LOG_LAST_GPWS_STATE to dap["envelope"]["terrain_state"].
-        flight_log_event("gpws_state","value=" + dap["envelope"]["terrain_state"] + "|clearance=" + round(dap["envelope"]["terrain_worst_clearance"],1) + "|required=" + round(dap["envelope"]["terrain_required_clearance"],1)).
+        set POS_LOG_LAST_GPWS_REASON to dap["envelope"]["terrain_inhibit_reason"].
+        flight_log_event("gpws_state","value=" + dap["envelope"]["terrain_state"] + "|reason=" + dap["envelope"]["terrain_inhibit_reason"] + "|clearance=" + round(dap["envelope"]["terrain_worst_clearance"],1) + "|required=" + round(dap["envelope"]["terrain_required_clearance"],1)).
     }
     if POS_LOG_LEVEL < 2 { return. }
     if POS_LOG_LEVEL = 2 and time:seconds < POS_LOG_NEXT_SAMPLE_TIME { return. }

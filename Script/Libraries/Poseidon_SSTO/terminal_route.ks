@@ -156,17 +156,19 @@ function terminal_route_change_phase {
     set route["closest_target_distance"] to 999999999.
 }
 
-// This is intentionally a single-sample check. The normal LandingGate has
-// already held the approach stable for its configured time before this is
-// called; this check decides whether to commit to landing or fly the go-around.
-function terminal_route_landing_commit_check {
+// The strict approach-capture test is shared by the landing handoff and GPWS.
+// It uses fresh runway geometry, so a control tick cannot inherit a stale
+// "final" route state after the aircraft has already left the localizer or
+// glideslope.
+function terminal_route_final_approach_capture {
     parameter route.
     local config_TR is AVES["TerminalRoute"].
     local commit_gate is config_TR["LandingCommit"].
-    local geometry is route["geometry"].
+    local geometry is terminal_route_geometry().
     local glideslope_altitude is calculate_glideslope_alt(geometry["distance"]).
     local glideslope_error is ship:altitude - glideslope_altitude.
-    local stable is abs(geometry["cross_track"]) <= commit_gate["maximum_cross_track"] and
+    local captured is route["phase"] = "final" and
+        abs(geometry["cross_track"]) <= commit_gate["maximum_cross_track"] and
         abs(geometry["heading_error"]) <= commit_gate["maximum_heading_error"] and
         abs(glideslope_error) <= commit_gate["maximum_glideslope_error"] and
         ship:verticalspeed >= commit_gate["minimum_vertical_speed"] and
@@ -175,7 +177,16 @@ function terminal_route_landing_commit_check {
         ship:airspeed <= commit_gate["maximum_speed"] and
         abs(roll_for()) <= commit_gate["maximum_bank"] and
         geometry["along_track"] > commit_gate["minimum_along_track"].
-    return lex("stable",stable,"glideslope_error",glideslope_error).
+    return lex("captured",captured,"glideslope_error",glideslope_error).
+}
+
+// This is intentionally a single-sample check. The normal LandingGate has
+// already held the approach stable for its configured time before this is
+// called; this check decides whether to commit to landing or fly the go-around.
+function terminal_route_landing_commit_check {
+    parameter route.
+    local capture is terminal_route_final_approach_capture(route).
+    return lex("stable",capture["captured"],"glideslope_error",capture["glideslope_error"]).
 }
 
 // Terminal-only lateral controller.  Unlike aeroturn's fixed-radius command,
