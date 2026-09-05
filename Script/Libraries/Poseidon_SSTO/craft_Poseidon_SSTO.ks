@@ -495,7 +495,6 @@ Poseidon_SSTO:add("Envelope",lex(
         "enabled",true,
         "arm_max_radar_altitude",10000,
         "arm_min_groundspeed",60,
-        "landing_inhibit_altitude",200,
         "scan_interval",0.5,
         "lookahead_seconds",list(2,4,7),
         "base_clearance",150,

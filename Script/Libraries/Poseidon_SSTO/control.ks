@@ -170,24 +170,18 @@ function envelope_terrain_reset {
     set envelope["terrain_clear_timer"] to 0.
 }
 
-// A normal, committed runway landing owns its last low-altitude segment.  Do
-// not allow a seven-second terrain prediction to mistake the planned flare for
-// an obstacle.  This inhibit is intentionally much narrower than "all final
-// approaches": terrain protection remains active until the aircraft is below
-// the configured final-approach inhibit altitude, aligned, and inside the
-// final corridor.
+// The terminal controller owns the runway descent from the point it commits
+// to its final leg.  A short GPWS look-ahead necessarily sees that intentional
+// glideslope as terrain closure, so GPWS must stay inhibited for the whole
+// terminal final—not only the last few metres above the runway.  The terminal
+// route's own final/go-around checks retain responsibility for that segment.
 function envelope_terrain_landing_inhibit {
     if defined step and step = "landing" {
         return true.
     }
-    if defined terminal_route and terminal_route:haskey("phase") and terminal_route:haskey("geometry") and terminal_route["phase"] = "final" {
-        local landing_gate is AVES["TerminalRoute"]["LandingGate"].
-        local geometry is terminal_route["geometry"].
-        if geometry["altitude"] < AVES["Envelope"]["Terrain"]["landing_inhibit_altitude"] and
-           abs(geometry["cross_track"]) < landing_gate["cross_track"] and
-           abs(geometry["heading_error"]) < landing_gate["heading_error"] {
-            return true.
-        }
+    if defined step and step = "TEAM" and defined terminal_route and
+       terminal_route:haskey("phase") and terminal_route["phase"] = "final" {
+        return true.
     }
     return false.
 }
