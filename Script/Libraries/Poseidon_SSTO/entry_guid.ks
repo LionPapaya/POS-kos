@@ -284,6 +284,44 @@ function sim_with_bank{
     out:add("final_state",simstate).
     return out.
 }
+
+// Temporary entry-solver diagnostics.  This intentionally does not use the
+// structured flight logger: those logs describe the live vehicle and exclude
+// the synchronous simulation that calc_entry_traj performs.  The one call in
+// calc_entry_traj below is the only activation point.  Comment out that call
+// when this investigation is complete; then this function performs no work,
+// creates no file, and consumes no runtime opcodes.
+function entry_traj_debug_iteration {
+    parameter iteration.
+    parameter start_sim.
+    parameter target_altitude.
+    parameter target_latlong.
+    parameter team_interface_box.
+    parameter reachable.
+    parameter bank_side.
+    parameter target_distance.
+    parameter lower_bound.
+    parameter upper_bound.
+    parameter lower_error_before.
+    parameter upper_error_before.
+    parameter predicted_bank.
+    parameter predict.
+    parameter predicted_distance.
+    parameter candidate_error.
+    parameter inside_interface.
+
+    local final_state is predict["final_state"].
+    local target_error is calcdistance_m(final_state["latlong"],target_latlong).
+    local final_speed is final_state["surfvel"]:mag.
+    local trace_file is "entry_traj_debug.log".
+
+    log "--- ENTRY TRAJ ITERATION " + iteration + " ---" to trace_file.
+    log "target|lat=" + target_latlong:lat + "|lng=" + target_latlong:lng + "|alt=" + target_altitude + "|box_min_alt=" + team_interface_box["min_altitude"] + "|box_max_alt=" + team_interface_box["max_altitude"] + "|box_tolerance=" + team_interface_box["dist_tolerance"] to trace_file.
+    log "start|time=" + start_sim["simtime"] + "|lat=" + start_sim["latlong"]:lat + "|lng=" + start_sim["latlong"]:lng + "|alt=" + start_sim["altitude"] + "|speed=" + start_sim["surfvel"]:mag + "|target_distance=" + target_distance + "|bank_side=" + bank_side to trace_file.
+    log "reachable|inside=" + reachable["is_inside"] + "|bank_min=" + reachable["min"] + "|bank_max=" + reachable["max"] + "|max=" + reachable["max_pos"] + "|left=" + reachable["left_pos"] + "|right=" + reachable["right_pos"] + "|lower_endpoint=" + reachable["lower_bank_pos"] + "|upper_endpoint=" + reachable["upper_bank_pos"] to trace_file.
+    log "bracket|lower_bank=" + lower_bound["bank"] + "|lower_dist=" + lower_bound["dist"] + "|upper_bank=" + upper_bound["bank"] + "|upper_dist=" + upper_bound["dist"] + "|lower_error_before=" + lower_error_before + "|upper_error_before=" + upper_error_before to trace_file.
+    log "candidate|bank=" + predicted_bank + "|path_dist=" + predicted_distance + "|path_error=" + candidate_error + "|final_target_error=" + target_error + "|inside_interface=" + inside_interface + "|final_time=" + final_state["simtime"] + "|final_lat=" + final_state["latlong"]:lat + "|final_lng=" + final_state["latlong"]:lng + "|final_alt=" + final_state["altitude"] + "|final_speed=" + final_speed to trace_file.
+}
 // calc_entry_traj(input_simstate, target_altitude, target_latlong, team_interface_box, wait_mode, wait_value)
 // High level entry trajectory solver. Attempts to find a single bank profile (a scalar bank angle plus bank side)
 // that guides the vehicle from `input_simstate` into the TEAM interface box around `target_latlong` at `target_altitude`.
@@ -444,7 +482,12 @@ function calc_entry_traj {
             set upper_bound["dist"] to calcdistance_m(upper_predict["final_state"]["latlong"], simstate["latlong"]).
 
         }
-        if is_within_team_interface(predict["final_state"],team_interface_box,target_latlong){
+        local inside_interface is is_within_team_interface(predict["final_state"],team_interface_box,target_latlong).
+
+        // ENTRY_TRAJ_DEBUG: comment out this single line after diagnosing the solver.
+        entry_traj_debug_iteration(output["iterations"],start_sim,target_altitude,target_latlong,team_interface_box,is_eg_pos,bank_side,tgt_dist,lower_bound,upper_bound,d_l,d_u,pred_b,predict,dist,candidate_error,inside_interface).
+
+        if inside_interface{
             set output:converged to true.
             set control_outputs to merge_lex(control_outputs,predict["control"]). // Merge the control outputs
             local converged_sim is lex("controll_inputs", control_outputs).
