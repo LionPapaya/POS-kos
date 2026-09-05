@@ -161,16 +161,20 @@ function terminal_route_change_phase {
 // "final" route state after the aircraft has already left the localizer or
 // glideslope.
 function terminal_route_final_approach_capture {
-    parameter route, minimum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["minimum_vertical_speed"], maximum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["maximum_vertical_speed"].
+    parameter route, minimum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["minimum_vertical_speed"], maximum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["maximum_vertical_speed"], minimum_glideslope_error is -AVES["TerminalRoute"]["LandingCommit"]["maximum_glideslope_error"], maximum_glideslope_error is AVES["TerminalRoute"]["LandingCommit"]["maximum_glideslope_error"], use_upper_glideslope_limit is true.
     local config_TR is AVES["TerminalRoute"].
     local commit_gate is config_TR["LandingCommit"].
     local geometry is terminal_route_geometry().
     local glideslope_altitude is calculate_glideslope_alt(geometry["distance"]).
     local glideslope_error is ship:altitude - glideslope_altitude.
+    local glideslope_captured is glideslope_error >= minimum_glideslope_error.
+    if use_upper_glideslope_limit {
+        set glideslope_captured to glideslope_captured and glideslope_error <= maximum_glideslope_error.
+    }
     local captured is route["phase"] = "final" and
         abs(geometry["cross_track"]) <= commit_gate["maximum_cross_track"] and
         abs(geometry["heading_error"]) <= commit_gate["maximum_heading_error"] and
-        abs(glideslope_error) <= commit_gate["maximum_glideslope_error"] and
+        glideslope_captured and
         ship:verticalspeed >= minimum_vertical_speed and
         ship:verticalspeed <= maximum_vertical_speed and
         ship:airspeed >= commit_gate["minimum_speed"] and
