@@ -41,6 +41,75 @@ if not(defined terminal_route_target_arrow_enabled) {
 if not(defined terminal_route_target_arrow_active) {
     global terminal_route_target_arrow_active is false.
 }
+// The GUI only queues a request.  The reentry loop applies it between route
+// updates, so every runway-dependent value changes together.
+if not(defined terminal_route_runway_change_request) {
+    global terminal_route_runway_change_request is "".
+}
+
+function terminal_route_available_runways {
+    parameter location_name.
+    local available is list().
+    local runway_prefix is location_name + "_runway_".
+    local runways is Location_constants["kerbin"].
+    for key in runways:keys {
+        if key:contains(runway_prefix) and key:endswith("_start") {
+            local parts is key:split("_").
+            if parts:length >= 3 {
+                available:add(parts[2]).
+            }
+        }
+    }
+    return available.
+}
+
+// Changing runway direction late in the approach can require a turn through
+// the touchdown area.  Keep the choice available early in TEAM, then make it
+// irrevocable on final or inside the configured terminal envelope.
+function terminal_route_runway_change_allowed {
+    parameter route.
+    local change_config is AVES["TerminalRoute"]["RunwayChange"].
+    local geometry is terminal_route_geometry().
+    if route["phase"] = "final" or route["phase"] = "go_around" {
+        return false.
+    }
+    if geometry["distance"] <= change_config["lock_distance"] or
+       geometry["altitude"] <= change_config["lock_altitude"] {
+        return false.
+    }
+    return true.
+}
+
+function terminal_route_change_runway {
+    parameter runway_number.
+    if not(defined Location) or not Location_constants:haskey("kerbin") {
+        return lex("success",false,"message","Runway change unavailable: landing location is not set").
+    }
+    if runway_number = runway_nr {
+        return lex("success",false,"message","Runway " + runway_number + " is already selected").
+    }
+
+    local start_key is Location + "_runway_" + runway_number + "_start".
+    local end_key is Location + "_runway_" + runway_number + "_end".
+    local altitude_key is Location + "_runway".
+    local runways is Location_constants["kerbin"].
+    if not runways:haskey(start_key) or not runways:haskey(end_key) or not KerbinRunwayalt:haskey(altitude_key) {
+        return lex("success",false,"message","Runway " + runway_number + " is not available at " + Location).
+    }
+
+    set runway_nr to runway_number.
+    set runway_start to runways[start_key].
+    set runway_end to runways[end_key].
+    set runway_altitude to KerbinRunwayalt[altitude_key].
+    set runway_heading to heading_between(runway_start,runway_end).
+    set reentry_target to runway_start.
+    if ADDONS:TR:available {
+        ADDONS:TR:SETTARGET(runway_start).
+        ADDONS:TR:RESETDESCENTPROFILE(20).
+    }
+    flight_log_set_runway(Location,runway_nr,runway_start,runway_end,runway_heading,runway_altitude).
+    return lex("success",true,"message","Runway changed to " + Location + " runway " + runway_nr).
+}
 
 function terminal_route_energy_height {
     // Specific kinetic energy expressed as an equivalent altitude in metres.

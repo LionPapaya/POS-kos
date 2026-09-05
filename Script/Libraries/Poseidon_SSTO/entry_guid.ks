@@ -113,8 +113,16 @@ function check_if_entry_possible{
     parameter target_latlong.
     parameter target_altitude is AVES["TEAMAltitude"].
     parameter timestep is AVES["simulation"]["timestep"].
+    parameter sim_context_mu is BODY:mu.
+    parameter sim_context_radius is BODY:radius.
+    parameter sim_context_angularvel is BODY:angularvel.
+    parameter sim_context_mass is SHIP:MASS.
+    parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
+    parameter use_entry_sim_heading is false.
 
-    local check_45 is sim_with_bank(simstate, 45, target_altitude, target_latlong)["final_state"].
+    local check_45 is sim_with_bank(simstate, 45, target_altitude, target_latlong,timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,use_entry_sim_heading)["final_state"].
     local c is false.
     // Use a probe point projected along the current simstate heading to avoid great-circle wrap-around
     // Compute the current heading and pick the closer of the 45deg-endpoint or the raw target.
@@ -133,9 +141,9 @@ function check_if_entry_possible{
     }
     local check is 0.
     if not(c){
-    local max_distance is sim_with_bank(simstate, 0, target_altitude, target_latlong)["final_state"].
-    local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
-    local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
+    local max_distance is sim_with_bank(simstate, 0, target_altitude, target_latlong,timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,use_entry_sim_heading)["final_state"].
+    local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
+    local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
     local left_distance_t to left_distance["latlong"].
     local right_distance_t to right_distance["latlong"].
     set check to check_target_in_triangle(target_latlong,max_distance["latlong"],right_distance_t,left_distance_t).
@@ -150,9 +158,9 @@ function check_if_entry_possible{
 
 
     }else{
-        local min_distance is sim_with_bank(simstate, 90, target_altitude,target_latlong)["final_state"].
-        local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
-        local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep).
+        local min_distance is sim_with_bank(simstate, 90, target_altitude,target_latlong,timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,use_entry_sim_heading)["final_state"].
+        local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
+        local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
         local left_distance_t to left_distance["latlong"].
         local right_distance_t to right_distance["latlong"].
         local hed is heading_between(left_distance_t,right_distance_t).
@@ -206,17 +214,45 @@ function entry_possible_square{
 //     - "final_state": the final simstate when altitude < target_altitude.
 // Notes: This function is deterministic and used by the higher-level entry solver to predict final positions
 // for a fixed bank profile.
+// Project the same zero-acceleration heading sample that compass_for_simstate
+// produces through update_simstate(simstate, list(), timestep).  This helper is
+// intentionally entry-simulation-specific; generic compass_for_simstate remains
+// available unchanged to its existing callers.
+function entry_sim_heading_for_simstate {
+    parameter simstate.
+
+    // With an empty acceleration list, update_simstate computes exactly this
+    // position before passing it to vec2pos.  Its other derived fields are not
+    // read by heading_between.
+    local projected_position is simstate["position"] + simstate["velocity"] * AVES["simulation"]["timestep"].
+    local projected_latlong is vec2pos(projected_position).
+    return heading_between(simstate["latlong"], projected_latlong).
+}
+
 function sim_with_bank{
     parameter simstate.
     parameter bank_angle.
     parameter target_altitude.
     parameter target_latlong.
     parameter timestep is AVES["simulation"]["timestep"].
+    parameter sim_context_mu is BODY:mu.
+    parameter sim_context_radius is BODY:radius.
+    parameter sim_context_angularvel is BODY:angularvel.
+    parameter sim_context_mass is SHIP:MASS.
+    parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
+    parameter use_entry_sim_heading is false.
 
     local out is lex().
     local contrl is lex().
 
-    local hed is compass_for_simstate(simstate).
+    local hed is 0.
+    if use_entry_sim_heading {
+        set hed to entry_sim_heading_for_simstate(simstate).
+    } else {
+        set hed to compass_for_simstate(simstate).
+    }
     local hed2tgt is heading_between(simstate["latlong"],target_latlong).
     local heading_error is hed - hed2tgt.
     if heading_error > 0{
@@ -226,7 +262,12 @@ function sim_with_bank{
         set bank_side to "left".
     }
     until simstate["altitude"] < target_altitude{
-        set hed to compass_for_simstate(simstate).
+        set hed to 0.
+        if use_entry_sim_heading {
+            set hed to entry_sim_heading_for_simstate(simstate).
+        } else {
+            set hed to compass_for_simstate(simstate).
+        }
         set hed2tgt to heading_between(simstate["latlong"],target_latlong).
         set heading_error to hed - hed2tgt.
         if heading_error > AVES["EG_rev°"]{
@@ -236,7 +277,7 @@ function sim_with_bank{
             set bank_side to "left".
         }
         contrl:add(simstate["simtime"],lex("simstate",simstate,"inputs",lex("bank_side",bank_side,"bank_angle",bank_angle))).
-        set simstate to simulate_trajectory_time(simstate,bank_angle,bank_side,timestep).
+        set simstate to simulate_trajectory_time(simstate,bank_angle,bank_side,timestep,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
 
     }
     out:add("control",contrl).
@@ -294,6 +335,15 @@ function calc_entry_traj {
     parameter wait_mode is "alt".
     parameter wait_value is  AVES["simulation"]["entry_ref_alt"].
 
+    // Capture the live values once so every candidate within this solve uses
+    // the same body, mass, and vessel-frame reference.
+    local sim_context_mu is BODY:mu.
+    local sim_context_radius is BODY:radius.
+    local sim_context_angularvel is BODY:angularvel.
+    local sim_context_mass is SHIP:MASS.
+    local sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    local sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    local sim_context_vessel_right is VCRS(sim_context_vessel_top,sim_context_vessel_fore):NORMALIZED.
 
     local output is lex("converged",false).
     output:add("iterations",1).
@@ -301,12 +351,12 @@ function calc_entry_traj {
     set AVES["simulation"]["timestep"] to 1.
     local start_sim is 0.
     if wait_mode = "ALT"{
-        set start_sim to simulate_trajectory(input_simstate, 0, "left", wait_value,input_simstate["altitude"]+100).
+        set start_sim to simulate_trajectory(input_simstate, 0, "left", wait_value,input_simstate["altitude"]+100,"EGAOA",AVES["simulation"]["timestep"],sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
     }else{
-        set start_sim to simulate_trajectory_time(input_simstate, 0, "left", wait_value).
+        set start_sim to simulate_trajectory_time(input_simstate, 0, "left", wait_value,"EGAOA",AVES["simulation"]["timestep"],sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
     }
     set AVES["simulation"]["timestep"] to org_timestep.
-    local is_eg_pos is check_if_entry_possible(start_sim,target_latlong,target_altitude).
+    local is_eg_pos is check_if_entry_possible(start_sim,target_latlong,target_altitude,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true).
     local bank_angle is 0.
     local tgt_dist is calcdistance_m(start_sim["latlong"],target_latlong).
     local lower_bound is lex("bank",is_eg_pos["min"],"dist",99999999999).
@@ -349,7 +399,7 @@ function calc_entry_traj {
             if lower_bound["bank"] > 0 {
                 set lower_bound["bank"] to 0.
                 local lower_predict is sim_with_bank(
-                    clone_simstate(start_sim),0,target_altitude,target_latlong
+                    clone_simstate(start_sim),0,target_altitude,target_latlong,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true
                 ).
                 set lower_bound["dist"] to calcdistance_m(
                     lower_predict["final_state"]["latlong"],start_sim["latlong"]
@@ -359,7 +409,7 @@ function calc_entry_traj {
                 and upper_bound["bank"] < 90 {
                 set upper_bound["bank"] to 90.
                 local upper_predict is sim_with_bank(
-                    clone_simstate(start_sim),90,target_altitude,target_latlong
+                    clone_simstate(start_sim),90,target_altitude,target_latlong,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true
                 ).
                 set upper_bound["dist"] to calcdistance_m(
                     upper_predict["final_state"]["latlong"],start_sim["latlong"]
@@ -377,7 +427,7 @@ function calc_entry_traj {
             max(0,lower_bound["bank"]),
             min(min(90,upper_bound["bank"]),pred_b)
         ).
-        local predict is sim_with_bank(simstate, pred_b, target_altitude, target_latlong).
+        local predict is sim_with_bank(simstate, pred_b, target_altitude, target_latlong,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true).
         local dist is calcdistance_m(predict["final_state"]["latlong"], simstate["latlong"]).
 
         local candidate_error is dist - tgt_dist.
@@ -390,7 +440,7 @@ function calc_entry_traj {
         }
         if output["iterations"] > 4 and lower_bound["bank"] > 44 and upper_bound["bank"] < 46{
             set upper_bound["bank"] to 70.
-            local upper_predict is sim_with_bank(simstate, upper_bound["bank"], target_altitude, target_latlong).
+            local upper_predict is sim_with_bank(simstate, upper_bound["bank"], target_altitude, target_latlong,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true).
             set upper_bound["dist"] to calcdistance_m(upper_predict["final_state"]["latlong"], simstate["latlong"]).
 
         }
