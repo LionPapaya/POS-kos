@@ -503,6 +503,11 @@ Poseidon_SSTO:add("Envelope",lex(
         "release_margin",100,
         "recovery_min_climb_rate",2,
         "recovery_stable_time",1.5,
+        // GPWS may stand down only for a captured final.  These are separate
+        // from LandingCommit so final guidance can use the full safe descent
+        // band without changing the touchdown handoff criteria.
+        "final_inhibit_min_vertical_speed",-45,
+        "final_inhibit_max_vertical_speed",-5,
         "pullup_aoa",20,
         "pullup_min_base_pitch",0
     )

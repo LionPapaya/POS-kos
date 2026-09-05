@@ -161,7 +161,7 @@ function terminal_route_change_phase {
 // "final" route state after the aircraft has already left the localizer or
 // glideslope.
 function terminal_route_final_approach_capture {
-    parameter route.
+    parameter route, minimum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["minimum_vertical_speed"], maximum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["maximum_vertical_speed"].
     local config_TR is AVES["TerminalRoute"].
     local commit_gate is config_TR["LandingCommit"].
     local geometry is terminal_route_geometry().
@@ -171,8 +171,8 @@ function terminal_route_final_approach_capture {
         abs(geometry["cross_track"]) <= commit_gate["maximum_cross_track"] and
         abs(geometry["heading_error"]) <= commit_gate["maximum_heading_error"] and
         abs(glideslope_error) <= commit_gate["maximum_glideslope_error"] and
-        ship:verticalspeed >= commit_gate["minimum_vertical_speed"] and
-        ship:verticalspeed <= commit_gate["maximum_vertical_speed"] and
+        ship:verticalspeed >= minimum_vertical_speed and
+        ship:verticalspeed <= maximum_vertical_speed and
         ship:airspeed >= commit_gate["minimum_speed"] and
         ship:airspeed <= commit_gate["maximum_speed"] and
         abs(roll_for()) <= commit_gate["maximum_bank"] and

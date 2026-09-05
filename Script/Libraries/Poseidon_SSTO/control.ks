@@ -193,7 +193,8 @@ function envelope_terrain_landing_inhibit_reason {
     }
     if defined step and step = "TEAM" and defined terminal_route and
        terminal_route:haskey("phase") and terminal_route["phase"] = "final" {
-        local final_capture is terminal_route_final_approach_capture(terminal_route).
+        local terrain_config is AVES["Envelope"]["Terrain"].
+        local final_capture is terminal_route_final_approach_capture(terminal_route,terrain_config["final_inhibit_min_vertical_speed"],terrain_config["final_inhibit_max_vertical_speed"]).
         if final_capture["captured"] {
             return "terminal_final_captured".
         }
