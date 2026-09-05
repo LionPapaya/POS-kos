@@ -1,4 +1,7 @@
 .DS_Store
 
+# Local Codex workspace guidance.
+AGENTS.md
+
 # Local replay UI for exported POS_logs flight data.
 tools/flight-replay/

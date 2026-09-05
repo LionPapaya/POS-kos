@@ -140,7 +140,7 @@ Each run creates the next unused directory under `0:/POS_logs/`, for example:
 0:/POS_logs/flight_1/events.csv
 ```
 
-The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, target/runway, and terminal-guidance values. `events.csv` records the decisions that explain state changes. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
+The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, and terminal-guidance values. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. `events.csv` records the decisions that explain state changes, including GPWS state transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
 
 To replay a `medium` or `high` flight, open the local, gitignored [replay tool](tools/flight-replay/index.html) in a browser. Load the matching `flight.csv`, optionally load `events.csv`, then use the timeline and the 3-D view. The inspector shows every recorded column at the selected frame; the scene shows the recorded flight path, vehicle, runway, and entry target without rerunning guidance.
 
