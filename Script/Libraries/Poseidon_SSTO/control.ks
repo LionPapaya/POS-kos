@@ -148,9 +148,17 @@ function envelope_terrain_projected_clearance {
 
     local future_position is ship:position + ground_track:normalized * (ground_track:mag * seconds_ahead).
     local future_geoposition is ship:body:geopositionof(future_position).
+    local future_terrain_height is future_geoposition:terrainheight.
+    // GeoCoordinates:TERRAINHEIGHT reports the solid seabed.  On an ocean
+    // body that may be negative, while ALT:RADAR and an actual impact stop at
+    // the water surface (sea level).  Never let a negative seabed height hide
+    // a water impact from GPWS.
+    if ship:body:hasocean {
+        set future_terrain_height to max(future_terrain_height,0).
+    }
     local bottom_offset is max(0,ship:altitude - bounds_box:bottomalt).
     local future_bottom_altitude is ship:altitude - bottom_offset + min(ship:verticalspeed,0) * seconds_ahead.
-    return future_bottom_altitude - future_geoposition:terrainheight.
+    return future_bottom_altitude - future_terrain_height.
 }
 
 function envelope_terrain_reset {
@@ -166,7 +174,8 @@ function envelope_terrain_reset {
 // not allow a seven-second terrain prediction to mistake the planned flare for
 // an obstacle.  This inhibit is intentionally much narrower than "all final
 // approaches": terrain protection remains active until the aircraft is below
-// the LandingGate altitude, aligned, and inside the final corridor.
+// the configured final-approach inhibit altitude, aligned, and inside the
+// final corridor.
 function envelope_terrain_landing_inhibit {
     if defined step and step = "landing" {
         return true.
@@ -174,7 +183,7 @@ function envelope_terrain_landing_inhibit {
     if defined terminal_route and terminal_route:haskey("phase") and terminal_route:haskey("geometry") and terminal_route["phase"] = "final" {
         local landing_gate is AVES["TerminalRoute"]["LandingGate"].
         local geometry is terminal_route["geometry"].
-        if geometry["altitude"] < landing_gate["altitude"] and
+        if geometry["altitude"] < AVES["Envelope"]["Terrain"]["landing_inhibit_altitude"] and
            abs(geometry["cross_track"]) < landing_gate["cross_track"] and
            abs(geometry["heading_error"]) < landing_gate["heading_error"] {
             return true.
@@ -344,7 +353,7 @@ function envelope_refresh {
     if envelope["state"] = "terrain_pullup" {
         // GPWS is deliberately not routed through the upset recovery's
         // zero-AoA phase.  Terrain escape needs an immediate controlled pull-up.
-        set envelope["max_aoa"] to config_envelope["max_aoa_recovery"].
+        set envelope["max_aoa"] to config_envelope["Terrain"]["pullup_aoa"].
         set envelope["max_bank"] to config_envelope["max_bank_recovery"].
         set envelope["min_throttle"] to 1.
         set envelope["rcs_assist"] to rcs_available.
@@ -448,7 +457,14 @@ function envelope_apply_aerostr_limits {
 }
 
 function envelope_run_recovery {
-    if dap["envelope"]["state"] = "upset_zero_aoa" {
+    if dap["envelope"]["state"] = "terrain_pullup" {
+        local terrain_config is AVES["Envelope"]["Terrain"].
+        // A terrain escape must command a real climb even when the velocity
+        // vector is already pointed down.  The CSS or aerostr commands above
+        // this function are intentionally ignored by this final steering lock.
+        local terrain_base_pitch is max(pitch_for_prograde(),terrain_config["pullup_min_base_pitch"]).
+        aoa_bank_management(terrain_config["pullup_aoa"],0,terrain_base_pitch).
+    } else if dap["envelope"]["state"] = "upset_zero_aoa" {
         aoa_bank_management(0,0).
     } else {
         aoa_bank_management(dap["envelope"]["max_aoa"],0).
