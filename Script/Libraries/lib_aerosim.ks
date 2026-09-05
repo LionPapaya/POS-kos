@@ -121,7 +121,7 @@ function simulate_trajectory {
         }
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
-        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
+        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius).
 
         // Calculate the gravitational acceleration
         local gravity_acceleration is gravitacc(temp_simstate["position"],sim_context_mu).
@@ -168,7 +168,7 @@ function simulate_trajectory_time {
         local remaining_time is t - (temp_simstate["simtime"] - t0).
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
-        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
+        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius).
 
         // Calculate the gravitational acceleration
         local gravity_acceleration is gravitacc(temp_simstate["position"],sim_context_mu).
@@ -294,19 +294,19 @@ declare function sim_aeroaccel_load {
     parameter surfvel.
     parameter attitude.
     parameter sim_context_radius is BODY:radius.
-    parameter sim_context_mass is SHIP:MASS.
-    parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
-    parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
-    parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
 
     local roll is attitude[1].
     local aoa is attitude[0].
 
     local altt is pos:mag-sim_context_radius.
 
-    local vesselfore is sim_context_vessel_fore.
-    local vesseltop is sim_context_vessel_top.
-    local vesselright is sim_context_vessel_right.
+    // Do not freeze the craft frame for a full entry solve.  The solver can
+    // yield across physics ticks while the real vehicle is steering into entry,
+    // so its FAR query and force conversion must use the live frame just as
+    // aeroforce_ld did before the entry-simulation optimization.
+    local vesselfore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+    local vesseltop is SHIP:FACING:TOPVECTOR:NORMALIZED.
+    local vesselright is VCRS(vesseltop,vesselfore):NORMALIZED.
 
     local airspeedaoa is surfvel:MAG*rodrigues(vesselfore,vesselright,aoa):NORMALIZED.
     local totalforce is ADDONS:FAR:AEROFORCEAT(altt,airspeedaoa).
@@ -338,7 +338,7 @@ declare function sim_aeroaccel_load {
     local pred_vesselfore is rodrigues(velforward,pred_vesselright,-aoa).
     set pred_vesseltop to rodrigues(pred_vesseltop,pred_vesselright,-aoa).
 
-    return (pred_vesselright*localforce:X + pred_vesseltop*localforce:Y + pred_vesselfore*localforce:Z) / sim_context_mass.
+    return (pred_vesselright*localforce:X + pred_vesseltop*localforce:Y + pred_vesselfore*localforce:Z) / SHIP:MASS.
 }
 
 //wrapper that converts everything to acceleration
