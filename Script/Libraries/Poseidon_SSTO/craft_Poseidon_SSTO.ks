@@ -490,7 +490,20 @@ Poseidon_SSTO:add("Envelope",lex(
     "upset_aoa",35,
     "upset_confirm_time",0.75,
     "recovery_safe_aoa",15,
-    "recovery_exit_pitch",30
+    "recovery_exit_pitch",30,
+    "Terrain",lex(
+        "enabled",true,
+        "arm_max_radar_altitude",10000,
+        "arm_min_groundspeed",60,
+        "scan_interval",0.5,
+        "lookahead_seconds",list(2,4,7),
+        "base_clearance",75,
+        "warning_margin",100,
+        "response_time",2,
+        "release_margin",100,
+        "recovery_min_climb_rate",2,
+        "recovery_stable_time",1.5
+    )
 )).
 Poseidon_SSTO:add("TerminalRoute",lex(
     "final_distance",10000,

@@ -78,7 +78,7 @@ function update_team_dap_gui {
         set team_dap_bias_label:text to "Pitch bias: n/a".
     }
     set team_dap_throttle_label:text to ("CMD Throttle: " + round(dapthrottle, 2)).
-    set team_dap_envelope_label:text to ("Envelope: " + dap["envelope"]["state"]).
+    set team_dap_envelope_label:text to ("Envelope: " + dap["envelope"]["state"] + " | Terrain: " + dap["envelope"]["terrain_state"] + " / " + round(dap["envelope"]["terrain_worst_clearance"]) + " m").
 }
 
 // Live state for the terminal-route planner.  The panel remains hidden until

@@ -80,6 +80,15 @@ if not (dap:haskey("setup")) {
         envelope:add("restore_steering", false).
         envelope:add("last_control_log", -999999).
         envelope:add("control_log_header", false).
+        // Terrain-protection state.  The Bounds object is intentionally
+        // captured once: kOS keeps it live while avoiding the cost and noise
+        // of constructing a new bounds structure each control tick.
+        envelope:add("terrain_bounds", ship:bounds).
+        envelope:add("terrain_state", "inhibited").
+        envelope:add("terrain_next_scan", -999999).
+        envelope:add("terrain_worst_clearance", 999999).
+        envelope:add("terrain_required_clearance", 0).
+        envelope:add("terrain_clear_timer", 0).
         dap:add("envelope", envelope).
     }
 
@@ -122,6 +131,134 @@ function envelope_clamp {
     return max(lower,min(value,upper)).
 }
 
+// Return the predicted clearance between the terrain and the vessel's lowest
+// bounds corner after seconds_ahead.  The ground track is deliberately the
+// horizontal component of surface velocity, rather than the craft's facing
+// vector: a steep pitch attitude must not make the terrain probe look up into
+// the sky or down into the ground.
+function envelope_terrain_projected_clearance {
+    parameter seconds_ahead, bounds_box.
+    local surface_velocity is ship:velocity:surface.
+    local up_vector is ship:up:vector.
+    local ground_track is surface_velocity - up_vector * vdot(surface_velocity,up_vector).
+
+    if ground_track:mag < 1 {
+        return 999999.
+    }
+
+    local future_position is ship:position + ground_track:normalized * (ground_track:mag * seconds_ahead).
+    local future_geoposition is ship:body:geopositionof(future_position).
+    local bottom_offset is max(0,ship:altitude - bounds_box:bottomalt).
+    local future_bottom_altitude is ship:altitude - bottom_offset + min(ship:verticalspeed,0) * seconds_ahead.
+    return future_bottom_altitude - future_geoposition:terrainheight.
+}
+
+function envelope_terrain_reset {
+    parameter envelope, terrain_state is "inhibited".
+    set envelope["terrain_state"] to terrain_state.
+    set envelope["terrain_next_scan"] to -999999.
+    set envelope["terrain_worst_clearance"] to 999999.
+    set envelope["terrain_required_clearance"] to 0.
+    set envelope["terrain_clear_timer"] to 0.
+}
+
+// A normal, committed runway landing owns its last low-altitude segment.  Do
+// not allow a seven-second terrain prediction to mistake the planned flare for
+// an obstacle.  This inhibit is intentionally much narrower than "all final
+// approaches": terrain protection remains active until the aircraft is below
+// the LandingGate altitude, aligned, and inside the final corridor.
+function envelope_terrain_landing_inhibit {
+    if defined step and step = "landing" {
+        return true.
+    }
+    if defined terminal_route and terminal_route:haskey("phase") and terminal_route:haskey("geometry") and terminal_route["phase"] = "final" {
+        local landing_gate is AVES["TerminalRoute"]["LandingGate"].
+        local geometry is terminal_route["geometry"].
+        if geometry["altitude"] < landing_gate["altitude"] and
+           abs(geometry["cross_track"]) < landing_gate["cross_track"] and
+           abs(geometry["heading_error"]) < landing_gate["heading_error"] {
+            return true.
+        }
+    }
+    return false.
+}
+
+function envelope_terrain_inhibited {
+    parameter terrain_config.
+    if not terrain_config["enabled"] or ship:status <> "FLYING" {
+        return true.
+    }
+    if defined step and (step = "launch" or step = "rotate") {
+        return true.
+    }
+    if envelope_terrain_landing_inhibit() {
+        return true.
+    }
+
+    local surface_velocity is ship:velocity:surface.
+    local ground_track is surface_velocity - ship:up:vector * vdot(surface_velocity,ship:up:vector).
+    if ground_track:mag < terrain_config["arm_min_groundspeed"] {
+        return true.
+    }
+    return alt:radar > terrain_config["arm_max_radar_altitude"].
+}
+
+// Scan only at a fixed low rate and retain the result between scans.  The
+// predicted clearance includes descent during the look-ahead interval and a
+// response margin for the scan period plus the aircraft's pull-up delay.
+function envelope_terrain_refresh {
+    parameter envelope, terrain_config, dt.
+
+    if envelope_terrain_inhibited(terrain_config) {
+        envelope_terrain_reset(envelope,"inhibited").
+        if envelope["state"] = "terrain_pullup" {
+            set envelope["state"] to "normal".
+            set envelope["restore_steering"] to true.
+        }
+        return.
+    }
+
+    if time:seconds >= envelope["terrain_next_scan"] {
+        local worst_clearance is 999999.
+        for seconds_ahead in terrain_config["lookahead_seconds"] {
+            set worst_clearance to min(worst_clearance,envelope_terrain_projected_clearance(seconds_ahead,envelope["terrain_bounds"])).
+        }
+        set envelope["terrain_worst_clearance"] to worst_clearance.
+        set envelope["terrain_next_scan"] to time:seconds + terrain_config["scan_interval"].
+    }
+
+    local vertical_closure_rate is max(-ship:verticalspeed,0).
+    local required_clearance is terrain_config["base_clearance"] +
+        vertical_closure_rate * (terrain_config["scan_interval"] + terrain_config["response_time"]).
+    set envelope["terrain_required_clearance"] to required_clearance.
+
+    if envelope["state"] = "terrain_pullup" {
+        if envelope["terrain_worst_clearance"] >= required_clearance + terrain_config["release_margin"] and
+           ship:verticalspeed >= terrain_config["recovery_min_climb_rate"] {
+            set envelope["terrain_clear_timer"] to envelope["terrain_clear_timer"] + dt.
+            if envelope["terrain_clear_timer"] >= terrain_config["recovery_stable_time"] {
+                set envelope["state"] to "normal".
+                set envelope["terrain_state"] to "normal".
+                set envelope["terrain_clear_timer"] to 0.
+                set envelope["restore_steering"] to true.
+            }
+        } else {
+            set envelope["terrain_clear_timer"] to 0.
+        }
+        return.
+    }
+
+    if envelope["terrain_worst_clearance"] < required_clearance {
+        set envelope["state"] to "terrain_pullup".
+        set envelope["terrain_state"] to "pullup".
+        set envelope["terrain_clear_timer"] to 0.
+    } else if envelope["terrain_worst_clearance"] < required_clearance + terrain_config["warning_margin"] {
+        set envelope["terrain_state"] to "caution".
+    } else {
+        set envelope["terrain_state"] to "normal".
+    }
+}
+
 function envelope_refresh {
     local envelope is dap["envelope"].
     local config_envelope is AVES["Envelope"].
@@ -135,6 +272,7 @@ function envelope_refresh {
     // During launch or rotate phases, disable envelope upset interventions
     // to avoid interfering with ascent/initial rotation maneuvers.
     if defined step and (step = "launch" or step = "rotate") {
+        envelope_terrain_reset(envelope).
         set envelope["rcs_assist"] to false.
         set envelope["pitchdown_timer"] to 0.
         set envelope["authority_timer"] to 0.
@@ -153,6 +291,7 @@ function envelope_refresh {
     }
 
     if ship:altitude > 70000 {
+        envelope_terrain_reset(envelope).
         set envelope["max_aoa"] to config_envelope["max_aoa_normal"].
         set envelope["max_bank"] to config_envelope["max_bank_normal"].
         set envelope["regime"] to "normal".
@@ -196,10 +335,30 @@ function envelope_refresh {
         set envelope["min_throttle"] to min(1,config_envelope["low_speed_throttle"] + speed_deficit * 0.25 + deceleration_demand * 0.10).
     }
 
+    envelope_terrain_refresh(envelope,config_envelope["Terrain"],dt).
+
     // RCS is reserved for the thin-atmosphere portion of flight.  The
     // pitch-down detector is deliberately very sensitive: a rising AoA while
     // the controller is commanding down can become unrecoverable quickly.
     local rcs_available is ship:body:atm:exists and ship:altitude >= AVES["TEAMAltitude"].
+    if envelope["state"] = "terrain_pullup" {
+        // GPWS is deliberately not routed through the upset recovery's
+        // zero-AoA phase.  Terrain escape needs an immediate controlled pull-up.
+        set envelope["max_aoa"] to config_envelope["max_aoa_recovery"].
+        set envelope["max_bank"] to config_envelope["max_bank_recovery"].
+        set envelope["min_throttle"] to 1.
+        set envelope["rcs_assist"] to rcs_available.
+        if envelope["rcs_assist"] {
+            rcs on.
+        } else {
+            rcs off.
+        }
+        set envelope["last_aoa"] to actual_aoa.
+        set envelope["last_speed"] to ship:airspeed.
+        set envelope["last_pitch_error"] to (requested_pitch - pitch_for()).
+        return.
+    }
+
     local aoa_error is actual_aoa - requested_aoa.
     local pitch_error is requested_pitch - pitch_for().
     local pitchdown_failure is rcs_available and requested_aoa < actual_aoa and aoa_error > config_envelope["rcs_error_aoa"] and aoa_rate > 0.
@@ -422,7 +581,7 @@ if not (dap:haskey("update")) {
 
         }
     }
-    if (dap["envelope"]["state"] = "upset_zero_aoa" or dap["envelope"]["state"] = "upset_pullup") and dap["str_mode"] <> "vector" {
+    if ((dap["envelope"]["state"] = "upset_zero_aoa" or dap["envelope"]["state"] = "upset_pullup") and dap["str_mode"] <> "vector") or dap["envelope"]["state"] = "terrain_pullup" {
         envelope_run_recovery().
     } else if dap["envelope"]["restore_steering"] {
         lock steering to dap_steering.
