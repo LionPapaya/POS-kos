@@ -277,6 +277,7 @@ function vacuum_descent {
     set mission["telemetry"]["predicted_clearance"] to plan["clearance"].
     local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
     local solution is plan["solution"].
+    local post_node_within_live_limits is false.
     // Re-converge against the actual post-node orbit: a finite burn does not
     // reproduce KSP's instantaneous maneuver prediction exactly.  A POS4
     // suborbital plan is already based on the live state and must ignite now.
@@ -294,13 +295,23 @@ function vacuum_descent {
         local post_node_velocity_error is -1.
         if solution:haskey("position_error") { set post_node_position_error to solution["position_error"]. }
         if solution:haskey("velocity_error") { set post_node_velocity_error to solution["velocity_error"]. }
+        if solution["valid"] and solution:haskey("position_error") and solution:haskey("velocity_error") {
+            set post_node_within_live_limits to post_node_position_error <= pdi_config["live_position_tolerance"] and
+                post_node_velocity_error <= pdi_config["live_velocity_tolerance"].
+        }
         flight_log_event("pdi_post_node_solution","valid="+solution["valid"]+"|converged="+solution["converged"]+
             "|reason="+solution["reason"]+"|iterations="+solution["iterations"]+"|position_error="+post_node_position_error+
-            "|velocity_error="+post_node_velocity_error+"|budget="+pdi_config["post_node_iterations"]).
+            "|velocity_error="+post_node_velocity_error+"|within_live_limits="+post_node_within_live_limits+"|budget="+pdi_config["post_node_iterations"]).
     }
     vacuum_solver_telemetry(mission,solution).
-    if solution["valid"] and solution["converged"] and (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
+    if solution["valid"] and (solution["converged"] or post_node_within_live_limits) and
+        (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
         vacuum_accept_solution(mission,solution,ignition_ut).
+        if post_node_within_live_limits and not solution["converged"] {
+            set mission["solver_reason"] to "post_node_command_within_live_limits".
+            flight_log_event("pdi_post_node_fallback","reason=within_live_limits|position_error="+solution["position_error"]+
+                "|velocity_error="+solution["velocity_error"]+"|ignition_ut="+ignition_ut).
+        }
         if plan:haskey("immediate") {
             vacuum_phase(mission,"vacuum_pdi","suborbital guided NERV powered descent").
             flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+time:seconds+"|mode=suborbital").
