@@ -1,6 +1,20 @@
 // Live Poseidon PDI mission, approvals, control handovers and telemetry.
 // Pure guidance and prediction live in pdi_guidance.ks / pdi_terminal.ks.
 
+global PDI_PLANNING_DISPLAY is false.
+global PDI_PLANNING_STATUS_ACTIVE is false.
+global PDI_PLANNING_NEXT_CONSOLE_TIME is -1.
+
+function pdi_planning_status {
+    parameter stage_label, detail.
+    set Lastest_status to "PDI " + stage_label + ": " + detail.
+    if PDI_PLANNING_STATUS_ACTIVE { set PDI_PLANNING_DISPLAY:text to Lastest_status. }
+    if time:seconds >= PDI_PLANNING_NEXT_CONSOLE_TIME {
+        print Lastest_status.
+        set PDI_PLANNING_NEXT_CONSOLE_TIME to time:seconds+0.5.
+    }
+}
+
 function vacuum_target_input {
     parameter target_lat, target_lng.
     local result is lex("valid",false,"lat",0,"lng",0).
@@ -92,6 +106,7 @@ function vacuum_stop {
     dap:set_off().
     unlock throttle.
     set vacuum_landing_active to false.
+    set PDI_PLANNING_STATUS_ACTIVE to false.
     rcs off.
     set mission["running"] to false.
     mission["gui"]:hide().
@@ -456,6 +471,9 @@ function pdi_run {
     }
     local gui_ is GUI(470,220).
     local display is gui_:addlabel("Preparing Poseidon PDI").
+    set PDI_PLANNING_DISPLAY to display.
+    set PDI_PLANNING_STATUS_ACTIVE to true.
+    set PDI_PLANNING_NEXT_CONSOLE_TIME to -1.
     local cancel is gui_:addbutton("Abort PDI / release controls").
     local data is lex().
     for field in POS_LOG_PDI_FIELDS { data:add(field,0). }
@@ -467,6 +485,7 @@ function pdi_run {
         "last_solution_ut",time:seconds,"command",lex(),"next_display",0,"gui",gui_,"display",display).
     set cancel:onclick to { set mission["cancel"] to true. }.
     gui_:show().
+    pdi_planning_status("setup","checking NERV capability and landing target").
     flight_log_set_vacuum_target(site,terrain_altitude,target_landing_heading).
     if nerv_engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
         ship:mass <= mission["vehicle"]["reserve_mass"] {
@@ -481,7 +500,6 @@ function pdi_run {
         local plane_pending is false.
         if landing_target_mode = "coordinate" {
             set display:text to "Checking the landing-site plane. A map node is provisional until its review window appears.".
-            vacuum_phase(mission,"vacuum_plane_plan","checking landing-site orbital plane").
             vacuum_phase(mission,"vacuum_plane_plan","checking landing-site orbital plane").
             local plane is pdi_plane_plan(landing_target,mission["vehicle"],pdi_config).
             if not plane["valid"] { vacuum_stop(mission,false,plane["reason"]). return. }

@@ -134,16 +134,22 @@ function pdi_next_site_pass {
     local best_ut is minimum_ut.
     local best_error is 180.
     local i is 0.
+    pdi_planning_status("target pass","coarse search across the next two orbits").
     until i > 192 {
         local ut is minimum_ut+2*orbit_period*i/192.
         local state is pdi_future_state(ut,ship:mass).
         local arrival is pdi_target_at(landing_target,ut).
         local error_angle is vang(state["r"],arrival["r"]).
         if error_angle < best_error { set best_error to error_angle. set best_ut to ut. }
+        if mod(i,24) = 0 {
+            pdi_planning_status("target pass","coarse sample "+i+"/192").
+            wait 0.
+        }
         set i to i+1.
     }
     local interval is orbit_period/96.
     local iteration is 0.
+    pdi_planning_status("target pass","refining the closest approach").
     until iteration >= 12 {
         local candidates is list(max(minimum_ut,best_ut-interval),best_ut+interval).
         for ut in candidates {
@@ -213,6 +219,7 @@ function pdi_node_radius_crossing {
     local left_ut is maneuver:time+0.1.
     local right_ut is time:seconds+maneuver:orbit:eta:periapsis.
     if right_ut <= left_ut { return -1. }
+    pdi_planning_status("intercept","finding the descending landing-altitude crossing").
     local left_state is pdi_node_raw_state(maneuver,left_ut).
     local right_state is pdi_node_raw_state(maneuver,right_ut).
     if not left_state["valid"] or not right_state["valid"] or left_state["r"]:mag <= radius or right_state["r"]:mag > radius { return -1. }
@@ -222,6 +229,10 @@ function pdi_node_radius_crossing {
         local mid_state is pdi_node_raw_state(maneuver,mid_ut).
         if mid_state["r"]:mag > radius { set left_ut to mid_ut. }
         else { set right_ut to mid_ut. }
+        if mod(iteration,6) = 0 {
+            pdi_planning_status("intercept","refinement "+(iteration+1)+"/26").
+            wait 0.
+        }
         set iteration to iteration+1.
     }
     return (left_ut+right_ut)/2.
@@ -244,11 +255,14 @@ function pdi_find_ignition {
     local best is lex("valid",false,"reason","no_feasible_powered_descent","score",1e9).
     if upper_ut <= lower_ut { return best. }
     local i is 0.
+    pdi_planning_status("ignition","testing "+pdi_config["ignition_candidates"]+" powered-descent candidates").
     until i >= pdi_config["ignition_candidates"] {
         local ignition_ut is lower_ut+(upper_ut-lower_ut)*i/(pdi_config["ignition_candidates"]-1).
-        set Lastest_status to "PDI ignition candidate " + (i+1) + "/" + pdi_config["ignition_candidates"].
+        pdi_planning_status("ignition","candidate "+(i+1)+"/"+pdi_config["ignition_candidates"]+"; solving powered descent").
+        wait 0.
         local state is pdi_node_state(maneuver,ignition_ut,planned_mass).
         local solve is pdi_solve(state,landing_target,vehicle,pdi_config).
+        pdi_planning_status("ignition","candidate "+(i+1)+"/"+pdi_config["ignition_candidates"]+": "+solve["reason"]).
         if solve["valid"] and solve["converged"] and solve["command_throttle"] <= 0.98 {
             // Validate at finer resolution before accepting a plan.
             local prediction is pdi_predict_powered(state,vehicle,solve["tgo"],solve["command_throttle"],solve["lambda"],solve["lambda_dot"],solve["jol"],pdi_config["predictor_steps"]*3).
@@ -288,10 +302,13 @@ function pdi_plan_deorbit {
     if convenient { set node_ut to time:seconds+pdi_config["node_lead_time"]. }
     local maneuver is node(node_ut,0,0,0).
     add maneuver.
+    pdi_planning_status("de-orbit","node created; matching periapsis and target timing").
+    wait 0.
     local impact_ut is -1.
     local iteration is 0.
     local aim_error is 1e9.
     until iteration >= pdi_config["node_time_iterations"] {
+        pdi_planning_status("de-orbit","timing iteration "+(iteration+1)+"/"+pdi_config["node_time_iterations"]).
         if not pdi_trim_periapsis(maneuver,landing_altitude-pdi_config["deorbit_depth"]) {
             remove maneuver.
             set result["reason"] to "deorbit_periapsis_unsolved".
