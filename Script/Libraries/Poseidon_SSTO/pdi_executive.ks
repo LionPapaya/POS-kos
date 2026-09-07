@@ -272,7 +272,22 @@ function vacuum_descent {
     // reproduce KSP's instantaneous maneuver prediction exactly.  A POS4
     // suborbital plan is already based on the live state and must ignite now.
     if not plan:haskey("immediate") {
+        // Candidate planning is deliberately bounded for kOS responsiveness.
+        // This one correction occurs only after the approved node has been
+        // executed and has ample coast time, so retain the original solver
+        // budget to avoid rejecting a sound plan at its 36-iteration cutoff.
+        local planning_iterations is pdi_config["planning_iterations"].
+        set pdi_config["planning_iterations"] to pdi_config["post_node_iterations"].
+        pdi_planning_status("post-node","revalidating the actual post-burn trajectory").
         set solution to pdi_solve(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),landing_target,mission["vehicle"],pdi_config).
+        set pdi_config["planning_iterations"] to planning_iterations.
+        local post_node_position_error is -1.
+        local post_node_velocity_error is -1.
+        if solution:haskey("position_error") { set post_node_position_error to solution["position_error"]. }
+        if solution:haskey("velocity_error") { set post_node_velocity_error to solution["velocity_error"]. }
+        flight_log_event("pdi_post_node_solution","valid="+solution["valid"]+"|converged="+solution["converged"]+
+            "|reason="+solution["reason"]+"|iterations="+solution["iterations"]+"|position_error="+post_node_position_error+
+            "|velocity_error="+post_node_velocity_error+"|budget="+pdi_config["post_node_iterations"]).
     }
     vacuum_solver_telemetry(mission,solution).
     if solution["valid"] and solution["converged"] and (plan:haskey("immediate") or time:seconds < ignition_ut-10) {

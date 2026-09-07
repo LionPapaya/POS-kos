@@ -16,7 +16,7 @@ function pdi_defaults {
         // Planning is run in kOS before the de-orbit node is offered for
         // review.  Keep its numerical work bounded; the accepted command is
         // subsequently checked again at a higher resolution.
-        "minimum_tgo",8,"maximum_tgo",1800,"planning_iterations",36,
+        "minimum_tgo",8,"maximum_tgo",1800,"planning_iterations",36,"post_node_iterations",80,
         "predictor_steps",32,"range_gain",0.25,"velocity_gain",0.7,
         "position_tolerance",15,"velocity_tolerance",0.6,
         "time_tolerance",0.5,"steering_tolerance",2,"convergence_passes",2,
