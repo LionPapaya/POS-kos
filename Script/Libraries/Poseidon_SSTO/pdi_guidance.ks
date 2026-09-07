@@ -13,7 +13,10 @@
 function pdi_defaults {
     return lex(
         "minimum_twr",1.10,"planning_throttle",0.85,"minimum_throttle",0.08,
-        "minimum_tgo",8,"maximum_tgo",1800,"planning_iterations",80,
+        // Planning is run in kOS before the de-orbit node is offered for
+        // review.  Keep its numerical work bounded; the accepted command is
+        // subsequently checked again at a higher resolution.
+        "minimum_tgo",8,"maximum_tgo",1800,"planning_iterations",36,
         "predictor_steps",32,"range_gain",0.25,"velocity_gain",0.7,
         "position_tolerance",15,"velocity_tolerance",0.6,
         "time_tolerance",0.5,"steering_tolerance",2,"convergence_passes",2,
@@ -22,7 +25,7 @@ function pdi_defaults {
         "handover_altitude",500,"handover_speed",30,"handover_distance",200,
         "handover_vertical_speed",-3,"terrain_margin",100,"hull_margin",25,
         "reserve_delta_v",180,"deorbit_depth",2500,"node_lead_time",600,
-        "node_time_iterations",10,"ignition_candidates",12,"plane_tolerance",0.5,
+        "node_time_iterations",10,"ignition_candidates",5,"plane_tolerance",0.5,
         "maximum_plane_burn_fraction",0.08,"maximum_node_burn_fraction",0.08,
         "maximum_translation_speed",25,"maximum_lateral_acceleration",2,
         "maximum_terminal_tilt",25,"terminal_velocity_gain",0.7,

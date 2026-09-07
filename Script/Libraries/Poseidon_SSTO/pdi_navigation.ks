@@ -115,8 +115,10 @@ function pdi_ground_clearance {
 function pdi_path_clearance {
     parameter trajectory_path, start_ut, pdi_config.
     local minimum is 1e9.
+    // All samples use one inertial/raw transform.  Rebuilding it for every
+    // sample was an expensive series of live kOS reads during planning.
+    local frame is pdi_frame().
     for sample in trajectory_path {
-        local frame is pdi_frame().
         // Terrain is fixed to the rotating body, not the inertial trajectory.
         local angle is -(start_ut+sample["t"]-frame["ut"])*frame["omega"]*constant:radtodeg.
         local body_fixed is pdi_rotate(sample["r"],V(0,0,1),angle).
@@ -252,18 +254,25 @@ function pdi_find_ignition {
     local guess is pdi_burn_guess(impact_state,vehicle).
     local lower_ut is max(earliest_ut,impact_ut-2*guess).
     local upper_ut is impact_ut-max(20,0.3*guess).
-    local best is lex("valid",false,"reason","no_feasible_powered_descent","score",1e9).
+    local best is lex("valid",false,"reason","no_feasible_powered_descent","score",1e9,"attempts",0).
     if upper_ut <= lower_ut { return best. }
+    // Start at the analytic burn-time estimate, then alternate to nearby
+    // early/late starts only if it cannot be validated.  The old ascending
+    // 12-point sweep could spend minutes in kOS finding plans that were never
+    // used, because it scored every candidate after already finding a safe one.
+    local candidate_fractions is list(0.6,0.45,0.75,0.3,0.9).
+    local candidate_count is min(pdi_config["ignition_candidates"],candidate_fractions:length).
     local i is 0.
-    pdi_planning_status("ignition","testing "+pdi_config["ignition_candidates"]+" powered-descent candidates").
-    until i >= pdi_config["ignition_candidates"] {
-        local ignition_ut is lower_ut+(upper_ut-lower_ut)*i/(pdi_config["ignition_candidates"]-1).
-        pdi_planning_status("ignition","candidate "+(i+1)+"/"+pdi_config["ignition_candidates"]+"; solving powered descent").
+    pdi_planning_status("ignition","trying up to "+candidate_count+" nearby powered-descent candidates").
+    until i >= candidate_count {
+        local ignition_ut is lower_ut+(upper_ut-lower_ut)*candidate_fractions[i].
+        pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+"; solving powered descent").
         wait 0.
         local state is pdi_node_state(maneuver,ignition_ut,planned_mass).
         local solve is pdi_solve(state,landing_target,vehicle,pdi_config).
-        pdi_planning_status("ignition","candidate "+(i+1)+"/"+pdi_config["ignition_candidates"]+": "+solve["reason"]).
+        set best["attempts"] to i+1.
         if solve["valid"] and solve["converged"] and solve["command_throttle"] <= 0.98 {
+            pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" converged; validating terrain and arrival").
             // Validate at finer resolution before accepting a plan.
             local prediction is pdi_predict_powered(state,vehicle,solve["tgo"],solve["command_throttle"],solve["lambda"],solve["lambda_dot"],solve["jol"],pdi_config["predictor_steps"]*3).
             local arrival is pdi_target_at(landing_target,ignition_ut+solve["tgo"]).
@@ -279,12 +288,20 @@ function pdi_find_ignition {
                 set j to j+1.
             }
             set clearance to min(clearance,pdi_path_clearance(coast_path,earliest_ut,pdi_config)).
-            local score is abs(solve["command_throttle"]-pdi_config["planning_throttle"])+solve["tgo"]/10000.
-            if clearance >= pdi_config["terrain_margin"] and position_error < 100 and velocity_error < 2 and score < best["score"] {
-                set best to lex("valid",true,"reason","powered_descent_ready","score",score,"ignition_ut",ignition_ut,
+            if clearance >= pdi_config["terrain_margin"] and position_error < 100 and velocity_error < 2 {
+                // A safe, validated plan is enough to proceed.  Do not make
+                // the pilot wait for lower-score alternatives.
+                set best to lex("valid",true,"reason","powered_descent_ready","score",0,"ignition_ut",ignition_ut,
                     "arrival_ut",ignition_ut+solve["tgo"],"solution",solve,"clearance",clearance,
-                    "position_error",position_error,"velocity_error",velocity_error,"state",state).
+                    "position_error",position_error,"velocity_error",velocity_error,"state",state,"attempts",i+1).
+                pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" accepted after validation").
+                return best.
             }
+            pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" rejected by terrain or final-state validation").
+        }else if solve["valid"] and solve["converged"] {
+            pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" rejected: commanded throttle above 98%").
+        }else{
+            pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+": "+solve["reason"]).
         }
         set i to i+1.
         wait 0.
