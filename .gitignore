@@ -5,3 +5,4 @@ AGENTS.md
 
 # Local replay UI for exported POS_logs flight data.
 tools/flight-replay/
+tests

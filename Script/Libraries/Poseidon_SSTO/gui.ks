@@ -1003,6 +1003,8 @@ function create_main_gui{
     SET Programm_popup:STYLE:width TO 170.
     Programm_popup:addoption("Launch").
     Programm_popup:addoption("Landing").
+    Programm_popup:addoption("Vacuum Landing").
+    Programm_popup:addoption("Vacuum Landing (Convenient)").
     Programm_popup:addoption("Orbital Maneuvering").
     Programm_popup:addoption("Docking").
     Programm_popup:addoption("Test").
@@ -1015,6 +1017,12 @@ function create_main_gui{
         }
         if Programm_popup:value = "Landing"{
             set main_step to "POS3".
+        }
+        if Programm_popup:value = "Vacuum Landing"{
+            set main_step to "POS4".
+        }
+        if Programm_popup:value = "Vacuum Landing (Convenient)"{
+            set main_step to "POS5".
         }
         if Programm_popup:value = "Orbital Maneuvering"{
             set main_step to "OM1".

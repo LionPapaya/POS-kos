@@ -253,70 +253,20 @@ function do_change_Periapsis {
     }
 }
 function do_change_Inclination {
-    local inclination_options_force is "ASK".
-    local inclination_options to 0.
-    if inclination_options_force = "ASK" {
-        set inclination_options to get_inputs_Inclination().
-    } else {
-        set inclination_options to inclination_options_force.
+    RUNONCEPATH("0:/Libraries/lib_orbital_nodes.ks").
+    local options is get_inputs_Inclination().
+    local requested_inclination is options[1]:tonumber(-999).
+    local plan is pos_plan_inclination(requested_inclination,options[0]).
+    if not plan["valid"] {
+        set Lastest_status to "Inclination planning failed: " + plan["reason"].
+        flight_log_event("inclination_plan_failed","reason=" + plan["reason"]).
+        return.
     }
-
-    local target_type is inclination_options[0].
-    local target_inclination is inclination_options[1]:tonumber().
-
-    local mnv_calc is false.
-    local mnv_start is false.
-
-    function time_to_next_node {
-        parameter node_type.
-        local next_node_time is 0.
-        local current_time is time:seconds.
-        local orbit_period is ship:orbit:period.
-        local node_longitude is 0.
-
-        if node_type = "Ascending" {
-            set node_longitude to ship:orbit:lan.
-        } else {
-            set node_longitude to ship:orbit:lan + 180.
-            if node_longitude >= 360 {
-                set node_longitude to node_longitude - 360.
-            }
-        }
-
-        until next_node_time > current_time {
-            set next_node_time to next_node_time + orbit_period.
-        }
-
-        return next_node_time.
-    }
-
-    until mnv_calc {
-        if mnv_start = false {
-            local node_time is time_to_next_node(target_type).
-            set mnv to node(node_time, 0, 0, 0).
-            add mnv.
-            set mnv_start to true.
-        }
-
-        local current_inclination is ship:orbit:inclination.
-        local inclination_diff is target_inclination - current_inclination.
-
-        if abs(inclination_diff) > 0.1 {
-            if inclination_diff > 0 {
-                set mnv:normal to mnv:normal + 0.01.
-            } else {
-                set mnv:normal to mnv:normal - 0.01.
-            }
-        } else {
-            set mnv_calc to true.
-        }
-
-        if mnv_calc = true {
-            nervson().
-            rapiersoff().
-            execute_node().
-        }
-    }
+    flight_log_event("inclination_node","target_deg=" + requested_inclination + "|predicted_deg=" + plan["inclination"] + "|dv=" + plan["dv"]).
+    nervson().
+    rapiersoff().
+    execute_node().
+    flight_log_event("inclination_burn_complete","target_deg=" + requested_inclination + "|actual_deg=" + ship:orbit:inclination).
 }
 function do_circularization {
     parameter circularization_location_force is "ASK".

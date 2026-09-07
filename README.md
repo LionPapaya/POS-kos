@@ -35,6 +35,12 @@ The orbital maneuvering menu currently provides:
 - Manage energy, heading alignment, airbrakes, landing gear, and final approach.
 - Provide live trajectory, flight-data, and guidance readouts.
 
+### Vacuum landing
+
+- Perform a NERV-only de-orbit and powered descent on a body without an atmosphere.
+- Target a supplied latitude/longitude and translate to that surface point after braking.
+- Set the tail down at near-zero surface speed, then pitch down onto the landing gear.
+
 ## Aborts
 
 Abort modes are selected according to the vehicle's situation and are implemented as separate flight phases. Only the currently implemented abort mode is documented below.
@@ -66,6 +72,8 @@ The top-level `POS.ks` script loads shared libraries and chooses a flight progra
 POS.ks
 ├── POS1 / Poseidon_SSTO_Orbit_Main.ks   ascent and circularization
 ├── POS3 / Poseidon_SSTO_Reentry.ks      de-orbit, entry, and landing
+├── POS4 / Poseidon_SSTO_Vacuum_Landing.ks  targeted NERV-only landing on an airless body
+├── POS5 / Poseidon_SSTO_Vacuum_Landing.ks  convenient-site NERV-only landing
 ├── OM1 / Poseidon_SSTO_OM1.ks            orbital maneuvering
 └── POS2 / Poseidon_SSTO_Docking.ks       docking workflow
 ```
@@ -79,6 +87,8 @@ Shared libraries contain the vehicle definition, control loops, GUI, navigation 
 | `Script/POS.ks` | Main launcher and flight-mode selector |
 | `Script/POS1.ks` | Shortcut for the ascent program |
 | `Script/POS3.ks` | Shortcut for the re-entry program |
+| `Script/POS4.ks` | Shortcut for the targeted vacuum-landing program |
+| `Script/POS5.ks` | Shortcut for a vacuum landing at the predicted convenient site |
 | `Script/Poseidon_SSTO/` | Main Poseidon mission scripts |
 | `Script/Libraries/Poseidon_SSTO/` | Poseidon-specific vehicle, GUI, control, guidance, and routing code |
 | `Script/Libraries/rsvp/` | Orbital transfer and maneuver calculations |
@@ -111,9 +121,24 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 - start an ascent and choose target apoapsis, periapsis, and inclination;
 - open the orbital maneuvering selector;
 - start re-entry and select a landing location and runway; or
+- choose **Vacuum Landing** for a coordinate target, or **Vacuum Landing (Convenient)** to select a nearby planned site with minimal cross-range correction; or
 - use the docking workflow when applicable.
 
 During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
+
+### Targeted vacuum landing
+
+Use the **Vacuum Landing** item from the main menu, or run `0:/POS4.ks`. It operates only on bodies without an atmosphere. It keeps the R.A.P.I.E.R.s disabled and uses the LV-N engines for both the de-orbit node and powered descent.
+
+POS4 opens a latitude/longitude dialog when coordinates are omitted. Pass the first two parameters to skip that dialog; leave the altitude override negative to use terrain height at the selected point:
+
+```ks
+runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", 8.421, -74.230).
+```
+
+For the no-coordinate option, choose **Vacuum Landing (Convenient)** or run `0:/POS5.ks`. It derives a nearby landing site from the planned de-orbit path, so it does not spend fuel steering across the body to a user-selected point. Both modes place every required inclination and de-orbit node on the map, then wait for an explicit **Execute this node** click. The review window also offers replan and cancel actions.
+
+The fourth optional parameter is the preferred heading used while the craft pitches from its tail contact down onto the gear; pass `"convenient"` as the fifth parameter to select the convenient-site mode from a terminal. Start from a stable orbit with sufficient LV-N thrust-to-weight ratio; the program refuses to begin if the enabled NERVs cannot provide the braking reserve.
 
 ### Flight logging and replay
 
@@ -140,7 +165,7 @@ Each run creates the next unused directory under `0:/POS_logs/`, for example:
 0:/POS_logs/flight_1/events.csv
 ```
 
-The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, and terminal-guidance values. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. `events.csv` records the decisions that explain state changes, including GPWS state transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
+The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, and terminal-guidance values. Vacuum-landing samples additionally record the target coordinates, target distance, lowest-bounds clearance, speed, requested vertical speed, NERV throttle, braking distance, available acceleration, tail-contact state, pitch-down target, PDI solution error, predicted clearance, thrust saturation, node approval, and pitch-over readiness. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. `events.csv` records the decisions that explain state changes, including the vacuum target, node review and decision, de-orbit plan, braking start, translation start, engine-cutoff pitch-over, gear touchdown, and GPWS state transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
 
 To replay a `medium` or `high` flight, open the local, gitignored [replay tool](tools/flight-replay/index.html) in a browser. Load the matching `flight.csv`, optionally load `events.csv`, then use the timeline and the 3-D view. The inspector shows every recorded column at the selected frame; the scene shows the recorded flight path, vehicle, runway, and entry target without rerunning guidance.
 
@@ -152,6 +177,7 @@ For docking, first select the other vessel (or one of its docking ports) as the 
 
 - Tuning is specific to the Poseidon SSTO and may fail on other craft.
 - Interplanetary or very high-altitude re-entry is not yet reliable.
+- Vacuum landing begins from a stable orbit and needs LV-N thrust-to-weight greater than 1.10; terrain with a steep slope at the requested coordinates is not screened.
 - Runway and trajectory selection depends on the data in `lib_location_constants.ks`.
 - Abort handling is under active development; only `runway_abort` should currently be treated as documented functionality.
 - The Ferram integration must be available for the aerodynamic calculations used by guidance.

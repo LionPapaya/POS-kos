@@ -204,6 +204,14 @@ function envelope_terrain_landing_inhibit_reason {
 
 function envelope_terrain_inhibit_reason {
     parameter envelope, terrain_config.
+    // The vacuum landing controller owns its clearance, braking, and
+    // translation solution.  GPWS is an aerodynamic-flight protection layer;
+    // allowing it to seize a vector-guided NERV descent would discard the
+    // landing controller's commanded thrust direction.  The dedicated script
+    // logs this inhibit state and clears the flag on every exit path.
+    if defined vacuum_landing_active and vacuum_landing_active {
+        return "vacuum_landing".
+    }
     if not terrain_config["enabled"] {
         return "disabled".
     }
@@ -291,6 +299,22 @@ function envelope_terrain_refresh {
 
 function envelope_refresh {
     local envelope is dap["envelope"].
+    // PDI owns thrust, RCS and terrain protection throughout the airless
+    // descent, including the engine-off pitch onto the wheels. Atmospheric
+    // low-speed/upset logic must never restore throttle or take its steering.
+    if defined vacuum_landing_active and vacuum_landing_active {
+        set envelope["state"] to "normal".
+        set envelope["regime"] to "vacuum_landing".
+        set envelope["min_throttle"] to 0.
+        set envelope["rcs_assist"] to false.
+        set envelope["restore_steering"] to false.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        envelope_terrain_reset(envelope,"inhibited","vacuum_landing").
+        return.
+    }
     local config_envelope is AVES["Envelope"].
     local dt is max(dap["dt"],0.01).
     local actual_aoa is calc_aoa().

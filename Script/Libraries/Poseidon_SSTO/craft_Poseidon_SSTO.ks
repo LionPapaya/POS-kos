@@ -350,30 +350,6 @@ function abort_select_runway {
     }
     return best.
 }
-function setup_landing_script{
-    
-    steeringManager:resetpids().
-    set step to "Deorbit".
-    set substep to "findStep".
-    set running to true.
-    clearScreen.  
-    if maxThrust = 120{
-        set nervs to true.
-    } 
-    else{
-        set nervs to false.
-    }
-
-    set rapier_mode to "air".
-    set rapiers to false.
-    set Lastest_status to "Inizializing Script".
-    set deorbit_start to false.
-    set deorbit_calc to false.
-    dap:setup().
-    reset_sys().                                                                             
-   
-}
-
 local Poseidon_SSTO is lex().
 Poseidon_SSTO:add("Speed",Lexicon("MaxSpeed",2400,"MinSpeed",100,"Rotate",110)).
 // Aircraft-style ascent profile.  Keep all Poseidon-specific ascent tuning here

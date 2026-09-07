@@ -63,7 +63,17 @@ until closed{
         //runpath("0:/Poseidon_SSTO/Aeroturn.ks").
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks").
         set main_step to "ask_Step".
-    }  
+    }
+    if main_step = "POS4"{
+        poseidon_gui_main:hide().
+        runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks").
+        set main_step to "ask_Step".
+    }
+    if main_step = "POS5"{
+        poseidon_gui_main:hide().
+        runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", 0, 0, -1, 90, "convenient").
+        set main_step to "ask_Step".
+    }
     if main_step = "OM1"{
         poseidon_gui_main:hide().
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_OM1.ks").

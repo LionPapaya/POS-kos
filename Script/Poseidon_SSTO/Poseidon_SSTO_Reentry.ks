@@ -19,14 +19,20 @@ RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_route.ks").
 
 parameter force_tgt is lex("force",false,"Location","","Runway","").
+if not SHIP:BODY:atm:exists {
+    // Airless operations are intentionally not an alternate branch of entry
+    // guidance.  The dedicated program owns its NERV-only deorbit, powered
+    // descent, coordinate target, and tail-to-gear touchdown sequence.
+    clearScreen.
+    print "Reentry requires an atmosphere.".
+    print "For an airless body run 0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks.".
+}else{
 flight_log_begin("reentry").
 if not(defined recovery_result) {
     global recovery_result is lex("complete",false,"success",false,"reason","running").
 }else{
     set recovery_result to lex("complete",false,"success",false,"reason","running").
 }
-
-IF SHIP:BODY:atm:exists{
 //if ship:periapsis > 70000{
 if not(force_tgt["force"]){
     setup_reentry_script().
@@ -668,77 +674,5 @@ until running = false{
     update_reentry_gui(e_gui_inputs).
     flight_log_tick("reentry",step,substep).
     wait 0.
-}    
-
-}ELSE{
-
-
-    setup_LANDING_SCRIPT().
-
-
-
-
-    until not(running){
-        update_readouts().
-        dap().
-        if step = "Deorbit"{
-            if addons:TR:hasimpact{
-                set Step to "s_burn".
-            }
-            if deorbit_start = false{
-                    set deorbit to node(time+400, 0, 0, 0).
-                    add deorbit.
-                    set deorbit_start to true.
-                    set deorbit_periapsis to -1000.
-                } 
-                if deorbit:orbit:periapsis < deorbit_periapsis and deorbit_calc = false{
-                    if  deorbit:orbit:periapsis + 10000 < deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde + 1.
-                    }
-                    if deorbit:orbit:periapsis + 1000 < deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde + 0.1.
-                    }
-                    if deorbit:orbit:periapsis + 100 < deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde + 0.01.
-                    }
-                }
-                if deorbit:orbit:periapsis > deorbit_periapsis and deorbit_calc = false{
-                    if  deorbit:orbit:periapsis - 10000 > deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde - 1.
-                    }
-                    if deorbit:orbit:periapsis - 1000 > deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde - 0.1.
-                    }
-                    if deorbit:orbit:periapsis - 100 > deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde - 0.01.
-                    }
-                } 
-                if deorbit:orbit:periapsis + 1000 > deorbit_periapsis and deorbit:orbit:periapsis - 1000 < deorbit_periapsis and deorbit_calc = false and addons:TR:hasimpact {
-                    set deorbit_calc to true.
-                }
-                if deorbit_calc = true{
-                    nervson().
-                    rapiersoff().
-                    set nd to deorbit.
-                    execute_node().
-                    set Step to "s_burn".
-                }
-
-
-        }
-        if step = "s_burn"{
-            doHoverslam().
-            set step to "end".
-        }
-        if step = "end" {
-        set running to false.
-        reset_sys().
-        set warp to 0.
-        update_readouts().
-        log_status("Script ended, system reset").
-        clearGuis().
-        }
-        flight_log_tick("reentry",step,substep).
-        wait 0.
-    }
+}
 }
