@@ -307,6 +307,7 @@ function vacuum_descent {
     if solution["valid"] and (solution["converged"] or post_node_within_live_limits) and
         (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
         vacuum_accept_solution(mission,solution,ignition_ut).
+        set mission["pdi_internal"] to solution.
         if post_node_within_live_limits and not solution["converged"] {
             set mission["solver_reason"] to "post_node_command_within_live_limits".
             flight_log_event("pdi_post_node_fallback","reason=within_live_limits|position_error="+solution["position_error"]+
@@ -368,12 +369,33 @@ function vacuum_descent {
                 local frame is pdi_frame().
                 local state is pdi_live_state(frame).
                 set landing_target to pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+                // Rebase and iterate the UPFG state against the measured
+                // vehicle, as in Dondi's live landing loop.  The pre-node
+                // command remains the seed, while each update corrects for
+                // finite node-burn timing, mass flow and state drift.
+                local internal is mission["pdi_internal"].
+                pdi_rebase(internal,state).
+                local live_iteration is 0.
+                until live_iteration >= pdi_config["live_iterations"] or not internal["valid"] {
+                    pdi_iterate(state,landing_target,mission["vehicle"],internal,pdi_config).
+                    set live_iteration to live_iteration+1.
+                }
+                set mission["pdi_internal"] to internal.
                 local command is mission["command"].
-                // UPFG's linear tangent law is one continuous burn. Updating
-                // its internal range bias every tick made this craft's late
-                // solution oscillate. Validate the accepted trajectory using
-                // measured mass/state; retain its continuous steering only
-                // while that independent prediction remains inside capture.
+                if internal["valid"] {
+                    vacuum_accept_solution(mission,internal,state["ut"]).
+                    set command to mission["command"].
+                    set mission["telemetry"]["valid"] to internal["valid"].
+                    set mission["telemetry"]["converged"] to internal["converged"].
+                    set mission["telemetry"]["tgo"] to internal["tgo"].
+                    set mission["telemetry"]["position_error"] to internal["position_error"].
+                    set mission["telemetry"]["velocity_error"] to internal["velocity_error"].
+                    set mission["telemetry"]["iterations"] to internal["iterations"].
+                    set mission["solver_reason"] to "live_"+internal["reason"].
+                }else{ set mission["solver_reason"] to internal["reason"]. }
+                // UPFG's linear tangent law is one continuous burn. Validate
+                // the rebased command using measured mass/state before
+                // applying its new steering.
                 local prediction is pdi_command_predict(state,mission["vehicle"],command,pdi_config["predictor_steps"]*2).
                 local acceptable is prediction["valid"].
                 local position_error is 1e9.
@@ -386,7 +408,7 @@ function vacuum_descent {
                     set mission["telemetry"]["position_error"] to position_error.
                     set mission["telemetry"]["velocity_error"] to velocity_error.
                     set mission["telemetry"]["predicted_final_mass"] to prediction["mass"].
-                    set mission["telemetry"]["iterations"] to solution["iterations"].
+                    set mission["telemetry"]["iterations"] to internal["iterations"].
                     set mission["telemetry"]["valid"] to acceptable.
                     set mission["telemetry"]["converged"] to acceptable.
                     set mission["solver_reason"] to "command_validated".
