@@ -53,11 +53,11 @@ function pdi_node_raw_state {
     // resulting two-body arc.  This keeps deorbit targeting tied to exactly
     // the node the pilot reviews in the map.
     if ut < maneuver:time { return lex("valid",false,"reason","before_maneuver"). }
-    local r is positionat(ship,maneuver:time)-ship:body:position.
+    local r_ is positionat(ship,maneuver:time)-ship:body:position.
     local vel is velocityat(ship,maneuver:time):orbit+maneuver:deltav.
     local duration is ut-maneuver:time.
     local steps is max(12,min(120,floor(duration/30)+1)).
-    local propagated is pdi_coast(r,vel,duration,ship:body:mu,steps).
+    local propagated is pdi_coast(r_,vel,duration,ship:body:mu,steps).
     return lex("valid",true,"reason","propagated","r",propagated["r"],"v",propagated["v"],"ut",ut).
 }
 
@@ -106,16 +106,16 @@ function pdi_vehicle_snapshot {
 }
 
 function pdi_ground_clearance {
-    parameter bounds.
+    parameter bounds_.
     local terrain is ship:geoposition:terrainheight.
     if ship:body:hasocean { set terrain to max(0,terrain). }
-    return max(0,bounds:bottomalt-terrain).
+    return max(0,bounds_:bottomalt-terrain).
 }
 
 function pdi_path_clearance {
-    parameter path, start_ut, pdi_config.
+    parameter path_, start_ut, pdi_config.
     local minimum is 1e9.
-    for sample in path {
+    for sample in path_ {
         local frame is pdi_frame().
         // Terrain is fixed to the rotating body, not the inertial trajectory.
         local angle is -(start_ut+sample["t"]-frame["ut"])*frame["omega"]*constant:radtodeg.

@@ -55,8 +55,8 @@ function pdi_rotate {
 }
 
 function pdi_gravity {
-    parameter r, mu.
-    return -mu*r / max(1,r:mag^3).
+    parameter radius, mu.
+    return -mu*radius / max(1,radius:mag^3).
 }
 
 function pdi_target_at {
