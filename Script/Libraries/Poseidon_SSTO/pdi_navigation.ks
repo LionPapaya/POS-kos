@@ -77,6 +77,39 @@ function pdi_live_target {
         "ut",frame["ut"],"omega",frame["omega"],"vs",pdi_config["handover_vertical_speed"]).
 }
 
+function pdi_suborbital_landing_site {
+    // Use the current conic's low point only after the vessel is committed to
+    // impact.  This makes POS4 choose a site from the trajectory it actually
+    // has, rather than spending time constructing an orbital de-orbit plan.
+    local impact_ut is time:seconds+max(0,ship:orbit:eta:periapsis).
+    local impact_position is positionat(ship,impact_ut).
+    local site is ship:body:geopositionof(impact_position).
+    return lex("site",site,"altitude",site:terrainheight,"impact_ut",impact_ut).
+}
+
+function pdi_suborbital_plan {
+    parameter landing_target, vehicle, pdi_config.
+    local state is pdi_live_state(pdi_frame()).
+    local solve is pdi_solve(state,landing_target,vehicle,pdi_config).
+    local result is lex("valid",false,"reason",solve["reason"],"attempts",1).
+    if not solve["valid"] or not solve["converged"] or solve["command_throttle"] > 0.98 { return result. }
+    // The solver's low-cost predictor establishes convergence.  Validate the
+    // immediate burn at the same higher resolution used by orbital planning.
+    local prediction is pdi_predict_powered(state,vehicle,solve["tgo"],solve["command_throttle"],solve["lambda"],solve["lambda_dot"],solve["jol"],pdi_config["predictor_steps"]*3).
+    if not prediction["valid"] { set result["reason"] to prediction["reason"]. return result. }
+    local arrival is pdi_target_at(landing_target,state["ut"]+solve["tgo"]).
+    local position_error is (prediction["r"]-arrival["r"]):mag.
+    local velocity_error is (prediction["v"]-arrival["v"]):mag.
+    local clearance is pdi_path_clearance(prediction["path"],state["ut"],pdi_config).
+    if clearance < pdi_config["terrain_margin"] or position_error >= 100 or velocity_error >= 2 {
+        set result["reason"] to "suborbital_plan_validation_failed".
+        return result.
+    }
+    return lex("valid",true,"reason","suborbital_powered_descent_ready","score",0,"ignition_ut",state["ut"],
+        "arrival_ut",state["ut"]+solve["tgo"],"solution",solve,"clearance",clearance,
+        "position_error",position_error,"velocity_error",velocity_error,"state",state,"attempts",1,"immediate",true).
+}
+
 function pdi_vehicle_snapshot {
     parameter nerv_engines, fuel_parts, pdi_config.
     local thrust_available is 0.

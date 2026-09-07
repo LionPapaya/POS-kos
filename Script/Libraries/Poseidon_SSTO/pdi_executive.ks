@@ -250,20 +250,31 @@ function vacuum_emergency {
     flight_log_event("pdi_fallback","reason="+reason+"|clearance="+mission["clearance"]+"|speed="+ship:velocity:surface:mag).
 }
 
+function pdi_is_suborbital {
+    return ship:orbit:eccentricity >= 1 or ship:orbit:periapsis < ship:geoposition:terrainheight+500.
+}
+
 function vacuum_descent {
     parameter mission, plan.
     local pdi_config is mission["config"].
     local ignition_ut is plan["ignition_ut"].
     set mission["telemetry"]["ignition_ut"] to ignition_ut.
     set mission["telemetry"]["predicted_clearance"] to plan["clearance"].
-    // Re-converge against the actual post-node orbit: a finite burn does not
-    // reproduce KSP's instantaneous maneuver prediction exactly.
     local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
-    local solution is pdi_solve(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),landing_target,mission["vehicle"],pdi_config).
+    local solution is plan["solution"].
+    // Re-converge against the actual post-node orbit: a finite burn does not
+    // reproduce KSP's instantaneous maneuver prediction exactly.  A POS4
+    // suborbital plan is already based on the live state and must ignite now.
+    if not plan:haskey("immediate") {
+        set solution to pdi_solve(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),landing_target,mission["vehicle"],pdi_config).
+    }
     vacuum_solver_telemetry(mission,solution).
-    if solution["valid"] and solution["converged"] and time:seconds < ignition_ut-10 {
+    if solution["valid"] and solution["converged"] and (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
         vacuum_accept_solution(mission,solution,ignition_ut).
-        vacuum_phase(mission,"vacuum_coast","coast to predicted PDI ignition").
+        if plan:haskey("immediate") {
+            vacuum_phase(mission,"vacuum_pdi","suborbital guided NERV powered descent").
+            flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+time:seconds+"|mode=suborbital").
+        }else{ vacuum_phase(mission,"vacuum_coast","coast to predicted PDI ignition"). }
     }else{ vacuum_emergency(mission,"post_deorbit_solution_unavailable"). }
     local next_guidance is ignition_ut.
     local next_vehicle is time:seconds.
@@ -426,11 +437,14 @@ function pdi_run {
     if ship:body:atm:exists or not ship:body:hassolidsurface {
         print "PDI requires an airless body with a solid surface.". return.
     }
-    if landing_target_mode <> "coordinate" and landing_target_mode <> "convenient" {
-        print "Target mode must be coordinate or convenient.". return.
+    if landing_target_mode <> "coordinate" and landing_target_mode <> "convenient" and landing_target_mode <> "suborbital" {
+        print "Target mode must be coordinate, convenient, or suborbital.". return.
     }
-    if hasnode { print "PDI requires an empty maneuver plan. Existing nodes have been kept.". return. }
-    if ship:orbit:eccentricity >= 1 or ship:orbit:periapsis < ship:geoposition:terrainheight+500 {
+    if landing_target_mode <> "suborbital" and hasnode { print "PDI requires an empty maneuver plan. Existing nodes have been kept.". return. }
+    if landing_target_mode = "suborbital" {
+        print "POS4 armed: waiting for a suborbital trajectory before selecting a landing site.".
+        until pdi_is_suborbital { wait 1. }
+    }else if pdi_is_suborbital {
         print "Start PDI from a stable orbit clear of the terrain.". return.
     }
     local coordinates is lex("valid",true,"lat",0,"lng",0).
@@ -447,6 +461,12 @@ function pdi_run {
     local site is latlng(coordinates["lat"],coordinates["lng"]).
     if landing_target_mode = "convenient" { set site to latlng(ship:geoposition:lat,ship:geoposition:lng). }
     local terrain_altitude is site:terrainheight.
+    local suborbital_selection is lex().
+    if landing_target_mode = "suborbital" {
+        set suborbital_selection to pdi_suborbital_landing_site().
+        set site to suborbital_selection["site"].
+        set terrain_altitude to suborbital_selection["altitude"].
+    }
     if target_altitude_override >= 0 { set terrain_altitude to target_altitude_override. }
     if not (defined vacuum_landing_active) { 
         global vacuum_landing_active is true. 
@@ -487,9 +507,25 @@ function pdi_run {
     gui_:show().
     pdi_planning_status("setup","checking NERV capability and landing target").
     flight_log_set_vacuum_target(site,terrain_altitude,target_landing_heading).
+    if landing_target_mode = "suborbital" {
+        flight_log_event("pdi_suborbital_site","impact_ut="+suborbital_selection["impact_ut"]+"|lat="+site:lat+"|lng="+site:lng+"|altitude="+terrain_altitude).
+    }
     if nerv_engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
         ship:mass <= mission["vehicle"]["reserve_mass"] {
         vacuum_stop(mission,false,"insufficient_nerv_thrust_or_fuel_reserve"). return.
+    }
+    if landing_target_mode = "suborbital" {
+        vacuum_phase(mission,"vacuum_suborbital_plan","solving immediate powered descent from current trajectory").
+        local direct_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+        local direct_plan is pdi_suborbital_plan(direct_target,mission["vehicle"],pdi_config).
+        if not direct_plan["valid"] { vacuum_stop(mission,false,direct_plan["reason"]). return. }
+        set data["ignition_ut"] to direct_plan["ignition_ut"].
+        set data["predicted_clearance"] to direct_plan["clearance"].
+        vacuum_solver_telemetry(mission,direct_plan["solution"]).
+        flight_log_event("pdi_plan_ready","mode=suborbital|ignition_ut="+data["ignition_ut"]+"|arrival_ut="+direct_plan["arrival_ut"]+
+            "|clearance="+data["predicted_clearance"]+"|position_error="+direct_plan["position_error"]+"|velocity_error="+direct_plan["velocity_error"]+"|ignition_attempts=1|candidate_limit=1").
+        vacuum_descent(mission,direct_plan).
+        return.
     }
     local plane_passes is 0.
     local deorbit_complete is false.

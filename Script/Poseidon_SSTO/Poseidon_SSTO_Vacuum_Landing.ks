@@ -1,4 +1,5 @@
-// NERV-only PDI landing. Omitted coordinates open the target GUI.
+// NERV-only PDI landing. Omitted coordinates open the target GUI. POS4 passes
+// "suborbital" to wait for impact, then selects the current trajectory's site.
 // Every inclination/deorbit node requires an explicit in-game Execute click.
 // runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", 8.421, -74.230).
 parameter target_latitude is "ASK".
