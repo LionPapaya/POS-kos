@@ -60,10 +60,10 @@ function pdi_gravity {
 }
 
 function pdi_target_at {
-    parameter target, ut.
-    local angle is (ut-target["ut"])*target["omega"]*constant:radtodeg.
-    local r is pdi_rotate(target["r"],V(0,0,1),angle).
-    local vel is pdi_cross(V(0,0,target["omega"]),r) + r:normalized*target["vs"].
+    parameter pdi_target, ut.
+    local angle is (ut-pdi_target["ut"])*pdi_target["omega"]*constant:radtodeg.
+    local r is pdi_rotate(pdi_target["r"],V(0,0,1),angle).
+    local vel is pdi_cross(V(0,0,pdi_target["omega"]),r) + r:normalized*pdi_target["vs"].
     return lex("r",r,"v",vel).
 }
 
@@ -91,11 +91,11 @@ function pdi_predict_powered {
     parameter state, vehicle, duration, throttle_set, lambda, lambda_dot, jol, steps.
     local r is state["r"].
     local vel is state["v"].
-    local mass is state["mass"].
+    local pdi_mass is state["mass"].
     local force is vehicle["thrust"]*throttle_set.
     local flow is force/vehicle["ve"].
     local result is lex("valid",false,"reason","fuel_reserve","path",list()).
-    if duration <= 0 or mass-flow*duration < vehicle["reserve_mass"] { return result. }
+    if duration <= 0 or pdi_mass-flow*duration < vehicle["reserve_mass"] { return result. }
     local dt is duration/steps.
     local rgrav is V(0,0,0).
     local vgrav is V(0,0,0).
@@ -111,7 +111,7 @@ function pdi_predict_powered {
             set result["reason"] to "zero_thrust_vector".
             return result.
         }
-        local accel is direction:normalized*force/(mass-flow*mid_time).
+        local accel is direction:normalized*force/(pdi_mass-flow*mid_time).
         local grav is pdi_gravity(r,vehicle["mu"]).
         local mid_r is r+vel*dt/2+(grav+accel)*dt^2/8.
         set grav to pdi_gravity(mid_r,vehicle["mu"]).
@@ -134,16 +134,16 @@ function pdi_predict_powered {
     result:add("rthrust",rthrust).
     result:add("vthrust",vthrust).
     result:add("min_radius",min_radius).
-    result:add("mass",mass-flow*duration).
+    result:add("mass",pdi_mass-flow*duration).
     return result.
 }
 
 function pdi_seed {
-    parameter state, target, vehicle, config.
-    local throttle_set is config["planning_throttle"].
-    local duration is max(config["minimum_tgo"],state["v"]:mag/(vehicle["thrust"]/state["mass"]*throttle_set)).
-    set duration to min(duration,config["maximum_tgo"]).
-    local arrival is pdi_target_at(target,state["ut"]+duration).
+    parameter state, pdi_target, vehicle, pdi_config.
+    local throttle_set is pdi_config["planning_throttle"].
+    local duration is max(pdi_config["minimum_tgo"],state["v"]:mag/(vehicle["thrust"]/state["mass"]*throttle_set)).
+    set duration to min(duration,pdi_config["maximum_tgo"]).
+    local arrival is pdi_target_at(pdi_target,state["ut"]+duration).
     local grav is pdi_gravity(state["r"],vehicle["mu"]).
     return lex(
         "valid",true,"converged",false,"reason","initializing","iterations",0,"stable",0,
@@ -181,7 +181,7 @@ function pdi_fail {
 }
 
 function pdi_iterate {
-    parameter state, target, vehicle, internal, config.
+    parameter state, pdi_target, vehicle, internal, pdi_config.
     if not internal["valid"] { return internal. }
     set internal["iterations"] to internal["iterations"]+1.
     local throttle_set is internal["throttle"].
@@ -193,7 +193,7 @@ function pdi_iterate {
     local impulse is internal["vgo"]:mag.
     local old_tgo is internal["tgo"].
     local duration is tu*(1-constant:e^(-impulse/ve)).
-    if duration < config["minimum_tgo"] or duration > config["maximum_tgo"] or impulse < 0.01 {
+    if duration < pdi_config["minimum_tgo"] or duration > pdi_config["maximum_tgo"] or impulse < 0.01 {
         return pdi_fail(internal,"tgo_out_of_bounds").
     }
     // Single constant-thrust stage, with exact mass-depletion integrals.
@@ -204,7 +204,7 @@ function pdi_iterate {
     local qprime is qint-sint*jol.
     if abs(qprime) < 0.0001 { return pdi_fail(internal,"singular_thrust_integrals"). }
     local lambda is internal["vgo"]:normalized.
-    local arrival is pdi_target_at(target,state["ut"]+duration).
+    local arrival is pdi_target_at(pdi_target,state["ut"]+duration).
     local ix is arrival["r"]:normalized.
     local plane is pdi_cross(arrival["r"],state["r"]).
     // Near-vertical terminal flight belongs to the position controller.
@@ -220,10 +220,10 @@ function pdi_iterate {
     local rgoxy is ix*vdot(ix,rgo)+iy*vdot(iy,rgo).
     set rgo to rgoxy+iz*(sint-vdot(lambda,rgoxy))/longitudinal.
     local lambda_dot is (rgo-sint*lambda)/qprime.
-    local steering is lambda-lambda_dot*jol.
-    if steering:mag < 0.000001 { return pdi_fail(internal,"zero_steering"). }
-    set steering to steering:normalized.
-    local prediction is pdi_predict_powered(state,vehicle,duration,throttle_set,lambda,lambda_dot,jol,config["predictor_steps"]).
+    local pdi_steering is lambda-lambda_dot*jol.
+    if pdi_steering:mag < 0.000001 { return pdi_fail(internal,"zero_steering"). }
+    set pdi_steering to pdi_steering:normalized.
+    local prediction is pdi_predict_powered(state,vehicle,duration,throttle_set,lambda,lambda_dot,jol,pdi_config["predictor_steps"]).
     if not prediction["valid"] { return pdi_fail(internal,prediction["reason"]). }
     local position_error is (arrival["r"]-prediction["r"]):mag.
     local velocity_error is (arrival["v"]-prediction["v"]):mag.
@@ -237,21 +237,21 @@ function pdi_iterate {
     local gain is pdi_clamp(duration/max(1,duration+delta_tgo),0.5,1.5).
     // Upstream's /100 and angle multiplier are deliberately removed: throttle
     // is a fraction, and the numerical predictor already accounts for turns.
-    local next_throttle is pdi_clamp(throttle_set*(1+config["range_gain"]*(gain-1)),config["minimum_throttle"],1).
-    local stable is position_error <= config["position_tolerance"] and velocity_error <= config["velocity_tolerance"] and
-        abs(duration-old_tgo) <= config["time_tolerance"] and vang(steering,internal["steering"]) <= config["steering_tolerance"].
+    local next_throttle is pdi_clamp(throttle_set*(1+pdi_config["range_gain"]*(gain-1)),pdi_config["minimum_throttle"],1).
+    local stable is position_error <= pdi_config["position_tolerance"] and velocity_error <= pdi_config["velocity_tolerance"] and
+        abs(duration-old_tgo) <= pdi_config["time_tolerance"] and vang(pdi_steering,internal["steering"]) <= pdi_config["steering_tolerance"].
     if stable { set internal["stable"] to internal["stable"]+1. }
     else { set internal["stable"] to 0. }
-    set internal["converged"] to internal["stable"] >= config["convergence_passes"].
+    set internal["converged"] to internal["stable"] >= pdi_config["convergence_passes"].
     set internal["reason"] to "iterating".
     if internal["converged"] { set internal["reason"] to "converged". }
     set internal["rgrav"] to prediction["rgrav"].
     set internal["rbias"] to rgo-prediction["rthrust"].
-    set internal["vgo"] to internal["vgo"]+config["velocity_gain"]*(arrival["v"]-prediction["v"]).
+    set internal["vgo"] to internal["vgo"]+pdi_config["velocity_gain"]*(arrival["v"]-prediction["v"]).
     set internal["tgo"] to duration.
     set internal["throttle"] to next_throttle.
     // Command uses the throttle that was actually validated by the predictor.
-    set internal["steering"] to steering.
+    set internal["steering"] to pdi_steering.
     set internal["lambda"] to lambda.
     set internal["lambda_dot"] to lambda_dot.
     set internal["jol"] to jol.
@@ -264,10 +264,10 @@ function pdi_iterate {
 }
 
 function pdi_solve {
-    parameter state, target, vehicle, config.
-    local internal is pdi_seed(state,target,vehicle,config).
-    until internal["converged"] or not internal["valid"] or internal["iterations"] >= config["planning_iterations"] {
-        pdi_iterate(state,target,vehicle,internal,config).
+    parameter state, pdi_target, vehicle, pdi_config.
+    local internal is pdi_seed(state,pdi_target,vehicle,pdi_config).
+    until internal["converged"] or not internal["valid"] or internal["iterations"] >= pdi_config["planning_iterations"] {
+        pdi_iterate(state,pdi_target,vehicle,internal,pdi_config).
     }
     if not internal["converged"] and internal["valid"] { set internal["reason"] to "iteration_limit". }
     return internal.
@@ -286,12 +286,12 @@ function pdi_command_predict {
 }
 
 function pdi_vertical_priority {
-    parameter up, requested, available, tilt_limit.
+    parameter pdi_up, requested, available, tilt_limit.
     // Preserve vertical force before assigning any of the remaining thrust to
     // translation. A final scalar throttle clamp alone cannot do this.
-    local vertical is pdi_clamp(vdot(requested,up),0,available).
-    local lateral is requested-up*vdot(requested,up).
+    local vertical is pdi_clamp(vdot(requested,pdi_up),0,available).
+    local lateral is requested-pdi_up*vdot(requested,pdi_up).
     local budget is sqrt(max(0,available^2-vertical^2)).
     set budget to min(budget,vertical*tan(tilt_limit)).
-    return up*vertical+pdi_limit(lateral,budget).
+    return pdi_up*vertical+pdi_limit(lateral,budget).
 }

@@ -2,7 +2,7 @@
 // Pure guidance and prediction live in pdi_guidance.ks / pdi_terminal.ks.
 
 function vacuum_target_input {
-    parameter latitude, longitude.
+    parameter target_lat, target_lng.
     local result is lex("valid",false,"lat",0,"lng",0).
     local dialog is GUI(430,210).
     dialog:addlabel("Poseidon PDI landing coordinates").
@@ -10,8 +10,8 @@ function vacuum_target_input {
     local lat_field is dialog:addtextfield("").
     dialog:addlabel("Longitude (-180..180)").
     local lng_field is dialog:addtextfield("").
-    if latitude <> "ASK" { set lat_field:text to latitude:tostring. }
-    if longitude <> "ASK" { set lng_field:text to longitude:tostring. }
+    if target_lat <> "ASK" { set lat_field:text to target_lat:tostring. }
+    if target_lng <> "ASK" { set lng_field:text to target_lng:tostring. }
     local message is dialog:addlabel("").
     local done is false.
     local accept is dialog:addbutton("Use landing site").
@@ -57,9 +57,9 @@ function vacuum_command {
 
 function vacuum_tick {
     parameter mission.
-    local up is ship:up:vector.
+    local surface_up is ship:up:vector.
     local surface_velocity is ship:velocity:surface.
-    local lateral_velocity is surface_velocity-up*vdot(surface_velocity,up).
+    local lateral_velocity is surface_velocity-surface_up*vdot(surface_velocity,surface_up).
     local radius is -ship:body:position.
     local target_radius is mission["site"]:altitudeposition(mission["altitude"])-ship:body:position.
     set mission["distance"] to vang(radius,target_radius)*constant:degtorad*ship:body:radius.
@@ -153,7 +153,7 @@ function vacuum_approve_node {
 function vacuum_execute_node {
     parameter mission, maneuver, purpose.
     if not mission["telemetry"]["node_approved"] { return false. }
-    local config is mission["config"].
+    local pdi_config is mission["config"].
     local duration is pdi_node_duration(maneuver,mission["vehicle"]).
     local fingerprint is vacuum_node_fingerprint(maneuver).
     vacuum_phase(mission,"vacuum_node_coast",purpose).
@@ -199,7 +199,7 @@ function vacuum_execute_node {
     flight_log_event("pdi_node_complete","purpose="+purpose+"|residual="+maneuver:deltav:mag+"|duration="+(time:seconds-ignition_ut)).
     remove maneuver.
     set mission["telemetry"]["node_approved"] to false.
-    set mission["vehicle"] to pdi_vehicle_snapshot(mission["engines"],mission["fuel_parts"],config).
+    set mission["vehicle"] to pdi_vehicle_snapshot(mission["engines"],mission["fuel_parts"],pdi_config).
     return true.
 }
 
@@ -236,14 +236,14 @@ function vacuum_emergency {
 
 function vacuum_descent {
     parameter mission, plan.
-    local config is mission["config"].
+    local pdi_config is mission["config"].
     local ignition_ut is plan["ignition_ut"].
     set mission["telemetry"]["ignition_ut"] to ignition_ut.
     set mission["telemetry"]["predicted_clearance"] to plan["clearance"].
     // Re-converge against the actual post-node orbit: a finite burn does not
     // reproduce KSP's instantaneous maneuver prediction exactly.
-    local target is pdi_live_target(mission["site"],mission["altitude"],config).
-    local solution is pdi_solve(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),target,mission["vehicle"],config).
+    local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+    local solution is pdi_solve(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),landing_target,mission["vehicle"],pdi_config).
     vacuum_solver_telemetry(mission,solution).
     if solution["valid"] and solution["converged"] and time:seconds < ignition_ut-10 {
         vacuum_accept_solution(mission,solution,ignition_ut).
@@ -257,14 +257,14 @@ function vacuum_descent {
     until not mission["running"] {
         if mission["cancel"] { vacuum_stop(mission,false,"pilot_cancelled"). return. }
         local now is time:seconds.
-        local up is ship:up:vector.
+        local surface_up is ship:up:vector.
         local surface_velocity is ship:velocity:surface.
-        local vertical_speed is vdot(surface_velocity,up).
-        local horizontal_speed is (surface_velocity-up*vertical_speed):mag.
+        local vertical_speed is vdot(surface_velocity,surface_up).
+        local horizontal_speed is (surface_velocity-surface_up*vertical_speed):mag.
         local clearance is pdi_ground_clearance(mission["bounds"]).
         local gravity is ship:body:mu/(ship:body:radius+ship:altitude)^2.
         if now >= next_vehicle and not mission["flip_committed"] {
-            set mission["vehicle"] to pdi_vehicle_snapshot(mission["engines"],mission["fuel_parts"],config).
+            set mission["vehicle"] to pdi_vehicle_snapshot(mission["engines"],mission["fuel_parts"],pdi_config).
             set next_vehicle to now+1.
         }
         local available is mission["vehicle"]["thrust"]/max(0.001,ship:mass).
@@ -289,32 +289,32 @@ function vacuum_descent {
         }
         if mission["phase"] = "vacuum_pdi" {
             local target_offset is mission["site"]:altitudeposition(mission["altitude"])-ship:position.
-            local range is (target_offset-up*vdot(target_offset,up)):mag.
+            local range is (target_offset-surface_up*vdot(target_offset,surface_up)):mag.
             // Position, velocity and altitude must all be inside the terminal
             // capture region. Time-to-go alone cannot establish safe handover.
-            if clearance < config["handover_altitude"]*1.6 and range < config["handover_distance"] and
-                surface_velocity:mag < config["handover_speed"] and vang(ship:facing:vector,up) < 45 {
+            if clearance < pdi_config["handover_altitude"]*1.6 and range < pdi_config["handover_distance"] and
+                surface_velocity:mag < pdi_config["handover_speed"] and vang(ship:facing:vector,surface_up) < 45 {
                 vacuum_phase(mission,"vacuum_translate","terminal position capture").
                 gear on. brakes on.
             }else if now >= next_guidance {
                 local frame is pdi_frame().
                 local state is pdi_live_state(frame).
-                set target to pdi_live_target(mission["site"],mission["altitude"],config).
+                set landing_target to pdi_live_target(mission["site"],mission["altitude"],pdi_config).
                 local command is mission["command"].
                 // UPFG's linear tangent law is one continuous burn. Updating
                 // its internal range bias every tick made this craft's late
                 // solution oscillate. Validate the accepted trajectory using
                 // measured mass/state; retain its continuous steering only
                 // while that independent prediction remains inside capture.
-                local prediction is pdi_command_predict(state,mission["vehicle"],command,config["predictor_steps"]*2).
+                local prediction is pdi_command_predict(state,mission["vehicle"],command,pdi_config["predictor_steps"]*2).
                 local acceptable is prediction["valid"].
                 local position_error is 1e9.
                 local velocity_error is 1e9.
                 if acceptable {
-                    local arrival is pdi_target_at(target,state["ut"]+command["tgo"]-(state["ut"]-command["ut"])).
+                    local arrival is pdi_target_at(landing_target,state["ut"]+command["tgo"]-(state["ut"]-command["ut"])).
                     set position_error to (prediction["r"]-arrival["r"]):mag.
                     set velocity_error to (prediction["v"]-arrival["v"]):mag.
-                    set acceptable to position_error < config["live_position_tolerance"] and velocity_error < config["live_velocity_tolerance"].
+                    set acceptable to position_error < pdi_config["live_position_tolerance"] and velocity_error < pdi_config["live_velocity_tolerance"].
                     set mission["telemetry"]["position_error"] to position_error.
                     set mission["telemetry"]["velocity_error"] to velocity_error.
                     set mission["telemetry"]["predicted_final_mass"] to prediction["mass"].
@@ -324,14 +324,14 @@ function vacuum_descent {
                     set mission["solver_reason"] to "command_validated".
                 }else{ set mission["solver_reason"] to prediction["reason"]. }
                 if acceptable and now >= next_terrain {
-                    local predicted_clearance is pdi_path_clearance(prediction["path"],state["ut"],config).
+                    local predicted_clearance is pdi_path_clearance(prediction["path"],state["ut"],pdi_config).
                     set mission["telemetry"]["predicted_clearance"] to predicted_clearance.
-                    if predicted_clearance < config["terrain_margin"] { set acceptable to false. vacuum_emergency(mission,"predicted_terrain_conflict"). }
+                    if predicted_clearance < pdi_config["terrain_margin"] { set acceptable to false. vacuum_emergency(mission,"predicted_terrain_conflict"). }
                     set next_terrain to time:seconds+2.
                 }
                 if acceptable { set mission["last_solution_ut"] to state["ut"]. }
-                if time:seconds-mission["last_solution_ut"] > config["maximum_solution_age"] { vacuum_emergency(mission,"stale_or_diverged_guidance"). }
-                set next_guidance to time:seconds+config["guidance_interval"].
+                if time:seconds-mission["last_solution_ut"] > pdi_config["maximum_solution_age"] { vacuum_emergency(mission,"stale_or_diverged_guidance"). }
+                set next_guidance to time:seconds+pdi_config["guidance_interval"].
             }
             if mission["phase"] = "vacuum_pdi" {
                 local command is mission["command"].
@@ -341,8 +341,8 @@ function vacuum_descent {
             }
         }
         if mission["phase"] = "vacuum_emergency_brake" {
-            local requested is up*(gravity+max(0,-vertical_speed)*0.8)-(surface_velocity-up*vertical_speed)*0.25.
-            local acceleration is pdi_vertical_priority(up,requested,available,70).
+            local requested is surface_up*(gravity+max(0,-vertical_speed)*0.8)-(surface_velocity-surface_up*vertical_speed)*0.25.
+            local acceleration is pdi_vertical_priority(surface_up,requested,available,70).
             vacuum_command(mission,acceleration,acceleration:mag/max(0.001,available)).
             if horizontal_speed < 20 and abs(vertical_speed) < 10 {
                 set mission["site"] to latlng(ship:geoposition:lat,ship:geoposition:lng).
@@ -355,22 +355,22 @@ function vacuum_descent {
         if mission["phase"] = "vacuum_translate" {
             gear on. brakes on.
             local offset is mission["site"]:altitudeposition(mission["altitude"])-ship:position.
-            local terminal is pdi_terminal_command(offset,surface_velocity,up,clearance,gravity,available,config).
-            set mission["desired_vs"] to terminal["desired_vs"].
-            set mission["telemetry"]["saturated"] to terminal["saturated"].
-            local thrust_command is terminal["acceleration"].
+            local terminal_command is pdi_terminal_command(offset,surface_velocity,surface_up,clearance,gravity,available,pdi_config).
+            set mission["desired_vs"] to terminal_command["desired_vs"].
+            set mission["telemetry"]["saturated"] to terminal_command["saturated"].
+            local thrust_command is terminal_command["acceleration"].
             vacuum_command(mission,thrust_command,thrust_command:mag/max(0.001,available)).
             // Establish wheel heading and roll before committing engine cutoff.
             if thrust_command:mag > 0.01 {
                 local wheel_top is heading(mission["heading"],0):vector*-1.
                 set dap["vector"]["targetVector"] to lookdirup(thrust_command:normalized,wheel_top).
             }
-            local ready is pdi_flip_gate(clearance,horizontal_speed,vertical_speed,terminal["distance"],
-                vang(ship:facing:vector,up),ship:angularvel:mag*constant:radtodeg,ship:status = "LANDED",config).
+            local ready is pdi_flip_gate(clearance,horizontal_speed,vertical_speed,terminal_command["distance"],
+                vang(ship:facing:vector,surface_up),ship:angularvel:mag*constant:radtodeg,ship:status = "LANDED",pdi_config).
             set mission["telemetry"]["flip_ready"] to ready.
             if ready { if flip_since < 0 { set flip_since to now. } }
             else { set flip_since to -1. }
-            if flip_since >= 0 and now-flip_since >= config["flip_stable_time"] {
+            if flip_since >= 0 and now-flip_since >= pdi_config["flip_stable_time"] {
                 set mission["flip_committed"] to true.
                 set mission["pitch_target"] to pitch_for().
                 set dapthrottle to 0.
@@ -385,13 +385,13 @@ function vacuum_descent {
             set dapthrottle to 0.
             nervsoff().
             gear on. brakes on.
-            set mission["pitch_target"] to changeRate(mission["pitch_target"],config["gear_pitch"],min(0.1,max(0.01,dap["dt"])),config["flip_pitch_rate"]).
+            set mission["pitch_target"] to changeRate(mission["pitch_target"],pdi_config["gear_pitch"],min(0.1,max(0.01,dap["dt"])),pdi_config["flip_pitch_rate"]).
             set dap["vector"]["targetVector"] to heading(mission["heading"],mission["pitch_target"],0):vector.
             local settled is ship:status = "LANDED" and surface_velocity:mag < 0.8 and clearance < 1.5 and
-                abs(pitch_for()-config["gear_pitch"]) < config["landed_pitch_tolerance"] and abs(roll_for()) < 8.
+                abs(pitch_for()-pdi_config["gear_pitch"]) < pdi_config["landed_pitch_tolerance"] and abs(roll_for()) < 8.
             if settled { if landed_since < 0 { set landed_since to now. } }
             else { set landed_since to -1. }
-            if landed_since >= 0 and now-landed_since >= config["landed_dwell"] {
+            if landed_since >= 0 and now-landed_since >= pdi_config["landed_dwell"] {
                 vacuum_tick(mission).
                 local success is not mission["diverted"].
                 local reason is "gear_touchdown".
@@ -427,7 +427,7 @@ function pdi_run {
         }
     }
     if not coordinates["valid"] { print "PDI target cancelled or invalid.". return. }
-    local config is pdi_defaults().
+    local pdi_config is pdi_defaults().
     local site is latlng(coordinates["lat"],coordinates["lng"]).
     if landing_target_mode = "convenient" { set site to latlng(ship:geoposition:lat,ship:geoposition:lng). }
     local terrain_altitude is site:terrainheight.
@@ -457,8 +457,8 @@ function pdi_run {
     local cancel is gui:addbutton("Abort PDI / release controls").
     local data is lex().
     for field in POS_LOG_PDI_FIELDS { data:add(field,0). }
-    local mission is lex("config",config,"site",site,"altitude",terrain_altitude,"heading",target_landing_heading,
-        "engines",engines,"fuel_parts",fuel_parts,"vehicle",pdi_vehicle_snapshot(engines,fuel_parts,config),
+    local mission is lex("config",pdi_config,"site",site,"altitude",terrain_altitude,"heading",target_landing_heading,
+        "engines",engines,"fuel_parts",fuel_parts,"vehicle",pdi_vehicle_snapshot(engines,fuel_parts,pdi_config),
         "bounds",ship:bounds,"running",true,"cancel",false,"diverted",false,"flip_committed",false,
         "phase","vacuum_plan","reason","planning","solver_reason","not_started","telemetry",data,
         "distance",0,"clearance",0,"desired_vs",0,"stopping_distance",0,"pitch_target",90,
@@ -466,7 +466,7 @@ function pdi_run {
     set cancel:onclick to { set mission["cancel"] to true. }.
     gui:show().
     flight_log_set_vacuum_target(site,terrain_altitude,target_landing_heading).
-    if engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*config["minimum_twr"] or
+    if engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
         ship:mass <= mission["vehicle"]["reserve_mass"] {
         vacuum_stop(mission,false,"insufficient_nerv_thrust_or_fuel_reserve"). return.
     }
@@ -475,11 +475,11 @@ function pdi_run {
     local plan is lex().
     until deorbit_complete or not mission["running"] {
         if mission["cancel"] { vacuum_stop(mission,false,"pilot_cancelled"). return. }
-        local target is pdi_live_target(mission["site"],mission["altitude"],config).
+        local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
         local plane_pending is false.
         if landing_target_mode = "coordinate" {
             vacuum_phase(mission,"vacuum_plane_plan","checking landing-site orbital plane").
-            local plane is pdi_plane_plan(target,mission["vehicle"],config).
+            local plane is pdi_plane_plan(landing_target,mission["vehicle"],pdi_config).
             if not plane["valid"] { vacuum_stop(mission,false,plane["reason"]). return. }
             set data["plane_error"] to plane["plane_error"].
             if plane["needed"] {
@@ -496,7 +496,7 @@ function pdi_run {
         // Recompute after each real plane burn, not its instantaneous preview.
         if not plane_pending {
             vacuum_phase(mission,"vacuum_deorbit_plan","solving deorbit and powered arrival").
-            set plan to pdi_plan_deorbit(target,mission["altitude"],mission["vehicle"],config,landing_target_mode = "convenient").
+            set plan to pdi_plan_deorbit(landing_target,mission["altitude"],mission["vehicle"],pdi_config,landing_target_mode = "convenient").
             if not plan["valid"] { vacuum_stop(mission,false,plan["reason"]). return. }
             if plan:haskey("site") {
                 set mission["site"] to plan["site"]. set mission["altitude"] to plan["altitude"].

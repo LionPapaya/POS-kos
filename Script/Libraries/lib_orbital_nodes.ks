@@ -62,8 +62,8 @@ function pos_plan_inclination {
     local result is lex("valid",false,"reason","invalid_inclination").
     if hasnode { set result["reason"] to "existing_maneuver_nodes". return result. }
     if target_inclination < 0 or target_inclination > 180 { return result. }
-    local north is (latlng(90,0):position-ship:body:position):normalized.
-    local crossing_normal is north.
+    local body_north is (latlng(90,0):position-ship:body:position):normalized.
+    local crossing_normal is body_north.
     local target_plane_mode is target_normal:mag > 0.5.
     if target_plane_mode { set crossing_normal to target_normal:normalized. }
     local crossing is pos_plane_crossing(crossing_normal,node_type,lead_time).
@@ -80,10 +80,10 @@ function pos_plan_inclination {
     }else{
         local node_site is ship:body:geopositionof(r+ship:body:position).
         local east is node_site:velocity:orbit:normalized.
-        if east:mag < 0.5 { set east to vcrs(north,r):normalized. }
+        if east:mag < 0.5 { set east to vcrs(body_north,r):normalized. }
         local north_sign is -1.
         if crossing["ascending"] { set north_sign to 1. }
-        set target_tangent to east*cos(target_inclination)+north*north_sign*sin(target_inclination).
+        set target_tangent to east*cos(target_inclination)+body_north*north_sign*sin(target_inclination).
     }
     local target_velocity is r:normalized*radial_speed+target_tangent:normalized*tangent:mag.
     local maneuver is pos_node_from_vector(burn_ut,target_velocity-vel).
