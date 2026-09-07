@@ -328,6 +328,7 @@ function vacuum_descent {
     local next_terrain is time:seconds.
     local flip_since is -1.
     local landed_since is -1.
+    local ignition_alignment_wait_logged is false.
     until not mission["running"] {
         if mission["cancel"] { vacuum_stop(mission,false,"pilot_cancelled"). return. }
         local now is time:seconds.
@@ -351,11 +352,27 @@ function vacuum_descent {
         }
         if mission["phase"] = "vacuum_coast" {
             local command is mission["command"].
-            local thrust_direction is command["lambda"]-command["lambda_dot"]*command["jol"].
-            vacuum_command(mission,pdi_to_raw(thrust_direction,pdi_frame()),0).
+            // Track the tangent steering law at the current coast time.  The
+            // previous implementation held the t=0 vector for the entire
+            // coast, so the vessel could reach ignition pointing at a stale
+            // direction while UPFG immediately requested a large reversal.
+            local command_elapsed is max(0,now-command["ut"]).
+            local thrust_direction is command["lambda"]+command["lambda_dot"]*(command_elapsed-command["jol"]).
+            local coast_direction is pdi_to_raw(thrust_direction,pdi_frame()).
+            vacuum_command(mission,coast_direction,0).
             if now >= ignition_ut {
-                if vang(pdi_to_raw(thrust_direction,pdi_frame()),ship:facing:vector) > 8 { vacuum_emergency(mission,"pdi_ignition_misaligned"). }
-                else {
+                local ignition_alignment_error is vang(coast_direction,ship:facing:vector).
+                if ignition_alignment_error > 8 {
+                    if not ignition_alignment_wait_logged {
+                        flight_log_event("pdi_ignition_alignment_wait","planned_ut="+ignition_ut+
+                            "|actual_ut="+now+"|error_deg="+ignition_alignment_error).
+                        set ignition_alignment_wait_logged to true.
+                    }
+                }else {
+                    if ignition_alignment_wait_logged {
+                        flight_log_event("pdi_ignition_alignment_ready","actual_ut="+now+
+                            "|delay="+(now-ignition_ut)+"|error_deg="+ignition_alignment_error).
+                    }
                     vacuum_phase(mission,"vacuum_pdi","guided NERV powered descent").
                     flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+now).
                 }
