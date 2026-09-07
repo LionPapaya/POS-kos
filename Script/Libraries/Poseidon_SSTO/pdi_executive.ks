@@ -290,10 +290,10 @@ function vacuum_descent {
         }
         if mission["phase"] = "vacuum_pdi" {
             local target_offset is mission["site"]:altitudeposition(mission["altitude"])-ship:position.
-            local range is (target_offset-surface_up*vdot(target_offset,surface_up)):mag.
+            local range_to_tgt is (target_offset-surface_up*vdot(target_offset,surface_up)):mag.
             // Position, velocity and altitude must all be inside the terminal
             // capture region. Time-to-go alone cannot establish safe handover.
-            if clearance < pdi_config["handover_altitude"]*1.6 and range < pdi_config["handover_distance"] and
+            if clearance < pdi_config["handover_altitude"]*1.6 and range_to_tgt < pdi_config["handover_distance"] and
                 surface_velocity:mag < pdi_config["handover_speed"] and vang(ship:facing:vector,surface_up) < 45 {
                 vacuum_phase(mission,"vacuum_translate","terminal position capture").
                 gear on. brakes on.
@@ -433,10 +433,11 @@ function pdi_run {
     if landing_target_mode = "convenient" { set site to latlng(ship:geoposition:lat,ship:geoposition:lng). }
     local terrain_altitude is site:terrainheight.
     if target_altitude_override >= 0 { set terrain_altitude to target_altitude_override. }
-    if not defined vacuum_landing_active { global vacuum_landing_active is true. }
-    else { set vacuum_landing_active to true. }
-    if not defined rapier_mode { global rapier_mode is "off". }
-    if not defined POS_LOGGING_ENABLED { global POS_LOGGING_ENABLED is false. }
+    if not (defined vacuum_landing_active) { 
+        global vacuum_landing_active is true. 
+    } else { set vacuum_landing_active to true. }
+    if not (defined rapier_mode) { global rapier_mode is "off". }
+    if not (defined POS_LOGGING_ENABLED) { global POS_LOGGING_ENABLED is false. }
     flight_log_begin("vacuum_landing").
     rapiersoff(). nervson().
     sas off. rcs on.
@@ -453,9 +454,9 @@ function pdi_run {
         for resource in part:resources { if resource:name = "LiquidFuel" { set contains_fuel to true. } }
         if contains_fuel { fuel_parts:add(part). }
     }
-    local gui is GUI(470,220).
-    local display is gui:addlabel("Preparing Poseidon PDI").
-    local cancel is gui:addbutton("Abort PDI / release controls").
+    local gui_ is GUI(470,220).
+    local display is gui_:addlabel("Preparing Poseidon PDI").
+    local cancel is gui_:addbutton("Abort PDI / release controls").
     local data is lex().
     for field in POS_LOG_PDI_FIELDS { data:add(field,0). }
     local mission is lex("config",pdi_config,"site",site,"altitude",terrain_altitude,"heading",target_landing_heading,
@@ -463,9 +464,9 @@ function pdi_run {
         "bounds",ship:bounds,"running",true,"cancel",false,"diverted",false,"flip_committed",false,
         "phase","vacuum_plan","reason","planning","solver_reason","not_started","telemetry",data,
         "distance",0,"clearance",0,"desired_vs",0,"stopping_distance",0,"pitch_target",90,
-        "last_solution_ut",time:seconds,"command",lex(),"next_display",0,"gui",gui,"display",display).
+        "last_solution_ut",time:seconds,"command",lex(),"next_display",0,"gui",gui_,"display",display).
     set cancel:onclick to { set mission["cancel"] to true. }.
-    gui:show().
+    gui_:show().
     flight_log_set_vacuum_target(site,terrain_altitude,target_landing_heading).
     if nerv_engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
         ship:mass <= mission["vehicle"]["reserve_mass"] {
@@ -480,6 +481,7 @@ function pdi_run {
         local plane_pending is false.
         if landing_target_mode = "coordinate" {
             set display:text to "Checking the landing-site plane. A map node is provisional until its review window appears.".
+            vacuum_phase(mission,"vacuum_plane_plan","checking landing-site orbital plane").
             vacuum_phase(mission,"vacuum_plane_plan","checking landing-site orbital plane").
             local plane is pdi_plane_plan(landing_target,mission["vehicle"],pdi_config).
             if not plane["valid"] { vacuum_stop(mission,false,plane["reason"]). return. }
