@@ -62,34 +62,34 @@ function pdi_gravity {
 function pdi_target_at {
     parameter pdi_target, ut.
     local angle is (ut-pdi_target["ut"])*pdi_target["omega"]*constant:radtodeg.
-    local r is pdi_rotate(pdi_target["r"],V(0,0,1),angle).
-    local vel is pdi_cross(V(0,0,pdi_target["omega"]),r) + r:normalized*pdi_target["vs"].
-    return lex("r",r,"v",vel).
+    local trajectory_position is pdi_rotate(pdi_target["r"],V(0,0,1),angle).
+    local vel is pdi_cross(V(0,0,pdi_target["omega"]),trajectory_position) + trajectory_position:normalized*pdi_target["vs"].
+    return lex("r",trajectory_position,"v",vel).
 }
 
 function pdi_coast {
-    parameter r, vel, duration, mu, steps is 32.
+    parameter trajectory_position, vel, duration, mu, steps is 32.
     // RK4 two-body propagation. Used only on bounded same-SOI coast arcs.
     local dt is duration/max(1,steps).
     local i is 0.
     until i >= steps {
-        local a1 is pdi_gravity(r,mu).
+        local a1 is pdi_gravity(trajectory_position,mu).
         local v2 is vel+a1*dt/2.
-        local a2 is pdi_gravity(r+vel*dt/2,mu).
+        local a2 is pdi_gravity(trajectory_position+vel*dt/2,mu).
         local v3 is vel+a2*dt/2.
-        local a3 is pdi_gravity(r+v2*dt/2,mu).
+        local a3 is pdi_gravity(trajectory_position+v2*dt/2,mu).
         local v4 is vel+a3*dt.
-        local a4 is pdi_gravity(r+v3*dt,mu).
-        set r to r+(vel+2*v2+2*v3+v4)*dt/6.
+        local a4 is pdi_gravity(trajectory_position+v3*dt,mu).
+        set trajectory_position to trajectory_position+(vel+2*v2+2*v3+v4)*dt/6.
         set vel to vel+(a1+2*a2+2*a3+a4)*dt/6.
         set i to i+1.
     }
-    return lex("r",r,"v",vel).
+    return lex("r",trajectory_position,"v",vel).
 }
 
 function pdi_predict_powered {
     parameter state, vehicle, duration, throttle_set, lambda, lambda_dot, jol, steps.
-    local r is state["r"].
+    local trajectory_position is state["r"].
     local vel is state["v"].
     local pdi_mass is state["mass"].
     local force is vehicle["thrust"]*throttle_set.
@@ -101,33 +101,33 @@ function pdi_predict_powered {
     local vgrav is V(0,0,0).
     local rthrust is V(0,0,0).
     local vthrust is V(0,0,0).
-    local min_radius is r:mag.
-    result["path"]:add(lex("t",0,"r",r,"v",vel)).
+    local min_radius is trajectory_position:mag.
+    result["path"]:add(lex("t",0,"r",trajectory_position,"v",vel)).
     local i is 0.
     until i >= steps {
         local mid_time is (i+0.5)*dt.
-        local direction is lambda+lambda_dot*(mid_time-jol).
-        if direction:mag < 0.000001 {
+        local thrust_direction is lambda+lambda_dot*(mid_time-jol).
+        if thrust_direction:mag < 0.000001 {
             set result["reason"] to "zero_thrust_vector".
             return result.
         }
-        local accel is direction:normalized*force/(pdi_mass-flow*mid_time).
-        local grav is pdi_gravity(r,vehicle["mu"]).
-        local mid_r is r+vel*dt/2+(grav+accel)*dt^2/8.
+        local accel is thrust_direction:normalized*force/(pdi_mass-flow*mid_time).
+        local grav is pdi_gravity(trajectory_position,vehicle["mu"]).
+        local mid_r is trajectory_position+vel*dt/2+(grav+accel)*dt^2/8.
         set grav to pdi_gravity(mid_r,vehicle["mu"]).
-        set r to r+vel*dt+(grav+accel)*dt^2/2.
+        set trajectory_position to trajectory_position+vel*dt+(grav+accel)*dt^2/2.
         set vel to vel+(grav+accel)*dt.
         set rgrav to rgrav+vgrav*dt+grav*dt^2/2.
         set vgrav to vgrav+grav*dt.
         set rthrust to rthrust+vthrust*dt+accel*dt^2/2.
         set vthrust to vthrust+accel*dt.
-        set min_radius to min(min_radius,min(r:mag,mid_r:mag)).
-        result["path"]:add(lex("t",(i+1)*dt,"r",r,"v",vel)).
+        set min_radius to min(min_radius,min(trajectory_position:mag,mid_r:mag)).
+        result["path"]:add(lex("t",(i+1)*dt,"r",trajectory_position,"v",vel)).
         set i to i+1.
     }
     set result["valid"] to true.
     set result["reason"] to "predicted".
-    result:add("r",r).
+    result:add("r",trajectory_position).
     result:add("v",vel).
     result:add("rgrav",rgrav).
     result:add("vgrav",vgrav).

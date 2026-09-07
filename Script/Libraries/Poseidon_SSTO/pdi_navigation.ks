@@ -53,11 +53,11 @@ function pdi_node_raw_state {
     // resulting two-body arc.  This keeps deorbit targeting tied to exactly
     // the node the pilot reviews in the map.
     if ut < maneuver:time { return lex("valid",false,"reason","before_maneuver"). }
-    local r_ is positionat(ship,maneuver:time)-ship:body:position.
+    local node_position is positionat(ship,maneuver:time)-ship:body:position.
     local vel is velocityat(ship,maneuver:time):orbit+maneuver:deltav.
     local duration is ut-maneuver:time.
     local steps is max(12,min(120,floor(duration/30)+1)).
-    local propagated is pdi_coast(r_,vel,duration,ship:body:mu,steps).
+    local propagated is pdi_coast(node_position,vel,duration,ship:body:mu,steps).
     return lex("valid",true,"reason","propagated","r",propagated["r"],"v",propagated["v"],"ut",ut).
 }
 
@@ -78,10 +78,10 @@ function pdi_live_target {
 }
 
 function pdi_vehicle_snapshot {
-    parameter engines, fuel_parts, pdi_config.
+    parameter nerv_engines, fuel_parts, pdi_config.
     local thrust_available is 0.
     local flow is 0.
-    for engine in engines {
+    for engine in nerv_engines {
         if engine:ignition and not engine:flameout {
             local force is engine:availablethrust.
             if engine:vacuumisp > 0 {
@@ -106,16 +106,16 @@ function pdi_vehicle_snapshot {
 }
 
 function pdi_ground_clearance {
-    parameter bounds_.
+    parameter vessel_bounds.
     local terrain is ship:geoposition:terrainheight.
     if ship:body:hasocean { set terrain to max(0,terrain). }
-    return max(0,bounds_:bottomalt-terrain).
+    return max(0,vessel_bounds:bottomalt-terrain).
 }
 
 function pdi_path_clearance {
-    parameter path_, start_ut, pdi_config.
+    parameter trajectory_path, start_ut, pdi_config.
     local minimum is 1e9.
-    for sample in path_ {
+    for sample in trajectory_path {
         local frame is pdi_frame().
         // Terrain is fixed to the rotating body, not the inertial trajectory.
         local angle is -(start_ut+sample["t"]-frame["ut"])*frame["omega"]*constant:radtodeg.
@@ -130,19 +130,19 @@ function pdi_path_clearance {
 
 function pdi_next_site_pass {
     parameter landing_target, minimum_ut.
-    local period is ship:orbit:period.
+    local orbit_period is ship:orbit:period.
     local best_ut is minimum_ut.
     local best_error is 180.
     local i is 0.
     until i > 192 {
-        local ut is minimum_ut+2*period*i/192.
+        local ut is minimum_ut+2*orbit_period*i/192.
         local state is pdi_future_state(ut,ship:mass).
         local arrival is pdi_target_at(landing_target,ut).
         local error_angle is vang(state["r"],arrival["r"]).
         if error_angle < best_error { set best_error to error_angle. set best_ut to ut. }
         set i to i+1.
     }
-    local interval is period/96.
+    local interval is orbit_period/96.
     local iteration is 0.
     until iteration >= 12 {
         local candidates is list(max(minimum_ut,best_ut-interval),best_ut+interval).
@@ -282,9 +282,9 @@ function pdi_plan_deorbit {
     parameter landing_target, landing_altitude, vehicle, pdi_config, convenient is false.
     local result is lex("valid",false,"reason","deorbit_unsolved").
     if hasnode { set result["reason"] to "existing_maneuver_nodes". return result. }
-    local period is ship:orbit:period.
-    local pass is pdi_next_site_pass(landing_target,time:seconds+pdi_config["node_lead_time"]+period/2).
-    local node_ut is max(time:seconds+pdi_config["node_lead_time"],pass["ut"]-period*0.37).
+    local orbit_period is ship:orbit:period.
+    local pass is pdi_next_site_pass(landing_target,time:seconds+pdi_config["node_lead_time"]+orbit_period/2).
+    local node_ut is max(time:seconds+pdi_config["node_lead_time"],pass["ut"]-orbit_period*0.37).
     if convenient { set node_ut to time:seconds+pdi_config["node_lead_time"]. }
     local maneuver is node(node_ut,0,0,0).
     add maneuver.
@@ -324,9 +324,9 @@ function pdi_plan_deorbit {
         local angular_rate is pdi_cross(impact_state["r"],impact_state["v"]):mag/impact_state["r"]:mag^2.
         set angular_rate to angular_rate-landing_target["omega"]*vdot(orbit_normal,V(0,0,1)).
         if abs(angular_rate) < 0.000001 { break. }
-        local correction is pdi_clamp(angle*constant:degtorad/angular_rate,-period/8,period/8).
+        local correction is pdi_clamp(angle*constant:degtorad/angular_rate,-orbit_period/8,orbit_period/8).
         local next_ut is maneuver:time+correction.
-        if next_ut < time:seconds+pdi_config["node_lead_time"] { set next_ut to next_ut+period. }
+        if next_ut < time:seconds+pdi_config["node_lead_time"] { set next_ut to next_ut+orbit_period. }
         set maneuver:time to next_ut.
         set iteration to iteration+1.
         wait 0.
@@ -337,7 +337,7 @@ function pdi_plan_deorbit {
     }
     set impact_ut to pdi_node_radius_crossing(maneuver,ship:body:radius+landing_altitude).
     local duration is pdi_node_duration(maneuver,vehicle).
-    if impact_ut < 0 or duration > period*pdi_config["maximum_node_burn_fraction"] {
+    if impact_ut < 0 or duration > orbit_period*pdi_config["maximum_node_burn_fraction"] {
         remove maneuver. set result["reason"] to "deorbit_burn_or_intercept_invalid". return result.
     }
     local planned_mass is ship:mass*constant:e^(-maneuver:deltav:mag/vehicle["ve"]).

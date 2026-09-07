@@ -4,26 +4,26 @@ function pdi_terminal_command {
     parameter offset, surface_velocity, terminal_up, clearance, gravity, available, terminal_config.
     local horizontal_velocity is surface_velocity-terminal_up*vdot(surface_velocity,terminal_up).
     local horizontal_offset is offset-terminal_up*vdot(offset,terminal_up).
-    local distance is horizontal_offset:mag.
+    local terminal_distance is horizontal_offset:mag.
     local speed is horizontal_velocity:mag.
     local vertical_speed is vdot(surface_velocity,terminal_up).
     local vertical_budget is max(0,available-gravity).
     local lateral_limit is min(terminal_config["maximum_lateral_acceleration"],sqrt(max(0,available^2-gravity^2))*0.8).
     local target_horizontal_velocity is V(0,0,0).
-    if distance > 0.3 {
-        local target_speed is min(terminal_config["maximum_translation_speed"],sqrt(2*lateral_limit*distance)*0.6).
+    if terminal_distance > 0.3 {
+        local target_speed is min(terminal_config["maximum_translation_speed"],sqrt(2*lateral_limit*terminal_distance)*0.6).
         // Linear capture close to the target avoids a discontinuous 1 m/s
         // velocity command at the deadband while trying to commit pitch-over.
-        set target_speed to min(target_speed,distance*0.35).
+        set target_speed to min(target_speed,terminal_distance*0.35).
         set target_horizontal_velocity to horizontal_offset:normalized*target_speed.
     }
     local lateral is pdi_limit((target_horizontal_velocity-horizontal_velocity)*terminal_config["terminal_velocity_gain"],lateral_limit).
-    local captured is distance <= terminal_config["capture_distance"] and speed <= terminal_config["capture_speed"].
+    local captured is terminal_distance <= terminal_config["capture_distance"] and speed <= terminal_config["capture_speed"].
     local desired_vs is 0.
     if captured {
         set desired_vs to -min(3,max(0.12,sqrt(max(0,clearance)*0.12))).
     }else{
-        local hold_height is max(terminal_config["capture_height"],min(terminal_config["handover_altitude"],distance*0.4+speed^2/max(0.1,2*lateral_limit))).
+        local hold_height is max(terminal_config["capture_height"],min(terminal_config["handover_altitude"],terminal_distance*0.4+speed^2/max(0.1,2*lateral_limit))).
         set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-8,3).
     }
     // Never demand a descent that consumes the remaining vertical stopping
@@ -33,18 +33,18 @@ function pdi_terminal_command {
     local vertical is gravity+(desired_vs-vertical_speed)*0.9.
     local requested is terminal_up*max(0,vertical)+lateral.
     local achieved is pdi_vertical_priority(terminal_up,requested,available,terminal_config["maximum_terminal_tilt"]).
-    return lex("acceleration",achieved,"desired_vs",desired_vs,"distance",distance,"horizontal_speed",speed,
+    return lex("acceleration",achieved,"desired_vs",desired_vs,"distance",terminal_distance,"horizontal_speed",speed,
         "captured",captured,"saturated",requested:mag > available or (achieved-requested):mag > 0.01,
         "vertical_margin",available-gravity).
 }
 
 function pdi_flip_gate {
-    parameter clearance, horizontal_speed, vertical_speed, distance, upright_error, angular_rate, landed, terminal_config.
+    parameter clearance, horizontal_speed, vertical_speed, terminal_distance, upright_error, angular_rate, landed, terminal_config.
     // Once this gate is accepted, the executive latches engine cutoff.
     // No powered arrest or automatic re-ignition is permitted after pitch-over.
     return (landed or clearance <= terminal_config["flip_clearance"]) and
         horizontal_speed <= terminal_config["flip_horizontal_speed"] and
         abs(vertical_speed) <= terminal_config["flip_vertical_speed"] and
-        distance <= terminal_config["capture_distance"] and
+        terminal_distance <= terminal_config["capture_distance"] and
         upright_error <= terminal_config["flip_upright_error"] and angular_rate < 2.
 }

@@ -24,14 +24,14 @@ function pos_node_from_vector {
 function pos_plane_crossing {
     parameter plane_normal, node_type, lead_time.
     local start_ut is time:seconds+lead_time.
-    local period is ship:orbit:period.
+    local orbit_period is ship:orbit:period.
     local result is lex("valid",false,"ut",0,"ascending",false,"reason","no_plane_crossing").
-    if ship:orbit:eccentricity >= 1 or period <= 0 { return result. }
+    if ship:orbit:eccentricity >= 1 or orbit_period <= 0 { return result. }
     local left_ut is start_ut.
     local left_side is vdot(positionat(ship,left_ut)-ship:body:position,plane_normal).
     local i is 1.
     until i > 96 {
-        local right_ut is start_ut+period*i/96.
+        local right_ut is start_ut+orbit_period*i/96.
         local right_side is vdot(positionat(ship,right_ut)-ship:body:position,plane_normal).
         local ascending is right_side > left_side.
         local selected is node_type = "Nearest" or (node_type = "Ascending" and ascending) or (node_type = "Descending" and not ascending).
@@ -69,23 +69,23 @@ function pos_plan_inclination {
     local crossing is pos_plane_crossing(crossing_normal,node_type,lead_time).
     if not crossing["valid"] { set result["reason"] to crossing["reason"]. return result. }
     local burn_ut is crossing["ut"].
-    local r is positionat(ship,burn_ut)-ship:body:position.
+    local node_position is positionat(ship,burn_ut)-ship:body:position.
     local vel is velocityat(ship,burn_ut):orbit.
-    local radial_speed is vdot(vel,r:normalized).
-    local tangent is vel-r:normalized*radial_speed.
+    local radial_speed is vdot(vel,node_position:normalized).
+    local tangent is vel-node_position:normalized*radial_speed.
     local target_tangent is V(0,0,0).
     if target_plane_mode {
-        set target_tangent to vcrs(target_normal,r):normalized.
+        set target_tangent to vcrs(target_normal,node_position):normalized.
         if vdot(target_tangent,tangent) < 0 { set target_tangent to -target_tangent. }
     }else{
-        local node_site is ship:body:geopositionof(r+ship:body:position).
+        local node_site is ship:body:geopositionof(node_position+ship:body:position).
         local east is node_site:velocity:orbit:normalized.
-        if east:mag < 0.5 { set east to vcrs(body_north,r):normalized. }
+        if east:mag < 0.5 { set east to vcrs(body_north,node_position):normalized. }
         local north_sign is -1.
         if crossing["ascending"] { set north_sign to 1. }
         set target_tangent to east*cos(target_inclination)+body_north*north_sign*sin(target_inclination).
     }
-    local target_velocity is r:normalized*radial_speed+target_tangent:normalized*tangent:mag.
+    local target_velocity is node_position:normalized*radial_speed+target_tangent:normalized*tangent:mag.
     local maneuver is pos_node_from_vector(burn_ut,target_velocity-vel).
     if not target_plane_mode and abs(maneuver:orbit:inclination-target_inclination) > 0.15 {
         remove maneuver.

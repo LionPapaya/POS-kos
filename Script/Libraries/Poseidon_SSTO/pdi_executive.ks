@@ -44,15 +44,15 @@ function vacuum_phase {
 }
 
 function vacuum_command {
-    parameter mission, direction, throttle_set.
-    if direction:mag < 0.0001 { set direction to ship:up:vector. }
-    set direction to direction:normalized.
-    set dap["vector"]["targetVector"] to direction.
+    parameter mission, thrust_direction, throttle_set.
+    if thrust_direction:mag < 0.0001 { set thrust_direction to ship:up:vector. }
+    set thrust_direction to thrust_direction:normalized.
+    set dap["vector"]["targetVector"] to thrust_direction.
     set dapthrottle to pdi_clamp(throttle_set,0,1).
     if mission["flip_committed"] { set dapthrottle to 0. }
-    set mission["telemetry"]["steer_x"] to direction:x.
-    set mission["telemetry"]["steer_y"] to direction:y.
-    set mission["telemetry"]["steer_z"] to direction:z.
+    set mission["telemetry"]["steer_x"] to thrust_direction:x.
+    set mission["telemetry"]["steer_y"] to thrust_direction:y.
+    set mission["telemetry"]["steer_z"] to thrust_direction:z.
 }
 
 function vacuum_tick {
@@ -277,10 +277,10 @@ function vacuum_descent {
         }
         if mission["phase"] = "vacuum_coast" {
             local command is mission["command"].
-            local direction is command["lambda"]-command["lambda_dot"]*command["jol"].
-            vacuum_command(mission,pdi_to_raw(direction,pdi_frame()),0).
+            local thrust_direction is command["lambda"]-command["lambda_dot"]*command["jol"].
+            vacuum_command(mission,pdi_to_raw(thrust_direction,pdi_frame()),0).
             if now >= ignition_ut {
-                if vang(pdi_to_raw(direction,pdi_frame()),ship:facing:vector) > 8 { vacuum_emergency(mission,"pdi_ignition_misaligned"). }
+                if vang(pdi_to_raw(thrust_direction,pdi_frame()),ship:facing:vector) > 8 { vacuum_emergency(mission,"pdi_ignition_misaligned"). }
                 else {
                     vacuum_phase(mission,"vacuum_pdi","guided NERV powered descent").
                     flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+now).
@@ -336,8 +336,8 @@ function vacuum_descent {
             if mission["phase"] = "vacuum_pdi" {
                 local command is mission["command"].
                 local elapsed is time:seconds-command["ut"].
-                local direction is command["lambda"]+command["lambda_dot"]*(elapsed-command["jol"]).
-                vacuum_command(mission,pdi_to_raw(direction,pdi_frame()),command["throttle"]).
+                local thrust_direction is command["lambda"]+command["lambda_dot"]*(elapsed-command["jol"]).
+                vacuum_command(mission,pdi_to_raw(thrust_direction,pdi_frame()),command["throttle"]).
             }
         }
         if mission["phase"] = "vacuum_emergency_brake" {
@@ -445,7 +445,7 @@ function pdi_run {
     set dap["vector"]["targetVector"] to ship:facing:vector.
     dap:set_vector_auto().
     wait 0.
-    local engines is ship:partstitledpattern("LV-N").
+    local nerv_engines is ship:partstitledpattern("LV-N").
     local fuel_parts is list().
     for part in ship:parts {
         local contains_fuel is false.
@@ -458,7 +458,7 @@ function pdi_run {
     local data is lex().
     for field in POS_LOG_PDI_FIELDS { data:add(field,0). }
     local mission is lex("config",pdi_config,"site",site,"altitude",terrain_altitude,"heading",target_landing_heading,
-        "engines",engines,"fuel_parts",fuel_parts,"vehicle",pdi_vehicle_snapshot(engines,fuel_parts,pdi_config),
+        "engines",nerv_engines,"fuel_parts",fuel_parts,"vehicle",pdi_vehicle_snapshot(nerv_engines,fuel_parts,pdi_config),
         "bounds",ship:bounds,"running",true,"cancel",false,"diverted",false,"flip_committed",false,
         "phase","vacuum_plan","reason","planning","solver_reason","not_started","telemetry",data,
         "distance",0,"clearance",0,"desired_vs",0,"stopping_distance",0,"pitch_target",90,
@@ -466,7 +466,7 @@ function pdi_run {
     set cancel:onclick to { set mission["cancel"] to true. }.
     gui:show().
     flight_log_set_vacuum_target(site,terrain_altitude,target_landing_heading).
-    if engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
+    if nerv_engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
         ship:mass <= mission["vehicle"]["reserve_mass"] {
         vacuum_stop(mission,false,"insufficient_nerv_thrust_or_fuel_reserve"). return.
     }
