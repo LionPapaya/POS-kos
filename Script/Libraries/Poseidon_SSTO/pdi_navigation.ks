@@ -146,12 +146,20 @@ function pdi_ground_clearance {
 }
 
 function pdi_path_clearance {
-    parameter trajectory_path, start_ut, pdi_config.
+    parameter trajectory_path, start_ut, pdi_config, maximum_samples is 0.
     local minimum is 1e9.
     // All samples use one inertial/raw transform.  Rebuilding it for every
     // sample was an expensive series of live kOS reads during planning.
     local frame is pdi_frame().
-    for sample in trajectory_path {
+    local count is trajectory_path:length.
+    if maximum_samples > 0 { set count to min(count,maximum_samples). }
+    local i is 0.
+    until i >= count {
+        // Retain both endpoints and spread the live samples across the entire
+        // remaining burn.  Planning continues to use every predictor sample.
+        local index is i.
+        if count > 1 and trajectory_path:length > count { set index to floor(i*(trajectory_path:length-1)/(count-1)+0.5). }
+        local sample is trajectory_path[index].
         // Terrain is fixed to the rotating body, not the inertial trajectory.
         local angle is -(start_ut+sample["t"]-frame["ut"])*frame["omega"]*constant:radtodeg.
         local body_fixed is pdi_rotate(sample["r"],V(0,0,1),angle).
@@ -159,6 +167,7 @@ function pdi_path_clearance {
         local terrain is location:terrainheight.
         if ship:body:hasocean { set terrain to max(0,terrain). }
         set minimum to min(minimum,sample["r"]:mag-ship:body:radius-terrain-pdi_config["hull_margin"]).
+        set i to i+1.
     }
     return minimum.
 }

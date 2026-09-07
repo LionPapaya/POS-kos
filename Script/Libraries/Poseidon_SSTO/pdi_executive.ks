@@ -357,12 +357,21 @@ function vacuum_descent {
                     set mission["solver_reason"] to "command_validated".
                 }else{ set mission["solver_reason"] to prediction["reason"]. }
                 if acceptable and now >= next_terrain {
-                    local predicted_clearance is pdi_path_clearance(prediction["path"],state["ut"],pdi_config).
+                    local terrain_scan_started is time:seconds.
+                    local predicted_clearance is pdi_path_clearance(prediction["path"],state["ut"],pdi_config,pdi_config["live_terrain_samples"]).
                     set mission["telemetry"]["predicted_clearance"] to predicted_clearance.
                     if predicted_clearance < pdi_config["terrain_margin"] { set acceptable to false. vacuum_emergency(mission,"predicted_terrain_conflict"). }
+                    local terrain_scan_duration is time:seconds-terrain_scan_started.
+                    if terrain_scan_duration > pdi_config["guidance_interval"] {
+                        flight_log_event("pdi_terrain_scan_slow","duration="+terrain_scan_duration+"|samples="+pdi_config["live_terrain_samples"]+"|clearance="+predicted_clearance).
+                    }
                     set next_terrain to time:seconds+2.
                 }
-                if acceptable { set mission["last_solution_ut"] to state["ut"]. }
+                // Record the completed validation time.  The former state
+                // timestamp could be several seconds old after terrain API
+                // calls, falsely tripping stale guidance immediately after
+                // ignition even though the command had validated correctly.
+                if acceptable { set mission["last_solution_ut"] to time:seconds. }
                 if time:seconds-mission["last_solution_ut"] > pdi_config["maximum_solution_age"] { vacuum_emergency(mission,"stale_or_diverged_guidance"). }
                 set next_guidance to time:seconds+pdi_config["guidance_interval"].
             }

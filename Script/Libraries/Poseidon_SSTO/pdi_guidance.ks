@@ -22,6 +22,7 @@ function pdi_defaults {
         "time_tolerance",0.5,"steering_tolerance",2,"convergence_passes",2,
         "guidance_interval",0.5,"live_iterations",3,"maximum_solution_age",3,
         "live_position_tolerance",250,"live_velocity_tolerance",2,
+        "live_terrain_samples",16,
         "handover_altitude",500,"handover_speed",30,"handover_distance",200,
         "handover_vertical_speed",-3,"terrain_margin",100,"hull_margin",25,
         "reserve_delta_v",180,"deorbit_depth",2500,"node_lead_time",600,
