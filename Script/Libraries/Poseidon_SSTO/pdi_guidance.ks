@@ -27,7 +27,10 @@ function pdi_defaults {
         "handover_vertical_speed",-3,"terrain_margin",100,"hull_margin",25,
         "reserve_delta_v",180,"deorbit_depth",2500,"node_lead_time",600,
         "node_time_iterations",10,"ignition_candidates",5,"plane_tolerance",0.5,
-        "node_completion_dv",0.03,"node_terminal_time",2,
+        // A node is an impulsive approximation.  Stop the finite correction
+        // before its low-throttle tail moves the vehicle far from that state;
+        // UPFG corrects the remaining residual from the measured state.
+        "node_completion_dv",0.3,"node_terminal_time",2,"post_node_position_tolerance",1000,
         "maximum_plane_burn_fraction",0.08,"maximum_node_burn_fraction",0.08,
         "maximum_translation_speed",25,"maximum_lateral_acceleration",2,
         "maximum_terminal_tilt",25,"terminal_velocity_gain",0.7,

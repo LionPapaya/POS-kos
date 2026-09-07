@@ -296,12 +296,17 @@ function vacuum_descent {
         if solution:haskey("position_error") { set post_node_position_error to solution["position_error"]. }
         if solution:haskey("velocity_error") { set post_node_velocity_error to solution["velocity_error"]. }
         if solution["valid"] and solution:haskey("position_error") and solution:haskey("velocity_error") {
-            set post_node_within_live_limits to post_node_position_error <= pdi_config["live_position_tolerance"] and
+            // The post-node state can differ from the instantaneous-node
+            // prediction by the finite burn's travel.  Permit this bounded
+            // handoff; powered descent applies the strict live limits after
+            // rebasing UPFG to the measured state.
+            set post_node_within_live_limits to post_node_position_error <= pdi_config["post_node_position_tolerance"] and
                 post_node_velocity_error <= pdi_config["live_velocity_tolerance"].
         }
         flight_log_event("pdi_post_node_solution","valid="+solution["valid"]+"|converged="+solution["converged"]+
             "|reason="+solution["reason"]+"|iterations="+solution["iterations"]+"|position_error="+post_node_position_error+
-            "|velocity_error="+post_node_velocity_error+"|within_live_limits="+post_node_within_live_limits+"|budget="+pdi_config["post_node_iterations"]).
+            "|velocity_error="+post_node_velocity_error+"|within_post_node_limits="+post_node_within_live_limits+
+            "|position_limit="+pdi_config["post_node_position_tolerance"]+"|budget="+pdi_config["post_node_iterations"]).
     }
     vacuum_solver_telemetry(mission,solution).
     if solution["valid"] and (solution["converged"] or post_node_within_live_limits) and
@@ -310,7 +315,7 @@ function vacuum_descent {
         set mission["pdi_internal"] to solution.
         if post_node_within_live_limits and not solution["converged"] {
             set mission["solver_reason"] to "post_node_command_within_live_limits".
-            flight_log_event("pdi_post_node_fallback","reason=within_live_limits|position_error="+solution["position_error"]+
+            flight_log_event("pdi_post_node_fallback","reason=within_post_node_limits|position_error="+solution["position_error"]+
                 "|velocity_error="+solution["velocity_error"]+"|ignition_ut="+ignition_ut).
         }
         if plan:haskey("immediate") {
