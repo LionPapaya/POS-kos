@@ -128,6 +128,7 @@ function vacuum_approve_node {
     local cancel is dialog:addbutton("Cancel program (keep node)").
     set cancel:onclick to { set decision to "cancel". }.
     dialog:show().
+    set mission["display"]:text to "Node ready. Use the separate review window to Execute, Replan, or Cancel.".
     set mission["telemetry"]["node_approved"] to false.
     set mission["telemetry"]["node_dv"] to maneuver:deltav:mag.
     vacuum_phase(mission,"vacuum_node_review",purpose+" approval required").
@@ -478,6 +479,7 @@ function pdi_run {
         local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
         local plane_pending is false.
         if landing_target_mode = "coordinate" {
+            set display:text to "Checking the landing-site plane. A map node is provisional until its review window appears.".
             vacuum_phase(mission,"vacuum_plane_plan","checking landing-site orbital plane").
             local plane is pdi_plane_plan(landing_target,mission["vehicle"],pdi_config).
             if not plane["valid"] { vacuum_stop(mission,false,plane["reason"]). return. }
@@ -495,6 +497,7 @@ function pdi_run {
         }
         // Recompute after each real plane burn, not its instantaneous preview.
         if not plane_pending {
+            set display:text to "Planning de-orbit and PDI ignition. The map node is provisional; wait for its review window.".
             vacuum_phase(mission,"vacuum_deorbit_plan","solving deorbit and powered arrival").
             set plan to pdi_plan_deorbit(landing_target,mission["altitude"],mission["vehicle"],pdi_config,landing_target_mode = "convenient").
             if not plan["valid"] { vacuum_stop(mission,false,plan["reason"]). return. }
