@@ -200,7 +200,6 @@ function vacuum_execute_node {
         vacuum_tick(mission).
         wait 0.
     }
-    local initial_dv is maneuver:deltav.
     local ignition_ut is time:seconds.
     local completed is false.
     vacuum_phase(mission,"vacuum_node_burn",purpose).
@@ -211,14 +210,24 @@ function vacuum_execute_node {
         if available < 0.01 { set dapthrottle to 0. return false. }
         local residual is maneuver:deltav.
         local throttle_set is min(1,residual:mag/available).
-        if vang(residual,ship:facing:vector) > 15 { set throttle_set to 0. }
+        local alignment_limit is 15.
+        if residual:mag < 1 {
+            // In the terminal correction, ask for no more than a half
+            // metre-per-second-scale impulse over node_terminal_time.  This
+            // avoids a late control tick consuming the old 0.3 m/s allowance.
+            set throttle_set to min(throttle_set,residual:mag/(available*pdi_config["node_terminal_time"])).
+            set alignment_limit to 3.
+        }
+        if vang(residual,ship:facing:vector) > alignment_limit { set throttle_set to 0. }
         vacuum_command(mission,residual,throttle_set).
         vacuum_tick(mission).
-        if residual:mag < 0.3 or vdot(initial_dv,residual) < 0 { set completed to true. }
+        // A residual that reverses direction is still correctable.  Continue
+        // the closed loop instead of accepting an overshoot.
+        if residual:mag < pdi_config["node_completion_dv"] { set completed to true. }
         wait 0.
     }
     set dapthrottle to 0.
-    flight_log_event("pdi_node_complete","purpose="+purpose+"|residual="+maneuver:deltav:mag+"|duration="+(time:seconds-ignition_ut)).
+    flight_log_event("pdi_node_complete","purpose="+purpose+"|residual="+maneuver:deltav:mag+"|target_residual="+pdi_config["node_completion_dv"]+"|duration="+(time:seconds-ignition_ut)).
     remove maneuver.
     set mission["telemetry"]["node_approved"] to false.
     set mission["vehicle"] to pdi_vehicle_snapshot(mission["engines"],mission["fuel_parts"],pdi_config).
