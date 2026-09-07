@@ -87,10 +87,16 @@ function vacuum_tick {
         ship:status = "LANDED",mission["pitch_target"]).
     flight_log_tick("vacuum_landing",mission["phase"],mission["reason"]).
     if time:seconds >= mission["next_display"] {
+        local ignition_status is "".
+        if mission["phase"] = "vacuum_coast" and mission["telemetry"]["ignition_ut"] > time:seconds {
+            set ignition_status to " | PDI ignition in "+round(mission["telemetry"]["ignition_ut"]-time:seconds,1)+" s".
+        }else if mission["phase"] = "vacuum_pdi" {
+            set ignition_status to " | PDI ignition: NOW".
+        }
         set mission["display"]:text to mission["phase"]+" | "+mission["reason"]+
             " | Range "+round(mission["distance"],1)+" m | Clearance "+round(mission["clearance"],1)+" m"+
             " | H "+round(lateral_velocity:mag,2)+" m/s | V "+round(ship:verticalspeed,2)+" m/s"+
-            " | PDI "+mission["solver_reason"]+" | Tgo "+round(mission["telemetry"]["tgo"],1)+" s".
+            " | PDI "+mission["solver_reason"]+" | Tgo "+round(mission["telemetry"]["tgo"],1)+" s"+ignition_status.
         set mission["next_display"] to time:seconds+0.5.
     }
 }
