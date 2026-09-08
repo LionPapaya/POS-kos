@@ -21,6 +21,10 @@ function pdi_defaults {
         "position_tolerance",15,"velocity_tolerance",0.6,
         "time_tolerance",0.5,"steering_tolerance",2,"convergence_passes",2,
         "guidance_interval",0.5,"live_iterations",3,"maximum_solution_age",3,
+        // Refresh the predicted ignition state shortly before the burn.  This
+        // gives attitude control a current tangent vector while retaining a
+        // bounded amount of coast-time solver work.
+        "coast_update_lead",90,"coast_update_interval",5,"coast_iterations",12,
         "live_position_tolerance",250,"live_velocity_tolerance",2,
         "live_terrain_samples",16,
         "handover_altitude",500,"handover_speed",30,"handover_distance",200,

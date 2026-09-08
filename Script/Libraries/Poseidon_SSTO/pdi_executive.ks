@@ -265,6 +265,50 @@ function vacuum_emergency {
     flight_log_event("pdi_fallback","reason="+reason+"|clearance="+mission["clearance"]+"|speed="+ship:velocity:surface:mag).
 }
 
+function vacuum_reconverge {
+    parameter mission, reason.
+    local pdi_config is mission["config"].
+    // First retain the requested landing site.  A fresh solve starts from the
+    // measured vehicle state, rather than from an invalidated tangent law.
+    flight_log_event("pdi_reconvergence_start","reason="+reason+"|target=requested").
+    local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+    local recovery_plan is pdi_suborbital_plan(landing_target,mission["vehicle"],pdi_config).
+    local retargeted is false.
+    if not recovery_plan["valid"] {
+        // The current ballistic impact point is the closest practical site
+        // when the original target is no longer reachable.  Solve and fully
+        // validate it before committing the mission to the diversion.
+        local alternate is pdi_suborbital_landing_site().
+        local alternate_target is pdi_live_target(alternate["site"],alternate["altitude"],pdi_config).
+        set recovery_plan to pdi_suborbital_plan(alternate_target,mission["vehicle"],pdi_config).
+        if recovery_plan["valid"] {
+            set mission["site"] to alternate["site"].
+            set mission["altitude"] to alternate["altitude"].
+            set mission["diverted"] to true.
+            set retargeted to true.
+            flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
+            flight_log_event("pdi_retarget","reason="+reason+"|lat="+mission["site"]:lat+
+                "|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+"|impact_ut="+alternate["impact_ut"]).
+        }
+    }
+    if not recovery_plan["valid"] {
+        flight_log_event("pdi_reconvergence_failed","reason="+reason+"|solver_reason="+recovery_plan["reason"]).
+        return false.
+    }
+    vacuum_accept_solution(mission,recovery_plan["solution"],time:seconds).
+    set mission["pdi_internal"] to recovery_plan["solution"].
+    vacuum_solver_telemetry(mission,recovery_plan["solution"]).
+    set mission["telemetry"]["predicted_clearance"] to recovery_plan["clearance"].
+    set mission["last_solution_ut"] to time:seconds.
+    set mission["solver_reason"] to "reconverged".
+    local target_label is "requested".
+    if retargeted { set target_label to "alternate". }
+    flight_log_event("pdi_reconverged","reason="+reason+"|target="+target_label+
+        "|tgo="+recovery_plan["solution"]["tgo"]+"|clearance="+recovery_plan["clearance"]+
+        "|position_error="+recovery_plan["position_error"]+"|velocity_error="+recovery_plan["velocity_error"]).
+    return true.
+}
+
 function pdi_is_suborbital {
     return ship:orbit:eccentricity >= 1 or ship:orbit:periapsis < ship:geoposition:terrainheight+500.
 }
@@ -329,6 +373,8 @@ function vacuum_descent {
     local flip_since is -1.
     local landed_since is -1.
     local ignition_alignment_wait_logged is false.
+    local next_coast_guidance is max(time:seconds,ignition_ut-pdi_config["coast_update_lead"]).
+    local coast_replan_logged is false.
     until not mission["running"] {
         if mission["cancel"] { vacuum_stop(mission,false,"pilot_cancelled"). return. }
         local now is time:seconds.
@@ -351,6 +397,33 @@ function vacuum_descent {
             vacuum_stop(mission,false,"no_nerv_thrust_manual_control"). return.
         }
         if mission["phase"] = "vacuum_coast" {
+            if now >= ignition_ut-pdi_config["coast_update_lead"] and now >= next_coast_guidance {
+                // Propagate from the measured coast state to the scheduled
+                // ignition instant, then update the attitude command from
+                // that forecast.  POSITIONAT cannot include the finite node
+                // burn, so it would repeat the original alignment error.
+                local frame is pdi_frame().
+                local live_state is pdi_live_state(frame).
+                local coast_duration is max(0,ignition_ut-now).
+                local forecast is pdi_coast(live_state["r"],live_state["v"],coast_duration,mission["vehicle"]["mu"],32).
+                local ignition_state is lex("r",forecast["r"],"v",forecast["v"],"mass",ship:mass,"ut",ignition_ut).
+                set landing_target to pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+                local saved_iterations is pdi_config["planning_iterations"].
+                set pdi_config["planning_iterations"] to pdi_config["coast_iterations"].
+                local coast_solution is pdi_solve(ignition_state,landing_target,mission["vehicle"],pdi_config).
+                set pdi_config["planning_iterations"] to saved_iterations.
+                if coast_solution["valid"] {
+                    vacuum_accept_solution(mission,coast_solution,ignition_ut).
+                    set mission["pdi_internal"] to coast_solution.
+                    vacuum_solver_telemetry(mission,coast_solution).
+                    if not coast_replan_logged {
+                        flight_log_event("pdi_coast_replan","lead_time="+coast_duration+"|iterations="+
+                            coast_solution["iterations"]+"|reason="+coast_solution["reason"]).
+                        set coast_replan_logged to true.
+                    }
+                }
+                set next_coast_guidance to time:seconds+pdi_config["coast_update_interval"].
+            }
             local command is mission["command"].
             // Track the tangent steering law at the current coast time.  The
             // previous implementation held the t=0 vector for the entire
@@ -451,7 +524,11 @@ function vacuum_descent {
                 // calls, falsely tripping stale guidance immediately after
                 // ignition even though the command had validated correctly.
                 if acceptable { set mission["last_solution_ut"] to time:seconds. }
-                if time:seconds-mission["last_solution_ut"] > pdi_config["maximum_solution_age"] { vacuum_emergency(mission,"stale_or_diverged_guidance"). }
+                if time:seconds-mission["last_solution_ut"] > pdi_config["maximum_solution_age"] {
+                    local recovery_reason is mission["solver_reason"].
+                    if not vacuum_reconverge(mission,recovery_reason) { vacuum_emergency(mission,"stale_or_diverged_guidance"). }
+                    set next_terrain to time:seconds.
+                }
                 set next_guidance to time:seconds+pdi_config["guidance_interval"].
             }
             if mission["phase"] = "vacuum_pdi" {
