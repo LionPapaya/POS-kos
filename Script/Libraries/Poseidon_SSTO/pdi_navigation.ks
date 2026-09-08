@@ -77,21 +77,59 @@ function pdi_live_target {
         "ut",frame["ut"],"omega",frame["omega"],"vs",pdi_config["handover_vertical_speed"]).
 }
 
+function pdi_suborbital_surface_sample {
+    parameter sample_ut.
+    local predicted_position is positionat(ship,sample_ut).
+    local site is ship:body:geopositionof(predicted_position).
+    local terrain is site:terrainheight.
+    if ship:body:hasocean { set terrain to max(0,terrain). }
+    local radius is (predicted_position-ship:body:position):mag.
+    return lex("ut",sample_ut,"clearance",radius-ship:body:radius-terrain,"site",site,"altitude",terrain).
+}
+
 function pdi_suborbital_landing_site {
-    // Use the current conic's low point only after the vessel is committed to
-    // impact.  This makes POS4 choose a site from the trajectory it actually
-    // has, rather than spending time constructing an orbital de-orbit plan.
-    local impact_ut is time:seconds+max(0,ship:orbit:eta:periapsis).
-    local impact_position is positionat(ship,impact_ut).
-    local site is ship:body:geopositionof(impact_position).
-    return lex("site",site,"altitude",site:terrainheight,"impact_ut",impact_ut).
+    // A body-intersecting conic continues through terrain to its mathematical
+    // periapsis.  That underground point is not a landing site.  Find the
+    // first terrain crossing before periapsis and use its near-side location.
+    local start_ut is time:seconds.
+    local periapsis_ut is start_ut+max(0,ship:orbit:eta:periapsis).
+    if periapsis_ut <= start_ut+0.1 {
+        return lex("valid",false,"reason","suborbital_periapsis_unavailable").
+    }
+    local left is pdi_suborbital_surface_sample(start_ut).
+    if left["clearance"] <= 0 {
+        return lex("valid",false,"reason","suborbital_already_at_surface").
+    }
+    local i is 1.
+    until i > 96 {
+        local sample_ut is start_ut+(periapsis_ut-start_ut)*i/96.
+        local right is pdi_suborbital_surface_sample(sample_ut).
+        if left["clearance"] > 0 and right["clearance"] <= 0 {
+            local lower_ut is left["ut"].
+            local upper_ut is right["ut"].
+            local iteration is 0.
+            until iteration >= 24 or upper_ut-lower_ut < 0.02 {
+                local middle_ut is (lower_ut+upper_ut)/2.
+                local middle is pdi_suborbital_surface_sample(middle_ut).
+                if middle["clearance"] > 0 { set lower_ut to middle_ut. }
+                else { set upper_ut to middle_ut. }
+                set iteration to iteration+1.
+            }
+            local impact is pdi_suborbital_surface_sample((lower_ut+upper_ut)/2).
+            return lex("valid",true,"reason","first_terrain_crossing","site",impact["site"],"altitude",impact["altitude"],
+                "impact_ut",impact["ut"],"periapsis_ut",periapsis_ut).
+        }
+        set left to right.
+        set i to i+1.
+    }
+    return lex("valid",false,"reason","suborbital_surface_intercept_not_found").
 }
 
 function pdi_suborbital_plan {
     parameter landing_target, vehicle, pdi_config.
     local state is pdi_live_state(pdi_frame()).
     local solve is pdi_solve(state,landing_target,vehicle,pdi_config).
-    local result is lex("valid",false,"reason",solve["reason"],"attempts",1).
+    local result is lex("valid",false,"reason",solve["reason"],"attempts",1,"solution",solve,"state",state).
     if not solve["valid"] or not solve["converged"] or solve["command_throttle"] > 0.98 { return result. }
     // The solver's low-cost predictor establishes convergence.  Validate the
     // immediate burn at the same higher resolution used by orbital planning.

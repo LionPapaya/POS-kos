@@ -279,16 +279,20 @@ function vacuum_reconverge {
         // when the original target is no longer reachable.  Solve and fully
         // validate it before committing the mission to the diversion.
         local alternate is pdi_suborbital_landing_site().
-        local alternate_target is pdi_live_target(alternate["site"],alternate["altitude"],pdi_config).
-        set recovery_plan to pdi_suborbital_plan(alternate_target,mission["vehicle"],pdi_config).
-        if recovery_plan["valid"] {
-            set mission["site"] to alternate["site"].
-            set mission["altitude"] to alternate["altitude"].
-            set mission["diverted"] to true.
-            set retargeted to true.
-            flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
-            flight_log_event("pdi_retarget","reason="+reason+"|lat="+mission["site"]:lat+
-                "|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+"|impact_ut="+alternate["impact_ut"]).
+        if alternate["valid"] {
+            local alternate_target is pdi_live_target(alternate["site"],alternate["altitude"],pdi_config).
+            set recovery_plan to pdi_suborbital_plan(alternate_target,mission["vehicle"],pdi_config).
+            if recovery_plan["valid"] {
+                set mission["site"] to alternate["site"].
+                set mission["altitude"] to alternate["altitude"].
+                set mission["diverted"] to true.
+                set retargeted to true.
+                flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
+                flight_log_event("pdi_retarget","reason="+reason+"|lat="+mission["site"]:lat+
+                    "|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+"|impact_ut="+alternate["impact_ut"]).
+            }
+        }else{
+            flight_log_event("pdi_retarget_unavailable","reason="+reason+"|detail="+alternate["reason"]).
         }
     }
     if not recovery_plan["valid"] {
@@ -313,6 +317,57 @@ function pdi_is_suborbital {
     return ship:orbit:eccentricity >= 1 or ship:orbit:periapsis < ship:geoposition:terrainheight+500.
 }
 
+function vacuum_suborbital_brake_plan {
+    parameter mission.
+    local pdi_config is mission["config"].
+    local started_ut is time:seconds.
+    local next_replan is started_ut.
+    vacuum_phase(mission,"vacuum_suborbital_brake","braking while updating the reachable terrain intercept").
+    flight_log_event("pdi_suborbital_brake_start","ut="+started_ut+"|timeout="+pdi_config["suborbital_brake_timeout"]).
+    until time:seconds-started_ut >= pdi_config["suborbital_brake_timeout"] {
+        if mission["cancel"] { return lex("valid",false,"reason","pilot_cancelled"). }
+        local surface_up is ship:up:vector.
+        local surface_velocity is ship:velocity:surface.
+        local vertical_speed is vdot(surface_velocity,surface_up).
+        local gravity is ship:body:mu/(ship:body:radius+ship:altitude)^2.
+        local available is mission["vehicle"]["thrust"]/max(0.001,ship:mass).
+        // Hold orbital retrograde while a target solution is unavailable. It
+        // is normally close to the first powered-descent attitude, and the
+        // added vertical term keeps the craft from trading braking attitude
+        // for an unsafe downward acceleration.
+        local retrograde is ship:velocity:orbit*-1.
+        local requested is retrograde:normalized*available+surface_up*(gravity+max(0,-vertical_speed)*0.3).
+        local acceleration is pdi_vertical_priority(surface_up,requested,available,70).
+        vacuum_command(mission,acceleration,acceleration:mag/max(0.001,available)).
+        set mission["desired_vs"] to min(-1,vertical_speed).
+        if time:seconds >= next_replan {
+            // Keep the inexpensive, familiar retrograde attitude while the
+            // terrain search and bounded numerical solve occupy kOS.
+            vacuum_command(mission,retrograde,0).
+            local selection is pdi_suborbital_landing_site().
+            if selection["valid"] {
+                set mission["site"] to selection["site"].
+                set mission["altitude"] to selection["altitude"].
+                local target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+                local plan is pdi_suborbital_plan(target,mission["vehicle"],pdi_config).
+                if plan["valid"] {
+                    flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
+                    flight_log_event("pdi_suborbital_brake_plan","impact_ut="+selection["impact_ut"]+
+                        "|lat="+mission["site"]:lat+"|lng="+mission["site"]:lng+"|tgo="+
+                        plan["solution"]["tgo"]+"|clearance="+plan["clearance"]).
+                    return lex("valid",true,"reason","suborbital_brake_plan_ready","plan",plan).
+                }
+                vacuum_solver_telemetry(mission,plan["solution"]).
+            }
+            set next_replan to time:seconds+pdi_config["suborbital_replan_interval"].
+        }
+        vacuum_tick(mission).
+        wait 0.
+    }
+    flight_log_event("pdi_suborbital_brake_timeout","duration="+(time:seconds-started_ut)).
+    return lex("valid",false,"reason","suborbital_brake_plan_unavailable").
+}
+
 function vacuum_descent {
     parameter mission, plan.
     local pdi_config is mission["config"].
@@ -320,8 +375,8 @@ function vacuum_descent {
     set mission["telemetry"]["ignition_ut"] to ignition_ut.
     set mission["telemetry"]["predicted_clearance"] to plan["clearance"].
     local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
-    local solution is plan["solution"].
-    local post_node_within_live_limits is false.
+    local planned_solution is plan["solution"].
+    local solution is planned_solution.
     // Re-converge against the actual post-node orbit: a finite burn does not
     // reproduce KSP's instantaneous maneuver prediction exactly.  A POS4
     // suborbital plan is already based on the live state and must ignite now.
@@ -339,29 +394,24 @@ function vacuum_descent {
         local post_node_velocity_error is -1.
         if solution:haskey("position_error") { set post_node_position_error to solution["position_error"]. }
         if solution:haskey("velocity_error") { set post_node_velocity_error to solution["velocity_error"]. }
-        if solution["valid"] and solution:haskey("position_error") and solution:haskey("velocity_error") {
-            // The post-node state can differ from the instantaneous-node
-            // prediction by the finite burn's travel.  Permit this bounded
-            // handoff; powered descent applies the strict live limits after
-            // rebasing UPFG to the measured state.
-            set post_node_within_live_limits to post_node_position_error <= pdi_config["post_node_position_tolerance"] and
-                post_node_velocity_error <= pdi_config["live_velocity_tolerance"].
-        }
         flight_log_event("pdi_post_node_solution","valid="+solution["valid"]+"|converged="+solution["converged"]+
             "|reason="+solution["reason"]+"|iterations="+solution["iterations"]+"|position_error="+post_node_position_error+
-            "|velocity_error="+post_node_velocity_error+"|within_post_node_limits="+post_node_within_live_limits+
-            "|position_limit="+pdi_config["post_node_position_tolerance"]+"|budget="+pdi_config["post_node_iterations"]).
+            "|velocity_error="+post_node_velocity_error+"|budget="+pdi_config["post_node_iterations"]).
+        if not solution["valid"] or not solution["converged"] {
+            // A finite node burn can make the first revalidation miss its
+            // numerical budget.  Keep the already reviewed, converged plan
+            // for attitude preparation; never install an iteration-limit
+            // result as a burn or steering command.
+            flight_log_event("pdi_post_node_rejected","reason="+solution["reason"]+"|position_error="+
+                post_node_position_error+"|velocity_error="+post_node_velocity_error).
+            set solution to planned_solution.
+        }
     }
     vacuum_solver_telemetry(mission,solution).
-    if solution["valid"] and (solution["converged"] or post_node_within_live_limits) and
+    if solution["valid"] and solution["converged"] and
         (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
         vacuum_accept_solution(mission,solution,ignition_ut).
         set mission["pdi_internal"] to solution.
-        if post_node_within_live_limits and not solution["converged"] {
-            set mission["solver_reason"] to "post_node_command_within_live_limits".
-            flight_log_event("pdi_post_node_fallback","reason=within_post_node_limits|position_error="+solution["position_error"]+
-                "|velocity_error="+solution["velocity_error"]+"|ignition_ut="+ignition_ut).
-        }
         if plan:haskey("immediate") {
             vacuum_phase(mission,"vacuum_pdi","suborbital guided NERV powered descent").
             flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+time:seconds+"|mode=suborbital").
@@ -373,8 +423,6 @@ function vacuum_descent {
     local flip_since is -1.
     local landed_since is -1.
     local ignition_alignment_wait_logged is false.
-    local next_coast_guidance is max(time:seconds,ignition_ut-pdi_config["coast_update_lead"]).
-    local coast_replan_logged is false.
     until not mission["running"] {
         if mission["cancel"] { vacuum_stop(mission,false,"pilot_cancelled"). return. }
         local now is time:seconds.
@@ -397,33 +445,6 @@ function vacuum_descent {
             vacuum_stop(mission,false,"no_nerv_thrust_manual_control"). return.
         }
         if mission["phase"] = "vacuum_coast" {
-            if now >= ignition_ut-pdi_config["coast_update_lead"] and now >= next_coast_guidance {
-                // Propagate from the measured coast state to the scheduled
-                // ignition instant, then update the attitude command from
-                // that forecast.  POSITIONAT cannot include the finite node
-                // burn, so it would repeat the original alignment error.
-                local frame is pdi_frame().
-                local live_state is pdi_live_state(frame).
-                local coast_duration is max(0,ignition_ut-now).
-                local forecast is pdi_coast(live_state["r"],live_state["v"],coast_duration,mission["vehicle"]["mu"],32).
-                local ignition_state is lex("r",forecast["r"],"v",forecast["v"],"mass",ship:mass,"ut",ignition_ut).
-                set landing_target to pdi_live_target(mission["site"],mission["altitude"],pdi_config).
-                local saved_iterations is pdi_config["planning_iterations"].
-                set pdi_config["planning_iterations"] to pdi_config["coast_iterations"].
-                local coast_solution is pdi_solve(ignition_state,landing_target,mission["vehicle"],pdi_config).
-                set pdi_config["planning_iterations"] to saved_iterations.
-                if coast_solution["valid"] {
-                    vacuum_accept_solution(mission,coast_solution,ignition_ut).
-                    set mission["pdi_internal"] to coast_solution.
-                    vacuum_solver_telemetry(mission,coast_solution).
-                    if not coast_replan_logged {
-                        flight_log_event("pdi_coast_replan","lead_time="+coast_duration+"|iterations="+
-                            coast_solution["iterations"]+"|reason="+coast_solution["reason"]).
-                        set coast_replan_logged to true.
-                    }
-                }
-                set next_coast_guidance to time:seconds+pdi_config["coast_update_interval"].
-            }
             local command is mission["command"].
             // Track the tangent steering law at the current coast time.  The
             // previous implementation held the t=0 vector for the entire
@@ -635,6 +656,9 @@ function pdi_run {
     local suborbital_selection is lex().
     if landing_target_mode = "suborbital" {
         set suborbital_selection to pdi_suborbital_landing_site().
+        if not suborbital_selection["valid"] {
+            print "PDI could not find a terrain intersection: "+suborbital_selection["reason"]. return.
+        }
         set site to suborbital_selection["site"].
         set terrain_altitude to suborbital_selection["altitude"].
     }
@@ -679,7 +703,8 @@ function pdi_run {
     pdi_planning_status("setup","checking NERV capability and landing target").
     flight_log_set_vacuum_target(site,terrain_altitude,target_landing_heading).
     if landing_target_mode = "suborbital" {
-        flight_log_event("pdi_suborbital_site","impact_ut="+suborbital_selection["impact_ut"]+"|lat="+site:lat+"|lng="+site:lng+"|altitude="+terrain_altitude).
+        flight_log_event("pdi_suborbital_site","impact_ut="+suborbital_selection["impact_ut"]+"|periapsis_ut="+
+            suborbital_selection["periapsis_ut"]+"|lat="+site:lat+"|lng="+site:lng+"|altitude="+terrain_altitude).
     }
     if nerv_engines:length = 0 or mission["vehicle"]["thrust"]/ship:mass < ship:body:mu/ship:body:radius^2*pdi_config["minimum_twr"] or
         ship:mass <= mission["vehicle"]["reserve_mass"] {
@@ -687,9 +712,26 @@ function pdi_run {
     }
     if landing_target_mode = "suborbital" {
         vacuum_phase(mission,"vacuum_suborbital_plan","solving immediate powered descent from current trajectory").
+        // Begin the attitude slew before the first bounded UPFG solve.  The
+        // locked retrograde target remains active while kOS evaluates the
+        // predictor, avoiding a late turn from the previous flight mode.
+        vacuum_command(mission,ship:velocity:orbit*-1,0).
+        flight_log_event("pdi_suborbital_retrograde_hold","speed="+ship:velocity:orbit:mag).
+        vacuum_tick(mission).
+        wait 0.
         local direct_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
         local direct_plan is pdi_suborbital_plan(direct_target,mission["vehicle"],pdi_config).
-        if not direct_plan["valid"] { vacuum_stop(mission,false,direct_plan["reason"]). return. }
+        if not direct_plan["valid"] {
+            vacuum_solver_telemetry(mission,direct_plan["solution"]).
+            flight_log_event("pdi_suborbital_solver","valid="+direct_plan["solution"]["valid"]+"|converged="+
+                direct_plan["solution"]["converged"]+"|reason="+direct_plan["reason"]+"|iterations="+
+                direct_plan["solution"]["iterations"]+"|position_error="+direct_plan["solution"]["position_error"]+
+                "|velocity_error="+direct_plan["solution"]["velocity_error"]+"|mass="+direct_plan["state"]["mass"]+
+                "|speed="+direct_plan["state"]["v"]:mag).
+            local brake_plan is vacuum_suborbital_brake_plan(mission).
+            if not brake_plan["valid"] { vacuum_stop(mission,false,brake_plan["reason"]). return. }
+            set direct_plan to brake_plan["plan"].
+        }
         set data["ignition_ut"] to direct_plan["ignition_ut"].
         set data["predicted_clearance"] to direct_plan["clearance"].
         vacuum_solver_telemetry(mission,direct_plan["solution"]).
