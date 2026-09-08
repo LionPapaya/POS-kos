@@ -43,7 +43,7 @@ The orbital maneuvering menu currently provides:
 
 ## Aborts
 
-Abort modes are selected according to the vehicle's situation and are implemented as separate flight phases. Only the currently implemented abort mode is documented below.
+Abort modes are selected according to the vehicle's situation and are implemented as separate flight phases. The currently implemented runway-stop and return-to-launch-site modes are documented below.
 
 ### `runway_abort`
 
@@ -61,6 +61,21 @@ When this abort is active, POS-kOS:
 4. Applies the brakes.
 5. Continues braking until the vehicle's airspeed is below 1 m/s.
 6. Marks the abort complete and ends the current flight program.
+
+### `rtls` (return to launch site)
+
+#### Purpose
+
+`rtls` returns the vehicle to the departure runway after an ascent engine-loss abort when stopping on the runway is no longer feasible. POS also selects it for an engine-loss abort after rotation.
+
+#### Behavior
+
+When this abort is active, POS-kOS:
+
+1. Continues the takeoff until the vehicle is safely airborne when the abort begins before liftoff.
+2. Configures the remaining propulsion and, for the applicable multi-RAPIER-loss cases, dumps fuel to the configured recovery mass.
+3. Climbs and makes a controlled turn toward the reciprocal runway heading after reaching the minimum turn speed.
+4. Stabilizes on the reciprocal heading at the required altitude, then hands the vehicle to the normal re-entry and landing program for the departure runway. The recovery landing permits a go-around.
 
 The abort-mode dispatcher is kept separate from the main flight phases so additional abort modes can be added later without restructuring the mission flow. They are not documented here until implemented and tested.
 
@@ -140,7 +155,7 @@ For the no-coordinate option, choose **Vacuum Landing (Convenient)** or run `0:/
 
 The fourth optional parameter is the preferred heading used while the craft pitches from its tail contact down onto the gear; pass `"convenient"` as the fifth parameter to select the convenient-site mode from a terminal. Start from a stable orbit with sufficient LV-N thrust-to-weight ratio; the program refuses to begin if the enabled NERVs cannot provide the braking reserve.
 
-### Flight logging and replay
+### Flight logging
 
 File logging is disabled by default. Before launching POS, set the logging mode in the kOS terminal:
 
@@ -167,7 +182,7 @@ Each run creates the next unused directory under `0:/POS_logs/`, for example:
 
 The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, and terminal-guidance values. Vacuum-landing samples additionally record the target coordinates, target distance, lowest-bounds clearance, speed, requested vertical speed, NERV throttle, braking distance, available acceleration, tail-contact state, pitch-down target, PDI solution error, predicted clearance, thrust saturation, node approval, and pitch-over readiness. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. `events.csv` records the decisions that explain state changes, including the vacuum target, node review and decision, de-orbit plan, braking start, translation start, engine-cutoff pitch-over, gear touchdown, and GPWS state transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
 
-To replay a `medium` or `high` flight, open the local, gitignored [replay tool](tools/flight-replay/index.html) in a browser. Load the matching `flight.csv`, optionally load `events.csv`, then use the timeline and the 3-D view. The inspector shows every recorded column at the selected frame; the scene shows the recorded flight path, vehicle, runway, and entry target without rerunning guidance.
+If you find an issue, please report it in the [GitHub issue tracker](https://github.com/LionPapaya/POS-kos/issues) and include the matching `flight.csv` and `events.csv` logs. Together, the flight samples and state-transition events make the problem reproducible and diagnosable.
 
 For compatibility, setting the old `POS_LOGGING_ENABLED` flag to `true` before launch selects the new `high` mode. Use `POS_LOGGING_MODE` for new launches.
 
@@ -179,7 +194,7 @@ For docking, first select the other vessel (or one of its docking ports) as the 
 - Interplanetary or very high-altitude re-entry is not yet reliable.
 - Vacuum landing begins from a stable orbit and needs LV-N thrust-to-weight greater than 1.10; terrain with a steep slope at the requested coordinates is not screened.
 - Runway and trajectory selection depends on the data in `lib_location_constants.ks`.
-- Abort handling is under active development; only `runway_abort` should currently be treated as documented functionality.
+- Abort handling is under active development; only `runway_abort` and `rtls` should currently be treated as documented functionality.
 - The Ferram integration must be available for the aerodynamic calculations used by guidance.
 
 ## Development notes
