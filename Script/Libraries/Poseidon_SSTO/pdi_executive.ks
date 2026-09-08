@@ -335,21 +335,21 @@ function vacuum_suborbital_brake_plan {
         // is normally close to the first powered-descent attitude, and the
         // added vertical term keeps the craft from trading braking attitude
         // for an unsafe downward acceleration.
-        local retrograde is ship:velocity:orbit*-1.
-        local requested is retrograde:normalized*available+surface_up*(gravity+max(0,-vertical_speed)*0.3).
+        local retrograde_ is ship:velocity:orbit*-1.
+        local requested is retrograde_:normalized*available+surface_up*(gravity+max(0,-vertical_speed)*0.3).
         local acceleration is pdi_vertical_priority(surface_up,requested,available,70).
         vacuum_command(mission,acceleration,acceleration:mag/max(0.001,available)).
         set mission["desired_vs"] to min(-1,vertical_speed).
         if time:seconds >= next_replan {
             // Keep the inexpensive, familiar retrograde attitude while the
             // terrain search and bounded numerical solve occupy kOS.
-            vacuum_command(mission,retrograde,0).
+            vacuum_command(mission,retrograde_,0).
             local selection is pdi_suborbital_landing_site().
             if selection["valid"] {
                 set mission["site"] to selection["site"].
                 set mission["altitude"] to selection["altitude"].
-                local target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
-                local plan is pdi_suborbital_plan(target,mission["vehicle"],pdi_config).
+                local target_ is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+                local plan is pdi_suborbital_plan(target_,mission["vehicle"],pdi_config).
                 if plan["valid"] {
                     flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
                     flight_log_event("pdi_suborbital_brake_plan","impact_ut="+selection["impact_ut"]+
