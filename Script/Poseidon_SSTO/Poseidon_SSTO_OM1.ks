@@ -1,8 +1,13 @@
 reset_sys().
 nervson().
 rapiersoff().
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/rendezvous.ks").
+flight_log_begin("orbital_maneuver").
 local om_mode_ is get_om_mode().
-if om_mode_ = "rsvp"{
+if om_mode_ = "Rendezvous"{
+    do_orbital_rendezvous().
+} else if om_mode_ = "RSVP"{
     do_rsvp().
 } else if om_mode_ = "execute Node"{
     execute_node().
@@ -267,6 +272,21 @@ function do_change_Inclination {
     rapiersoff().
     execute_node().
     flight_log_event("inclination_burn_complete","target_deg=" + requested_inclination + "|actual_deg=" + ship:orbit:inclination).
+}
+
+function do_orbital_rendezvous {
+    local target_name is get_rendezvous_target().
+    if target_name = "None" {
+        set Lastest_status to "Rendezvous cancelled: no target selected".
+        flight_log_event("rendezvous_rejected","reason=no_target_selected").
+        return.
+    }
+    local rendezvous_result is rendezvous_same_body(Vessel(target_name)).
+    if rendezvous_result["docking_ready"] {
+        print "Rendezvous complete. Start Docking to continue.".
+    } else {
+        print "Rendezvous did not reach the docking gate: "+rendezvous_result["reason"].
+    }
 }
 function do_circularization {
     parameter circularization_location_force is "ASK".

@@ -392,7 +392,11 @@ Poseidon_SSTO:add("Ascent",lex(
     "vertical_speed_recovery_pitch",2,
     "vertical_speed_recovery_threshold",0,
     "apoapsis_margin",500,
-    "inclination_heading_fallback",90
+    "inclination_heading_fallback",90,
+    // Ground-hold phasing for an ascent that has a same-body rendezvous target.
+    // Tune these from flight logs if the vehicle's normal insertion time changes.
+    "rendezvous_nominal_insertion_time",480,
+    "rendezvous_window_angle",3
 )).
 Poseidon_SSTO:add("Abort",lex(
     "contingency_rapiers_out",4,

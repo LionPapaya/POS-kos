@@ -1294,6 +1294,7 @@ function get_om_mode {
     local OM_MODE_label is OM_MODE_box :addlabel("OM MODE:").
     local OM_MODE_menu is OM_MODE_box :addpopupmenu().
     OM_MODE_menu:addoption("RSVP").
+    OM_MODE_menu:addoption("Rendezvous").
     OM_MODE_menu:addoption("execute Node").
     OM_MODE_menu:addoption("change Apoapsis").
     OM_MODE_menu:addoption("change Periapsis").
@@ -1329,6 +1330,28 @@ function get_om_mode {
     clearscreen.
     // Return the finalized inputs
     return OM_MODE_menu:value.
+}
+
+function get_rendezvous_target {
+    local rendezvous_gui is GUI(420,220).
+    local confirmed is false.
+    rendezvous_gui:show().
+    local row is rendezvous_gui:addhbox().
+    row:addlabel("<size=18><b>Same-body rendezvous target</b></size>").
+    local target_row is rendezvous_gui:addhlayout().
+    target_row:addlabel("Vessel:").
+    local target_menu is target_row:addpopupmenu().
+    target_menu:addoption("None").
+    for rendezvous_candidate in all_vessels {
+        if rendezvous_candidate <> ship and rendezvous_candidate:body = ship:body {
+            target_menu:addoption(rendezvous_candidate:name).
+        }
+    }
+    local button_row is rendezvous_gui:addhbox().
+    local ok_button is button_row:addbutton("Plan and execute").
+    set ok_button:onclick to { set confirmed to true. rendezvous_gui:hide(). }.
+    until confirmed { wait 0.01. }
+    return target_menu:value.
 }
 function get_inputs_Periapsis {
     // Initialize GUI and variables
@@ -1662,9 +1685,19 @@ function create_assent_gui{
     Global assent_periapsis_input is assent_periapsis_box:addtextfield("80000").
 
     GLOBAL assent_inclination_box IS assent_toggels_box:ADDHLAYOUT().
-    GLOBAL assent_inclination_text IS assent_inclination_box:ADDLABEL("<b>INCLINATION:</b>"). 
+    GLOBAL assent_inclination_text IS assent_inclination_box:ADDLABEL("<b>INCLINATION:</b>").
     set assent_inclination_text:style:margin:v to -3.
     Global assent_inclination_input is assent_inclination_box:addtextfield("0").
+
+    GLOBAL assent_rendezvous_box IS assent_toggels_box:ADDHLAYOUT().
+    GLOBAL assent_rendezvous_text IS assent_rendezvous_box:ADDLABEL("<b>RENDEZVOUS:</b>").
+    GLOBAL assent_rendezvous_menu IS assent_rendezvous_box:ADDPOPUPMENU().
+    assent_rendezvous_menu:ADDOPTION("None").
+    for rendezvous_candidate in all_vessels {
+        if rendezvous_candidate <> ship and rendezvous_candidate:body = ship:body {
+            assent_rendezvous_menu:ADDOPTION(rendezvous_candidate:name).
+        }
+    }
 
     // OK Button to Finalize Inputs
     local ok_button_box is assent_toggels_box:addhbox().
@@ -1712,7 +1745,7 @@ function create_assent_gui{
     set assent_periapsis_input:enabled to false.
     set assent_inclination_input:enabled to false.
 
-    return lex("Apoapsis",str_to_num(assent_apoapsis_input:text),"Periapsis",str_to_num(assent_periapsis_input:text),"Inclination",str_to_num(assent_inclination_input:text)).
+    return lex("Apoapsis",str_to_num(assent_apoapsis_input:text),"Periapsis",str_to_num(assent_periapsis_input:text),"Inclination",str_to_num(assent_inclination_input:text),"RendezvousTarget",assent_rendezvous_menu:value).
 
 }
 function update_assent_gui{

@@ -5,6 +5,7 @@
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/rendezvous.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
@@ -33,14 +34,33 @@ local liftoff_altitude is ascent["liftoff_height_above_runway"] + runway_altitud
 local rotate_altitude is ascent["rotate_height_above_runway"] + runway_altitude.
 local previous_speed is 0.
 local speed_trend is 0.
+local ascent_orbit_complete is false.
 
 
 local Target_orbit is create_assent_gui().
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
 set TargetInclination to Target_orbit["inclination"].
+local ascent_rendezvous_target is 0.
+local ascent_rendezvous_enabled is Target_orbit["RendezvousTarget"] <> "None".
+if ascent_rendezvous_enabled {
+    set ascent_rendezvous_target to Vessel(Target_orbit["RendezvousTarget"]).
+    if ascent_rendezvous_target:body = ship:body and ascent_rendezvous_target:orbit:eccentricity < 1 {
+        // The selected vessel's orbit is the insertion orbit.  The wait below
+        // selects the phase; the same-body rendezvous routine removes the
+        // remaining dispersions and performs the docking handoff.
+        set TargetPeriapsis to ascent_rendezvous_target:orbit:periapsis.
+        set TargetApoapsis to ascent_rendezvous_target:orbit:apoapsis.
+        set TargetInclination to ascent_rendezvous_target:orbit:inclination.
+    } else {
+        set ascent_rendezvous_enabled to false.
+    }
+}
 flight_log_begin("ascent").
 flight_log_event("orbit_target","periapsis=" + TargetPeriapsis + "|apoapsis=" + TargetApoapsis + "|inclination=" + TargetInclination).
+if ascent_rendezvous_enabled {
+    flight_log_event("ascent_rendezvous_target","name="+ascent_rendezvous_target:name+"|body="+ship:body:name+"|insertion_periapsis="+TargetPeriapsis+"|insertion_apoapsis="+TargetApoapsis).
+}
 
 check_inputs().
 
@@ -68,10 +88,12 @@ if launch_heading < 0 {
 set previous_speed to ship:airspeed.
 set t0 to -1.
 local takeoff_start_position is ship:geoposition.
+local v1_announced is false.
 local abort_info is lex().
 global abort_state is lex("active",false).
 set dap_mode to "auto".
 set dap["str_mode"] to "aerostr".
+if ascent_rendezvous_enabled { set step to "rendezvous_window". }
 print("3").
 rapierson().
 until running = false{
@@ -87,6 +109,25 @@ until running = false{
     set speed_trend to ship:airspeed - previous_speed.
     set previous_speed to ship:airspeed.
 
+    if step = "rendezvous_window" {
+        // Predict the target's location at nominal insertion time. Holding
+        // here keeps the vehicle on the runway until the target crosses the
+        // launch-site corridor, instead of departing at an arbitrary phase.
+        local nominal_insertion_time is time:seconds+ascent["rendezvous_nominal_insertion_time"].
+        local predicted_target_radius is positionat(ascent_rendezvous_target,nominal_insertion_time)-ship:body:position.
+        local launch_site_radius is ship:position-ship:body:position.
+        local launch_phase_error is vang(predicted_target_radius,launch_site_radius).
+        brakes on.
+        set dapthrottle to 0.
+        set Lastest_status to "Waiting for rendezvous launch window ("+round(launch_phase_error,1)+" deg)".
+        flight_log_capture_rendezvous(ascent_rendezvous_target,"launch_window",0,false).
+        if launch_phase_error <= ascent["rendezvous_window_angle"] {
+            brakes off.
+            set step to "launch".
+            set Lastest_status to "Rendezvous launch window open".
+            flight_log_event("ascent_rendezvous_window","phase_error_deg="+round(launch_phase_error,2)+"|nominal_insertion_ut="+round(nominal_insertion_time,1)).
+        }
+    }
     if step = "launch"{ 
         update_team_dap_gui().
          
@@ -108,6 +149,18 @@ until running = false{
         // if an engine loss pulls total thrust back below StationaryThrottle.
         // The threshold is an arming condition, not an abort-monitor gate.
         if t0 <> -1 {
+            // V1 is the last point at which the empirical runway-stop model
+            // permits a rejected takeoff.  Beyond it, an engine failure uses
+            // the RTLS path, which can first fly the vehicle clear of the
+            // runway before turning back.
+            if not v1_announced {
+                local v1_check is runway_abort_feasibility(takeoff_start_position,active_runway["end"]).
+                if not v1_check["permitted"] {
+                    set v1_announced to true.
+                    set Lastest_status to "V1 - RTLS preferred".
+                    flight_log_event("v1","rolled_m=" + round(v1_check["roll_distance_m"]) + "|required_m=" + round(v1_check["required_stop_distance_m"]) + "|remaining_m=" + round(v1_check["runway_remaining_m"]) + "|model_valid=" + v1_check["model_valid"] + "|preferred_abort=rtls").
+                }
+            }
             if ship:airspeed > AVES["Speed"]["Rotate"]{
                 set step to "rotate".
                 set Lastest_status to "rotating".
@@ -375,6 +428,7 @@ until running = false{
             nervson().
             rapiersoff().
             execute_node().
+            set ascent_orbit_complete to true.
             set step to "end".
         }
         
@@ -577,4 +631,11 @@ until running = false{
     flight_log_tick("ascent",step,"").
     wait 0.
     //check_abort().
+}
+if ascent_rendezvous_enabled and ascent_orbit_complete {
+    set Lastest_status to "Refining rendezvous for docking handoff".
+    local ascent_rendezvous_result is rendezvous_same_body(ascent_rendezvous_target).
+    if not ascent_rendezvous_result["docking_ready"] {
+        set Lastest_status to "Rendezvous needs refinement: "+ascent_rendezvous_result["reason"].
+    }
 }
