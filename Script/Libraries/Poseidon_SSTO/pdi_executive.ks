@@ -177,6 +177,12 @@ function vacuum_execute_node {
     if not mission["telemetry"]["node_approved"] { return false. }
     local pdi_config is mission["config"].
     local duration is pdi_node_duration(maneuver,mission["vehicle"]).
+    local completion_dv is pdi_config["node_completion_dv"].
+    // The PDI plan is sensitive to a residual de-orbit impulse: in flight 59,
+    // 0.283 m/s became a 670 m post-node predicted miss.  Keep the ordinary
+    // node tolerance for plane changes, but finish the landing de-orbit burn
+    // accurately enough for the measured-state UPFG handoff.
+    if purpose = "deorbit" { set completion_dv to min(completion_dv,pdi_config["deorbit_completion_dv"]). }
     local fingerprint is vacuum_node_fingerprint(maneuver).
     vacuum_phase(mission,"vacuum_node_coast",purpose).
     vacuum_command(mission,maneuver:deltav,0).
@@ -223,11 +229,11 @@ function vacuum_execute_node {
         vacuum_tick(mission).
         // A residual that reverses direction is still correctable.  Continue
         // the closed loop instead of accepting an overshoot.
-        if residual:mag < pdi_config["node_completion_dv"] { set completed to true. }
+        if residual:mag < completion_dv { set completed to true. }
         wait 0.
     }
     set dapthrottle to 0.
-    flight_log_event("pdi_node_complete","purpose="+purpose+"|residual="+maneuver:deltav:mag+"|target_residual="+pdi_config["node_completion_dv"]+"|duration="+(time:seconds-ignition_ut)).
+    flight_log_event("pdi_node_complete","purpose="+purpose+"|residual="+maneuver:deltav:mag+"|target_residual="+completion_dv+"|duration="+(time:seconds-ignition_ut)).
     remove maneuver.
     set mission["telemetry"]["node_approved"] to false.
     set mission["vehicle"] to pdi_vehicle_snapshot(mission["engines"],mission["fuel_parts"],pdi_config).
@@ -236,9 +242,21 @@ function vacuum_execute_node {
 
 function vacuum_accept_solution {
     parameter mission, solution, epoch.
-    set mission["command"] to lex("ut",epoch,"lambda",solution["lambda"],"lambda_dot",solution["lambda_dot"],
-        "jol",solution["jol"],"tgo",solution["tgo"],"throttle",solution["command_throttle"]).
+    set mission["command"] to vacuum_solution_command(solution,epoch).
     set mission["last_solution_ut"] to epoch.
+}
+
+function vacuum_solution_command {
+    parameter solution, epoch.
+    return lex("ut",epoch,"lambda",solution["lambda"],"lambda_dot",solution["lambda_dot"],
+        "jol",solution["jol"],"tgo",solution["tgo"],"throttle",solution["command_throttle"]).
+}
+
+function vacuum_guidance_state {
+    parameter mission, state_name, detail.
+    if mission["guidance_state"] = state_name { return. }
+    set mission["guidance_state"] to state_name.
+    flight_log_event("pdi_guidance_state","state="+state_name+"|"+detail).
 }
 
 function vacuum_solver_telemetry {
@@ -263,54 +281,6 @@ function vacuum_emergency {
     set mission["telemetry"]["converged"] to false.
     set mission["diverted"] to true.
     flight_log_event("pdi_fallback","reason="+reason+"|clearance="+mission["clearance"]+"|speed="+ship:velocity:surface:mag).
-}
-
-function vacuum_reconverge {
-    parameter mission, reason.
-    local pdi_config is mission["config"].
-    // First retain the requested landing site.  A fresh solve starts from the
-    // measured vehicle state, rather than from an invalidated tangent law.
-    flight_log_event("pdi_reconvergence_start","reason="+reason+"|target=requested").
-    local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
-    local recovery_plan is pdi_suborbital_plan(landing_target,mission["vehicle"],pdi_config).
-    local retargeted is false.
-    if not recovery_plan["valid"] {
-        // The current ballistic impact point is the closest practical site
-        // when the original target is no longer reachable.  Solve and fully
-        // validate it before committing the mission to the diversion.
-        local alternate is pdi_suborbital_landing_site().
-        if alternate["valid"] {
-            local alternate_target is pdi_live_target(alternate["site"],alternate["altitude"],pdi_config).
-            set recovery_plan to pdi_suborbital_plan(alternate_target,mission["vehicle"],pdi_config).
-            if recovery_plan["valid"] {
-                set mission["site"] to alternate["site"].
-                set mission["altitude"] to alternate["altitude"].
-                set mission["diverted"] to true.
-                set retargeted to true.
-                flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
-                flight_log_event("pdi_retarget","reason="+reason+"|lat="+mission["site"]:lat+
-                    "|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+"|impact_ut="+alternate["impact_ut"]).
-            }
-        }else{
-            flight_log_event("pdi_retarget_unavailable","reason="+reason+"|detail="+alternate["reason"]).
-        }
-    }
-    if not recovery_plan["valid"] {
-        flight_log_event("pdi_reconvergence_failed","reason="+reason+"|solver_reason="+recovery_plan["reason"]).
-        return false.
-    }
-    vacuum_accept_solution(mission,recovery_plan["solution"],time:seconds).
-    set mission["pdi_internal"] to recovery_plan["solution"].
-    vacuum_solver_telemetry(mission,recovery_plan["solution"]).
-    set mission["telemetry"]["predicted_clearance"] to recovery_plan["clearance"].
-    set mission["last_solution_ut"] to time:seconds.
-    set mission["solver_reason"] to "reconverged".
-    local target_label is "requested".
-    if retargeted { set target_label to "alternate". }
-    flight_log_event("pdi_reconverged","reason="+reason+"|target="+target_label+
-        "|tgo="+recovery_plan["solution"]["tgo"]+"|clearance="+recovery_plan["clearance"]+
-        "|position_error="+recovery_plan["position_error"]+"|velocity_error="+recovery_plan["velocity_error"]).
-    return true.
 }
 
 function pdi_is_suborbital {
@@ -377,6 +347,7 @@ function vacuum_descent {
     local landing_target is pdi_live_target(mission["site"],mission["altitude"],pdi_config).
     local planned_solution is plan["solution"].
     local solution is planned_solution.
+    local post_node_within_live_limits is false.
     // Re-converge against the actual post-node orbit: a finite burn does not
     // reproduce KSP's instantaneous maneuver prediction exactly.  A POS4
     // suborbital plan is already based on the live state and must ignite now.
@@ -394,10 +365,68 @@ function vacuum_descent {
         local post_node_velocity_error is -1.
         if solution:haskey("position_error") { set post_node_position_error to solution["position_error"]. }
         if solution:haskey("velocity_error") { set post_node_velocity_error to solution["velocity_error"]. }
+        if solution["valid"] {
+            set post_node_within_live_limits to post_node_position_error <= pdi_config["post_node_position_tolerance"] and
+                post_node_velocity_error <= pdi_config["live_velocity_tolerance"].
+        }
+        // Convenient mode has no user-selected coordinates to preserve.  If
+        // the measured post-node state cannot support the provisional site,
+        // reselect the first reachable terrain intercept and solve it before
+        // committing to the coast.  This preserves the mode's original
+        // ability to pick a more suitable landing location after the node.
+        if mission["target_mode"] = "convenient" and (not solution["valid"] or
+            (not solution["converged"] and not post_node_within_live_limits)) {
+            local alternate is pdi_suborbital_landing_site().
+            if alternate["valid"] {
+                local alternate_target is pdi_live_target(alternate["site"],alternate["altitude"],pdi_config).
+                set pdi_config["planning_iterations"] to pdi_config["post_node_iterations"].
+                local alternate_solution is pdi_solve(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),alternate_target,mission["vehicle"],pdi_config).
+                set pdi_config["planning_iterations"] to planning_iterations.
+                local alternate_position_error is alternate_solution["position_error"].
+                local alternate_velocity_error is alternate_solution["velocity_error"].
+                local alternate_within_live_limits is alternate_solution["valid"] and
+                    alternate_position_error <= pdi_config["post_node_position_tolerance"] and
+                    alternate_velocity_error <= pdi_config["live_velocity_tolerance"].
+                local alternate_prediction is pdi_predict_powered(pdi_future_state(max(time:seconds+1,ignition_ut),ship:mass),
+                    mission["vehicle"],alternate_solution["tgo"],alternate_solution["command_throttle"],alternate_solution["lambda"],
+                    alternate_solution["lambda_dot"],alternate_solution["jol"],pdi_config["predictor_steps"]*3).
+                local alternate_clearance is -1.
+                local alternate_validated is false.
+                if alternate_prediction["valid"] {
+                    set alternate_clearance to pdi_path_clearance(alternate_prediction["path"],max(time:seconds+1,ignition_ut),pdi_config).
+                    local alternate_arrival is pdi_target_at(alternate_target,max(time:seconds+1,ignition_ut)+alternate_solution["tgo"]).
+                    set alternate_validated to alternate_clearance >= pdi_config["terrain_margin"] and
+                        (alternate_prediction["r"]-alternate_arrival["r"]):mag < 100 and
+                        (alternate_prediction["v"]-alternate_arrival["v"]):mag < 2.
+                }
+                flight_log_event("pdi_convenient_post_node_candidate","valid="+alternate_solution["valid"]+
+                    "|converged="+alternate_solution["converged"]+"|reason="+alternate_solution["reason"]+
+                    "|position_error="+alternate_position_error+"|velocity_error="+alternate_velocity_error+
+                    "|clearance="+alternate_clearance+"|validated="+alternate_validated+"|lat="+alternate["site"]:lat+
+                    "|lng="+alternate["site"]:lng+"|altitude="+alternate["altitude"]).
+                if alternate_solution["valid"] and alternate_validated and
+                    (alternate_solution["converged"] or alternate_within_live_limits) {
+                    set mission["site"] to alternate["site"].
+                    set mission["altitude"] to alternate["altitude"].
+                    set landing_target to alternate_target.
+                    set solution to alternate_solution.
+                    set post_node_position_error to alternate_position_error.
+                    set post_node_velocity_error to alternate_velocity_error.
+                    set post_node_within_live_limits to alternate_within_live_limits.
+                    flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
+                    flight_log_event("pdi_convenient_post_node_retarget","reason=provisional_site_unreachable|lat="+
+                        mission["site"]:lat+"|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+
+                        "|position_error="+post_node_position_error+"|velocity_error="+post_node_velocity_error).
+                }
+            }else{
+                flight_log_event("pdi_convenient_post_node_retarget_unavailable","reason="+alternate["reason"]).
+            }
+        }
         flight_log_event("pdi_post_node_solution","valid="+solution["valid"]+"|converged="+solution["converged"]+
             "|reason="+solution["reason"]+"|iterations="+solution["iterations"]+"|position_error="+post_node_position_error+
-            "|velocity_error="+post_node_velocity_error+"|budget="+pdi_config["post_node_iterations"]).
-        if not solution["valid"] or not solution["converged"] {
+            "|velocity_error="+post_node_velocity_error+"|within_live_limits="+post_node_within_live_limits+
+            "|position_limit="+pdi_config["post_node_position_tolerance"]+"|budget="+pdi_config["post_node_iterations"]).
+        if not solution["valid"] or (not solution["converged"] and not post_node_within_live_limits) {
             // A finite node burn can make the first revalidation miss its
             // numerical budget.  Keep the already reviewed, converged plan
             // for attitude preparation; never install an iteration-limit
@@ -408,10 +437,18 @@ function vacuum_descent {
         }
     }
     vacuum_solver_telemetry(mission,solution).
-    if solution["valid"] and solution["converged"] and
+    if solution["valid"] and (solution["converged"] or post_node_within_live_limits) and
         (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
         vacuum_accept_solution(mission,solution,ignition_ut).
         set mission["pdi_internal"] to solution.
+        set mission["telemetry"]["command_valid"] to true.
+        set mission["telemetry"]["command_age"] to 0.
+        vacuum_guidance_state(mission,"prepared","planned command accepted").
+        if post_node_within_live_limits and not solution["converged"] {
+            set mission["solver_reason"] to "post_node_command_within_live_limits".
+            flight_log_event("pdi_post_node_fallback","reason=within_live_limits|position_error="+solution["position_error"]+
+                "|velocity_error="+solution["velocity_error"]+"|ignition_ut="+ignition_ut).
+        }
         if plan:haskey("immediate") {
             vacuum_phase(mission,"vacuum_pdi","suborbital guided NERV powered descent").
             flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+time:seconds+"|mode=suborbital").
@@ -423,6 +460,8 @@ function vacuum_descent {
     local flip_since is -1.
     local landed_since is -1.
     local ignition_alignment_wait_logged is false.
+    local live_reset_pending is not plan:haskey("immediate").
+    local next_guidance_reseed is ignition_ut.
     until not mission["running"] {
         if mission["cancel"] { vacuum_stop(mission,false,"pilot_cancelled"). return. }
         local now is time:seconds.
@@ -469,6 +508,21 @@ function vacuum_descent {
                     }
                     vacuum_phase(mission,"vacuum_pdi","guided NERV powered descent").
                     flight_log_event("pdi_ignition","planned_ut="+ignition_ut+"|actual_ut="+now).
+                    // Like the reference UPFG PDI implementation, the
+                    // pre-converged command gets us lit and pointed, but the
+                    // live corrector starts from the measured ignition state.
+                    // Retain the accepted command until a replacement passes
+                    // predictor validation.
+                    if live_reset_pending {
+                        local ignition_frame is pdi_frame().
+                        local ignition_state is pdi_live_state(ignition_frame).
+                        set landing_target to pdi_live_target(mission["site"],mission["altitude"],pdi_config).
+                        set mission["pdi_internal"] to pdi_seed(ignition_state,landing_target,mission["vehicle"],pdi_config).
+                        set live_reset_pending to false.
+                        set next_guidance_reseed to now+pdi_config["guidance_reseed_interval"].
+                        flight_log_event("pdi_live_reset","reason=measured_ignition_state|planned_ut="+ignition_ut+
+                            "|actual_ut="+now+"|planned_node_dv="+mission["telemetry"]["node_dv"]).
+                    }
                 }
             }
         }
@@ -497,27 +551,25 @@ function vacuum_descent {
                     set live_iteration to live_iteration+1.
                 }
                 set mission["pdi_internal"] to internal.
-                local command is mission["command"].
+                local accepted_command is mission["command"].
+                local candidate_command is accepted_command.
                 if internal["valid"] {
-                    vacuum_accept_solution(mission,internal,state["ut"]).
-                    set command to mission["command"].
-                    set mission["telemetry"]["valid"] to internal["valid"].
-                    set mission["telemetry"]["converged"] to internal["converged"].
-                    set mission["telemetry"]["tgo"] to internal["tgo"].
-                    set mission["telemetry"]["position_error"] to internal["position_error"].
-                    set mission["telemetry"]["velocity_error"] to internal["velocity_error"].
-                    set mission["telemetry"]["iterations"] to internal["iterations"].
-                    set mission["solver_reason"] to "live_"+internal["reason"].
-                }else{ set mission["solver_reason"] to internal["reason"]. }
+                    // Do not install a partially converged tangent law before
+                    // the measured-state prediction agrees with the landing
+                    // target.  Flight 59 overwrote its safe planned command
+                    // with an unvalidated one, then waited unpowered while
+                    // trying to recover it.
+                    set candidate_command to vacuum_solution_command(internal,state["ut"]).
+                }
                 // UPFG's linear tangent law is one continuous burn. Validate
-                // the rebased command using measured mass/state before
-                // applying its new steering.
-                local prediction is pdi_command_predict(state,mission["vehicle"],command,pdi_config["predictor_steps"]*2).
-                local acceptable is prediction["valid"].
+                // a candidate using measured mass/state before replacing the
+                // command currently driving the engines.
+                local prediction is pdi_command_predict(state,mission["vehicle"],candidate_command,pdi_config["predictor_steps"]*2).
+                local acceptable is internal["valid"] and prediction["valid"].
                 local position_error is 1e9.
                 local velocity_error is 1e9.
                 if acceptable {
-                    local arrival is pdi_target_at(landing_target,state["ut"]+command["tgo"]-(state["ut"]-command["ut"])).
+                    local arrival is pdi_target_at(landing_target,state["ut"]+candidate_command["tgo"]-(state["ut"]-candidate_command["ut"])).
                     set position_error to (prediction["r"]-arrival["r"]):mag.
                     set velocity_error to (prediction["v"]-arrival["v"]):mag.
                     set acceptable to position_error < pdi_config["live_position_tolerance"] and velocity_error < pdi_config["live_velocity_tolerance"].
@@ -525,10 +577,21 @@ function vacuum_descent {
                     set mission["telemetry"]["velocity_error"] to velocity_error.
                     set mission["telemetry"]["predicted_final_mass"] to prediction["mass"].
                     set mission["telemetry"]["iterations"] to internal["iterations"].
-                    set mission["telemetry"]["valid"] to acceptable.
-                    set mission["telemetry"]["converged"] to acceptable.
+                }
+                set mission["telemetry"]["valid"] to acceptable.
+                set mission["telemetry"]["converged"] to acceptable.
+                set mission["telemetry"]["command_valid"] to acceptable.
+                if acceptable {
+                    vacuum_accept_solution(mission,internal,state["ut"]).
                     set mission["solver_reason"] to "command_validated".
-                }else{ set mission["solver_reason"] to prediction["reason"]. }
+                    vacuum_guidance_state(mission,"validated","position_error="+position_error+"|velocity_error="+velocity_error).
+                }else{
+                    set mission["telemetry"]["guidance_failures"] to mission["telemetry"]["guidance_failures"]+1.
+                    if internal["valid"] { set mission["solver_reason"] to "command_validation_failed". }
+                    else { set mission["solver_reason"] to internal["reason"]. }
+                    vacuum_guidance_state(mission,"holding_last_valid_command","reason="+mission["solver_reason"]+
+                        "|position_error="+position_error+"|velocity_error="+velocity_error).
+                }
                 if acceptable and now >= next_terrain {
                     local terrain_scan_started is time:seconds.
                     local predicted_clearance is pdi_path_clearance(prediction["path"],state["ut"],pdi_config,pdi_config["live_terrain_samples"]).
@@ -545,16 +608,32 @@ function vacuum_descent {
                 // calls, falsely tripping stale guidance immediately after
                 // ignition even though the command had validated correctly.
                 if acceptable { set mission["last_solution_ut"] to time:seconds. }
-                if time:seconds-mission["last_solution_ut"] > pdi_config["maximum_solution_age"] {
-                    local recovery_reason is mission["solver_reason"].
-                    if not vacuum_reconverge(mission,recovery_reason) { vacuum_emergency(mission,"stale_or_diverged_guidance"). }
-                    set next_terrain to time:seconds.
+                // A full pdi_suborbital_plan can take tens of real-time
+                // seconds in kOS.  Never invoke it here: retain thrust on the
+                // last accepted command, re-seed cheaply from navigation, and
+                // reserve the braking fallback for when that command expires
+                // or the remaining distance is no longer adequate.
+                if not internal["valid"] and now >= next_guidance_reseed {
+                    local failed_reason is internal["reason"].
+                    set mission["pdi_internal"] to pdi_seed(state,landing_target,mission["vehicle"],pdi_config).
+                    set next_guidance_reseed to now+pdi_config["guidance_reseed_interval"].
+                    flight_log_event("pdi_live_reseed","reason="+failed_reason+"|command_age="+
+                        (now-accepted_command["ut"])+"|failures="+mission["telemetry"]["guidance_failures"]).
+                    vacuum_guidance_state(mission,"reseeded","reason="+failed_reason).
+                }
+                local command_remaining is accepted_command["tgo"]-(now-accepted_command["ut"]).
+                local brake_distance is surface_velocity:mag^2/max(0.02,2*vertical_reserve).
+                if command_remaining <= 0 {
+                    vacuum_emergency(mission,"last_valid_command_expired").
+                }else if not acceptable and clearance <= brake_distance+pdi_config["guidance_fallback_margin"] {
+                    vacuum_emergency(mission,"guidance_recovery_brake_gate").
                 }
                 set next_guidance to time:seconds+pdi_config["guidance_interval"].
             }
             if mission["phase"] = "vacuum_pdi" {
                 local command is mission["command"].
                 local elapsed is time:seconds-command["ut"].
+                set mission["telemetry"]["command_age"] to max(0,elapsed).
                 local thrust_direction is command["lambda"]+command["lambda_dot"]*(elapsed-command["jol"]).
                 vacuum_command(mission,pdi_to_raw(thrust_direction,pdi_frame()),command["throttle"]).
             }
@@ -692,10 +771,10 @@ function pdi_run {
     local cancel is gui_:addbutton("Abort PDI / release controls").
     local data is lex().
     for field in POS_LOG_PDI_FIELDS { data:add(field,0). }
-    local mission is lex("config",pdi_config,"site",site,"altitude",terrain_altitude,"heading",target_landing_heading,
+    local mission is lex("config",pdi_config,"site",site,"altitude",terrain_altitude,"heading",target_landing_heading,"target_mode",landing_target_mode,
         "engines",nerv_engines,"fuel_parts",fuel_parts,"vehicle",pdi_vehicle_snapshot(nerv_engines,fuel_parts,pdi_config),
         "bounds",ship:bounds,"running",true,"cancel",false,"diverted",false,"flip_committed",false,
-        "phase","vacuum_plan","reason","planning","solver_reason","not_started","telemetry",data,
+        "phase","vacuum_plan","reason","planning","solver_reason","not_started","guidance_state","not_started","telemetry",data,
         "distance",0,"clearance",0,"desired_vs",0,"stopping_distance",0,"pitch_target",90,
         "last_solution_ut",time:seconds,"command",lex(),"next_display",0,"gui",gui_,"display",display).
     set cancel:onclick to { set mission["cancel"] to true. }.

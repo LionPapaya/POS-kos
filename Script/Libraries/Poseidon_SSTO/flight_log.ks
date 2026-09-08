@@ -35,9 +35,9 @@ set POS_LOGGING_ENABLED to false.
 global POS_LOG_DIRECTORY is "/POS_logs".
 global POS_LOG_FLIGHT_FILE is "".
 global POS_LOG_EVENT_FILE is "".
-// Version 6 adds the active celestial body to every flight sample and records
-// SOI transitions.  The replay can select the matching radius and terrain.
-global POS_LOG_SCHEMA_VERSION is 6.
+// Version 7 adds accepted-command health to PDI samples so a replay can
+// distinguish a live-solver miss from an actual loss of thrust.
+global POS_LOG_SCHEMA_VERSION is 7.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -58,7 +58,8 @@ global POS_LOG_PDI_FIELDS is list(
     "valid","converged","tgo","position_error","velocity_error","ignition_ut",
     "predicted_clearance","predicted_final_mass","iterations","solution_age",
     "vertical_margin","horizontal_speed","saturated","flip_ready","flip_committed",
-    "plane_error","node_dv","node_approved","steer_x","steer_y","steer_z"
+    "plane_error","node_dv","node_approved","steer_x","steer_y","steer_z",
+    "command_valid","command_age","guidance_failures"
 ).
 global POS_LOG_PDI is lex().
 for pdi_field in POS_LOG_PDI_FIELDS { POS_LOG_PDI:add(pdi_field,0). }

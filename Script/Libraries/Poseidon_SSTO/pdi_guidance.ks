@@ -20,7 +20,15 @@ function pdi_defaults {
         "predictor_steps",32,"range_gain",0.25,"velocity_gain",0.7,
         "position_tolerance",15,"velocity_tolerance",0.6,
         "time_tolerance",0.5,"steering_tolerance",2,"convergence_passes",2,
-        "guidance_interval",0.5,"live_iterations",3,"maximum_solution_age",3,
+        "guidance_interval",0.5,"live_iterations",3,
+        // A finite de-orbit burn is not an impulse.  This tighter terminal
+        // residual keeps the measured PDI state inside the live corrector's
+        // capture region without reintroducing the old long low-throttle tail.
+        "deorbit_completion_dv",0.05,"post_node_position_tolerance",250,
+        // A failed live candidate must not cut thrust while the last accepted
+        // powered-descent command is still safe to fly.  Re-seed the corrector
+        // from navigation instead of blocking the control loop in a full plan.
+        "guidance_reseed_interval",2,"guidance_fallback_margin",250,
         "suborbital_replan_interval",2,"suborbital_brake_timeout",120,
         "live_position_tolerance",250,"live_velocity_tolerance",2,
         "live_terrain_samples",16,
@@ -31,7 +39,7 @@ function pdi_defaults {
         // A node is an impulsive approximation.  Stop the finite correction
         // before its low-throttle tail moves the vehicle far from that state;
         // UPFG corrects the remaining residual from the measured state.
-        "node_completion_dv",0.3,"node_terminal_time",2,"post_node_position_tolerance",1000,
+        "node_completion_dv",0.3,"node_terminal_time",2,
         "maximum_plane_burn_fraction",0.08,"maximum_node_burn_fraction",0.08,
         "maximum_translation_speed",25,"maximum_lateral_acceleration",2,
         "maximum_terminal_tilt",25,"terminal_velocity_gain",0.7,
