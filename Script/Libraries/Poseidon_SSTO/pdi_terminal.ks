@@ -8,7 +8,12 @@ function pdi_terminal_command {
     local speed is horizontal_velocity:mag.
     local vertical_speed is vdot(surface_velocity,terminal_up).
     local vertical_budget is max(0,available-gravity).
+    // Target speeds must use the same lateral authority that the final tilt
+    // limiter can actually deliver.  Otherwise low-gravity bodies plan a
+    // braking distance for 2 m/s^2 while a 25-degree command supplies only a
+    // small fraction of that acceleration.
     local lateral_limit is min(terminal_config["maximum_lateral_acceleration"],sqrt(max(0,available^2-gravity^2))*0.8).
+    set lateral_limit to min(lateral_limit,max(0.01,gravity*tan(terminal_config["maximum_terminal_tilt"]))).
     local target_horizontal_velocity is V(0,0,0).
     if terminal_distance > 0.3 {
         local target_speed is min(terminal_config["maximum_translation_speed"],sqrt(2*lateral_limit*terminal_distance)*0.6).
@@ -24,7 +29,7 @@ function pdi_terminal_command {
         set desired_vs to -min(3,max(0.12,sqrt(max(0,clearance)*0.12))).
     }else{
         local hold_height is max(terminal_config["capture_height"],min(terminal_config["handover_altitude"],terminal_distance*0.4+speed^2/max(0.1,2*lateral_limit))).
-        set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-8,3).
+        set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-terminal_config["maximum_terminal_descent_speed"],3).
     }
     // Never demand a descent that consumes the remaining vertical stopping
     // reserve. This gate uses vertical speed and actual local gravity.
@@ -47,4 +52,15 @@ function pdi_flip_gate {
         abs(vertical_speed) <= terminal_config["flip_vertical_speed"] and
         terminal_distance <= terminal_config["capture_distance"] and
         upright_error <= terminal_config["flip_upright_error"] and angular_rate < 2.
+}
+
+function pdi_terminal_aligned_throttle {
+    parameter requested_throttle, alignment_error, terminal_config.
+    // A translational command can reverse faster than the vehicle can turn.
+    // Taper thrust through the useful projection hemisphere, and cut it once
+    // the current attitude would accelerate opposite the requested vector.
+    local full_error is terminal_config["terminal_alignment_full_thrust"].
+    local cutoff_error is terminal_config["terminal_alignment_thrust_cutoff"].
+    local alignment_factor is pdi_clamp((cutoff_error-alignment_error)/max(0.1,cutoff_error-full_error),0,1).
+    return pdi_clamp(requested_throttle,0,1)*alignment_factor.
 }

@@ -2,6 +2,7 @@
 // Poseidon_SSTO/Poseidon_SSTO_Orbit_Main.ks
 // Purpose: ascent and orbital insertion script for Poseidon SSTO.
 // - Loads the Poseidon libraries and runs the aircraft-style ascent/circularization flow.
+set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").

@@ -1,3 +1,4 @@
+set CONFIG:IPU to 2000.
 if not(defined(POS_LOGGING_ENABLED)){
     global POS_LOGGING_ENABLED is false.
 }

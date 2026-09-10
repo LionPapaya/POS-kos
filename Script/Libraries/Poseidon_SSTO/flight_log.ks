@@ -35,9 +35,9 @@ set POS_LOGGING_ENABLED to false.
 global POS_LOG_DIRECTORY is "/POS_logs".
 global POS_LOG_FLIGHT_FILE is "".
 global POS_LOG_EVENT_FILE is "".
-// Version 7 adds accepted-command health to PDI samples so a replay can
-// distinguish a live-solver miss from an actual loss of thrust.
-global POS_LOG_SCHEMA_VERSION is 7.
+// Version 8 adds terminal thrust-alignment error so a replay can distinguish
+// a safe powered handoff from a position capture made with stale attitude.
+global POS_LOG_SCHEMA_VERSION is 8.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -59,7 +59,7 @@ global POS_LOG_PDI_FIELDS is list(
     "predicted_clearance","predicted_final_mass","iterations","solution_age",
     "vertical_margin","horizontal_speed","saturated","flip_ready","flip_committed",
     "plane_error","node_dv","node_approved","steer_x","steer_y","steer_z",
-    "command_valid","command_age","guidance_failures"
+    "command_valid","command_age","guidance_failures","alignment_error"
 ).
 global POS_LOG_PDI is lex().
 for pdi_field in POS_LOG_PDI_FIELDS { POS_LOG_PDI:add(pdi_field,0). }
@@ -225,7 +225,10 @@ function flight_log_begin {
     set POS_LOG_LAST_BODY to ship:body:name.
     for field in POS_LOG_PDI_FIELDS { set POS_LOG_PDI[field] to 0. }
     set POS_LOG_RENDEZVOUS to lex("target_distance",0,"relative_speed",0,"plane_error",0,"phase","inactive","docking_ready",false).
-    flight_log_event("flight_start","mode=" + POS_LOGGING_MODE + "|body=" + POS_LOG_LAST_BODY + "|directory=" + POS_LOG_DIRECTORY).
+    // Record the configured VM budget once at low cost. This lets a later
+    // replay distinguish guidance behavior from a differently configured CPU.
+    flight_log_event("flight_start","mode=" + POS_LOGGING_MODE + "|body=" + POS_LOG_LAST_BODY +
+        "|directory=" + POS_LOG_DIRECTORY + "|ipu=" + CONFIG:IPU).
 }
 
 function flight_log_set_runway {

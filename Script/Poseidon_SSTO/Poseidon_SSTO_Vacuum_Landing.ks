@@ -7,6 +7,7 @@ parameter target_longitude is "ASK".
 parameter target_altitude_override is -1.
 parameter target_landing_heading is 90.
 parameter landing_target_mode is "coordinate".
+set CONFIG:IPU to 2000.
 
 RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_navball.ks").

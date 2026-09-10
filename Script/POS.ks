@@ -1,7 +1,7 @@
 // POS.ks
 // Purpose: top-level launcher/menu for Poseidon scripts.
 // - Loads shared libraries and selects the appropriate Poseidon sub-script (orbit, reentry, docking) based on vessel conditions.
-// Notes: comments inserted only.
+set CONFIG:IPU to 2000.
 if not(defined(POS_LOGGING_ENABLED)) {
     global POS_LOGGING_ENABLED is false.
 }

@@ -7,6 +7,7 @@
 // target port axis.  It will not command final closure until lateral alignment
 // and relative speed are both small.
 
+set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 
 local docking_running is true.

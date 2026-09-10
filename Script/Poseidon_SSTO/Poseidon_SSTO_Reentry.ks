@@ -2,7 +2,7 @@
 // Purpose: main reentry orchestration script.
 // - Invokes libraries and GUI, calculates deorbit nodes and entry guidance.
 // - Coordinates `dap` and entry solver to guide the vehicle to a chosen runway.
-// Notes: header comments only; no code changed.
+set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").

@@ -1,3 +1,4 @@
+set CONFIG:IPU to 2000.
 reset_sys().
 nervson().
 rapiersoff().
@@ -22,7 +23,6 @@ if om_mode_ = "Rendezvous"{
 }
 function do_rsvp{
 get_inputs_rsvp().
-set config:ipu to 2000.
 local correct_nr_nodes is false.
 
 local options is lexicon("create_maneuver_nodes",OM_Nodes,"final_orbit_type",OM_Orbit_Type,"final_orbit_orientation",OM_Orbit_Orientation,"verbose", true).

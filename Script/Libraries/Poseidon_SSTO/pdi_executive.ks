@@ -480,6 +480,10 @@ function vacuum_descent {
         set mission["stopping_distance"] to max(0,-vertical_speed)^2/max(0.02,2*vertical_reserve).
         set mission["telemetry"]["vertical_margin"] to available-gravity.
         set mission["telemetry"]["solution_age"] to max(0,now-mission["last_solution_ut"]).
+        // Outside the explicit alignment phase this records upright error.
+        // The translation controller may store a roll-aware Direction in the
+        // DAP target, so do not assume that suffix is always a raw vector.
+        set mission["telemetry"]["alignment_error"] to vang(ship:facing:vector,surface_up).
         if not mission["flip_committed"] and available < 0.01 {
             vacuum_stop(mission,false,"no_nerv_thrust_manual_control"). return.
         }
@@ -529,11 +533,18 @@ function vacuum_descent {
         if mission["phase"] = "vacuum_pdi" {
             local target_offset is mission["site"]:altitudeposition(mission["altitude"])-ship:position.
             local range_to_tgt is (target_offset-surface_up*vdot(target_offset,surface_up)):mag.
-            // Position, velocity and altitude must all be inside the terminal
-            // capture region. Time-to-go alone cannot establish safe handover.
-            if clearance < pdi_config["handover_altitude"]*1.6 and range_to_tgt < pdi_config["handover_distance"] and
-                surface_velocity:mag < pdi_config["handover_speed"] and vang(ship:facing:vector,surface_up) < 45 {
-                vacuum_phase(mission,"vacuum_translate","terminal position capture").
+            // Position, velocity and altitude establish terminal capture.
+            // Attitude is acquired under continuous terminal control in a
+            // separate phase; requiring it here can strand a valid tangent
+            // descent until its last command expires.
+            if clearance < pdi_config["handover_altitude"]+pdi_config["handover_altitude_margin"] and
+                range_to_tgt < pdi_config["handover_distance"] and
+                surface_velocity:mag < pdi_config["handover_speed"] and
+                horizontal_speed < pdi_config["handover_horizontal_speed"] {
+                flight_log_event("pdi_terminal_capture","clearance="+clearance+"|distance="+range_to_tgt+
+                    "|horizontal_speed="+horizontal_speed+"|vertical_speed="+vertical_speed+
+                    "|facing_up_error="+vang(ship:facing:vector,surface_up)).
+                vacuum_phase(mission,"vacuum_terminal_align","terminal position and velocity capture").
                 gear on. brakes on.
             }else if now >= next_guidance {
                 local frame is pdi_frame().
@@ -622,10 +633,18 @@ function vacuum_descent {
                     vacuum_guidance_state(mission,"reseeded","reason="+failed_reason).
                 }
                 local command_remaining is accepted_command["tgo"]-(now-accepted_command["ut"]).
-                local brake_distance is surface_velocity:mag^2/max(0.02,2*vertical_reserve).
+                // Clearance is a vertical quantity.  Comparing it with a
+                // stopping distance made from total surface speed treats the
+                // planned horizontal braking as downward motion and can trip
+                // the fallback on the first live iteration after ignition.
+                // The vertical stopping distance is already refreshed from
+                // measured vertical speed above.
+                local brake_distance is mission["stopping_distance"].
                 if command_remaining <= 0 {
                     vacuum_emergency(mission,"last_valid_command_expired").
                 }else if not acceptable and clearance <= brake_distance+pdi_config["guidance_fallback_margin"] {
+                    flight_log_event("pdi_guidance_brake_gate","clearance="+clearance+"|vertical_stopping_distance="+
+                        brake_distance+"|horizontal_speed="+horizontal_speed+"|command_remaining="+command_remaining).
                     vacuum_emergency(mission,"guidance_recovery_brake_gate").
                 }
                 set next_guidance to time:seconds+pdi_config["guidance_interval"].
@@ -650,6 +669,25 @@ function vacuum_descent {
                 vacuum_phase(mission,"vacuum_translate","emergency landing at current site").
             }
         }
+        if mission["phase"] = "vacuum_terminal_align" {
+            gear on. brakes on.
+            // Acquire one invariant attitude before asking the terminal
+            // position loop to translate.  Chasing its changing lateral
+            // vector here can prevent alignment from ever completing.
+            set mission["desired_vs"] to -2.
+            local vertical_command is pdi_clamp(gravity+(mission["desired_vs"]-vertical_speed)*0.9,0,available).
+            local alignment_error is vang(ship:facing:vector,surface_up).
+            set mission["telemetry"]["alignment_error"] to alignment_error.
+            set mission["telemetry"]["saturated"] to vertical_command >= available.
+            local terminal_throttle is pdi_terminal_aligned_throttle(vertical_command/max(0.001,available),alignment_error,pdi_config).
+            vacuum_command(mission,surface_up,terminal_throttle).
+            if alignment_error <= pdi_config["handover_alignment_error"] and ship:angularvel:mag*constant:radtodeg < 2 {
+                flight_log_event("pdi_terminal_alignment_ready","error_deg="+alignment_error+
+                    "|angular_rate_deg_s="+ship:angularvel:mag*constant:radtodeg+"|clearance="+clearance+
+                    "|horizontal_speed="+horizontal_speed+"|vertical_speed="+vertical_speed).
+                vacuum_phase(mission,"vacuum_translate","terminal thrust alignment acquired").
+            }
+        }
         if mission["phase"] = "vacuum_translate" {
             gear on. brakes on.
             local offset is mission["site"]:altitudeposition(mission["altitude"])-ship:position.
@@ -657,7 +695,12 @@ function vacuum_descent {
             set mission["desired_vs"] to terminal_command["desired_vs"].
             set mission["telemetry"]["saturated"] to terminal_command["saturated"].
             local thrust_command is terminal_command["acceleration"].
-            vacuum_command(mission,thrust_command,thrust_command:mag/max(0.001,available)).
+            local steering_command is thrust_command.
+            if steering_command:mag < 0.01 { set steering_command to surface_up. }
+            local alignment_error is vang(ship:facing:vector,steering_command).
+            set mission["telemetry"]["alignment_error"] to alignment_error.
+            local terminal_throttle is pdi_terminal_aligned_throttle(thrust_command:mag/max(0.001,available),alignment_error,pdi_config).
+            vacuum_command(mission,steering_command,terminal_throttle).
             // Establish wheel heading and roll before committing engine cutoff.
             if thrust_command:mag > 0.01 {
                 local wheel_top is heading(mission["heading"],0):vector*-1.
