@@ -25,11 +25,19 @@ function pdi_terminal_command {
     local lateral is pdi_limit((target_horizontal_velocity-horizontal_velocity)*terminal_config["terminal_velocity_gain"],lateral_limit).
     local captured is terminal_distance <= terminal_config["capture_distance"] and speed <= terminal_config["capture_speed"].
     local desired_vs is 0.
+    local hold_height is 0.
     if captured {
         set desired_vs to -min(3,max(0.12,sqrt(max(0,clearance)*0.12))).
     }else{
-        local hold_height is max(terminal_config["capture_height"],min(terminal_config["handover_altitude"],terminal_distance*0.4+speed^2/max(0.1,2*lateral_limit))).
-        set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-terminal_config["maximum_terminal_descent_speed"],3).
+        // capture_height is a ceiling for the lateral-braking hold, not a
+        // hard altitude floor.  Flight 63 reached the floor with residual
+        // translation error and then consumed its reserve hovering there.
+        // Let the hold height contract with the remaining lateral energy so
+        // the vehicle keeps descending while it completes that translation.
+        set hold_height to min(terminal_config["capture_height"],min(terminal_config["handover_altitude"],terminal_distance*0.4+speed^2/max(0.1,2*lateral_limit))).
+        // Terminal translation may arrest descent to shed genuinely large
+        // lateral energy, but it must never climb to regain the hold height.
+        set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-terminal_config["maximum_terminal_descent_speed"],0).
     }
     // Never demand a descent that consumes the remaining vertical stopping
     // reserve. This gate uses vertical speed and actual local gravity.
@@ -40,7 +48,8 @@ function pdi_terminal_command {
     local achieved is pdi_vertical_priority(terminal_up,requested,available,terminal_config["maximum_terminal_tilt"]).
     return lex("acceleration",achieved,"desired_vs",desired_vs,"distance",terminal_distance,"horizontal_speed",speed,
         "captured",captured,"saturated",requested:mag > available or (achieved-requested):mag > 0.01,
-        "vertical_margin",available-gravity).
+        "vertical_margin",available-gravity,"hold_height",hold_height,
+        "descent_committed",not captured and desired_vs < -0.12).
 }
 
 function pdi_flip_gate {

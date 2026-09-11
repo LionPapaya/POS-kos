@@ -35,9 +35,8 @@ set POS_LOGGING_ENABLED to false.
 global POS_LOG_DIRECTORY is "/POS_logs".
 global POS_LOG_FLIGHT_FILE is "".
 global POS_LOG_EVENT_FILE is "".
-// Version 8 adds terminal thrust-alignment error so a replay can distinguish
-// a safe powered handoff from a position capture made with stale attitude.
-global POS_LOG_SCHEMA_VERSION is 8.
+// Version 10 adds terminal hold-height and descent-commit evidence.
+global POS_LOG_SCHEMA_VERSION is 10.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -52,6 +51,7 @@ global POS_LOG_LAST_GPWS_REASON is "".
 global POS_LOG_LAST_PDI_STATE is "".
 global POS_LOG_LAST_PDI_SATURATED is "".
 global POS_LOG_LAST_PDI_FLIP_READY is "".
+global POS_LOG_LAST_PDI_TERMINAL_DESCENT is "".
 global POS_LOG_LAST_RENDEZVOUS_STATE is "".
 global POS_LOG_LAST_BODY is "".
 global POS_LOG_PDI_FIELDS is list(
@@ -59,7 +59,8 @@ global POS_LOG_PDI_FIELDS is list(
     "predicted_clearance","predicted_final_mass","iterations","solution_age",
     "vertical_margin","horizontal_speed","saturated","flip_ready","flip_committed",
     "plane_error","node_dv","node_approved","steer_x","steer_y","steer_z",
-    "command_valid","command_age","guidance_failures","alignment_error"
+    "command_valid","command_age","guidance_failures","alignment_error",
+    "terminal_hold_height","terminal_descent_committed"
 ).
 global POS_LOG_PDI is lex().
 for pdi_field in POS_LOG_PDI_FIELDS { POS_LOG_PDI:add(pdi_field,0). }
@@ -125,6 +126,11 @@ function flight_log_capture_pdi {
     if telemetry["flip_ready"]:tostring <> POS_LOG_LAST_PDI_FLIP_READY {
         flight_log_event("pdi_flip_gate","ready="+telemetry["flip_ready"]+"|horizontal_speed="+telemetry["horizontal_speed"]).
         set POS_LOG_LAST_PDI_FLIP_READY to telemetry["flip_ready"]:tostring.
+    }
+    if telemetry["terminal_descent_committed"]:tostring <> POS_LOG_LAST_PDI_TERMINAL_DESCENT {
+        flight_log_event("pdi_terminal_descent_commit","active="+telemetry["terminal_descent_committed"]+
+            "|hold_height="+telemetry["terminal_hold_height"]+"|horizontal_speed="+telemetry["horizontal_speed"]).
+        set POS_LOG_LAST_PDI_TERMINAL_DESCENT to telemetry["terminal_descent_committed"]:tostring.
     }
     if POS_LOG_LEVEL < 2 { return. }
     if POS_LOG_LEVEL = 2 and time:seconds < POS_LOG_NEXT_SAMPLE_TIME { return. }
@@ -221,6 +227,7 @@ function flight_log_begin {
     set POS_LOG_LAST_PDI_STATE to "".
     set POS_LOG_LAST_PDI_SATURATED to "".
     set POS_LOG_LAST_PDI_FLIP_READY to "".
+    set POS_LOG_LAST_PDI_TERMINAL_DESCENT to "".
     set POS_LOG_LAST_RENDEZVOUS_STATE to "".
     set POS_LOG_LAST_BODY to ship:body:name.
     for field in POS_LOG_PDI_FIELDS { set POS_LOG_PDI[field] to 0. }

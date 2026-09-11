@@ -694,6 +694,8 @@ function vacuum_descent {
             local terminal_command is pdi_terminal_command(offset,surface_velocity,surface_up,clearance,gravity,available,pdi_config).
             set mission["desired_vs"] to terminal_command["desired_vs"].
             set mission["telemetry"]["saturated"] to terminal_command["saturated"].
+            set mission["telemetry"]["terminal_hold_height"] to terminal_command["hold_height"].
+            set mission["telemetry"]["terminal_descent_committed"] to terminal_command["descent_committed"].
             local thrust_command is terminal_command["acceleration"].
             local steering_command is thrust_command.
             if steering_command:mag < 0.01 { set steering_command to surface_up. }
