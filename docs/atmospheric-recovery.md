@@ -55,15 +55,7 @@ A screened off-field site is a coarse terrain candidate, not a surveyed runway. 
 
 ## Validation and telemetry
 
-No POS aerodynamic simulation scenario or `tools/test-pos all` run was used for this change, as requested. Source checks use `tools/test-pos audit` and the independent KerboScript language-server parser. These do not establish flight performance.
-
-For arithmetic/geometry checks in actual kOS, run:
-
-```kerboscript
-runpath("0:/Checks/POS_Atmosphere_Checks.ks").
-```
-
-The check script executes the real pure functions for heading wrap, high-speed AoA, orbital energy and apsides, the approach correction, exit latching, pressure/load/energy guards, and footprints at the longitude seam and near the pole. It does not command steering, thrust, warp or nodes and does not call a trajectory predictor. The in-game checks and flight cases below still need execution in KSP.
+The atmospheric behavior requires validation in KSP/FAR. Source auditing and syntax parsing performed during development do not establish flight performance. Development tools and the standalone math-check script are maintained locally and are not included in this repository.
 
 Flight logger schema **9** adds `atmosphere_*` columns for energy and energy rate, eccentricity, apsides, pressure in kPa, aerodynamic g, heating proxy, planned periapsis, exit latch/confirmation, reason, plan validity/age and retarget count. Low mode records transition events; medium retains one-second sampling; high retains per-control-tick sampling. Existing bank, AoA, throttle, RCS, envelope and terrain fields remain available. No logger runs inside the onboard trajectory integrators.
 
