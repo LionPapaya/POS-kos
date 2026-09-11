@@ -209,5 +209,3 @@ When adding an abort mode, keep its behavior behind the abort-mode dispatcher an
 ### Aerobraking and high-energy entry
 
 Select **Aerobraking (single pass)** in POS, or run `0:/POS6.ks`, for a Poseidon return on the inbound Kerbin patch. The onboard FAR planner selects a 35–50 km approach periapsis, seeking the lowest forecast exit orbit within its load margins. It performs one pass and returns control to coast, with no post-pass periapsis burn or automatic landing. POS3 now handles hyperbolic entry, bounded solver failures and automatic reachable runway/land alternates.
-
-See [atmospheric recovery](docs/atmospheric-recovery.md) for operation, configuration, heating-estimate limitations, telemetry and the required KSP/FAR flight validation.
