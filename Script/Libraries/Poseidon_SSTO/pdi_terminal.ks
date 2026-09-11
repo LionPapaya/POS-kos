@@ -39,10 +39,16 @@ function pdi_terminal_command {
         // lateral energy, but it must never climb to regain the hold height.
         set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-terminal_config["maximum_terminal_descent_speed"],0).
     }
-    // Never demand a descent that consumes the remaining vertical stopping
-    // reserve. This gate uses vertical speed and actual local gravity.
-    local safe_descent is sqrt(max(0,2*vertical_budget*max(0,clearance-1)))*0.6.
-    set desired_vs to max(desired_vs,-max(0.12,safe_descent)).
+    if clearance <= terminal_config["ground_commit_clearance"] {
+        // In the final metres, use a deliberate low-speed descent.  The
+        // executive cuts thrust as soon as the ground-commit envelope holds.
+        set desired_vs to -terminal_config["ground_commit_descent_speed"].
+    } else {
+        // Never demand a descent that consumes the remaining vertical
+        // stopping reserve. This gate uses vertical speed and local gravity.
+        local safe_descent is sqrt(max(0,2*vertical_budget*max(0,clearance-1)))*0.6.
+        set desired_vs to max(desired_vs,-max(0.12,safe_descent)).
+    }
     local vertical is gravity+(desired_vs-vertical_speed)*0.9.
     local requested is terminal_up*max(0,vertical)+lateral.
     local achieved is pdi_vertical_priority(terminal_up,requested,available,terminal_config["maximum_terminal_tilt"]).
@@ -61,6 +67,18 @@ function pdi_flip_gate {
         abs(vertical_speed) <= terminal_config["flip_vertical_speed"] and
         terminal_distance <= terminal_config["capture_distance"] and
         upright_error <= terminal_config["flip_upright_error"] and angular_rate < 2.
+}
+
+function pdi_ground_commit_gate {
+    parameter clearance, horizontal_speed, vertical_speed, terminal_distance, angular_rate, terminal_config.
+    // Relax upright/position capture at the last metres: pitch-over is the
+    // next phase, while speed and rotation limits still protect touchdown.
+    return clearance <= terminal_config["ground_commit_clearance"] and
+        vertical_speed <= -terminal_config["ground_commit_min_vertical_speed"] and
+        vertical_speed >= -terminal_config["ground_commit_max_vertical_speed"] and
+        horizontal_speed <= terminal_config["ground_commit_max_horizontal_speed"] and
+        terminal_distance <= terminal_config["ground_commit_max_distance"] and
+        angular_rate < terminal_config["ground_commit_max_angular_rate"].
 }
 
 function pdi_terminal_aligned_throttle {

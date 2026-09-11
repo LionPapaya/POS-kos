@@ -80,6 +80,13 @@ function vacuum_tick {
     set mission["clearance"] to pdi_ground_clearance(mission["bounds"]).
     set mission["telemetry"]["horizontal_speed"] to lateral_velocity:mag.
     set mission["telemetry"]["flip_committed"] to mission["flip_committed"].
+    // A solution's tgo is measured from the accepted command epoch.  Keep
+    // the live value in telemetry instead of displaying the solver's
+    // original duration throughout the powered descent.
+    if mission["command"]:haskey("tgo") {
+        local command_elapsed is max(0,time:seconds-mission["command"]["ut"]).
+        set mission["telemetry"]["tgo"] to max(0,mission["command"]["tgo"]-command_elapsed).
+    }
     dap:update().
     flight_log_capture_pdi(mission["telemetry"],mission["solver_reason"]).
     flight_log_capture_vacuum_guidance(mission["phase"],mission["distance"],mission["clearance"],surface_velocity:mag,
@@ -88,15 +95,21 @@ function vacuum_tick {
     flight_log_tick("vacuum_landing",mission["phase"],mission["reason"]).
     if time:seconds >= mission["next_display"] {
         local ignition_status is "".
+        local tgo_status is " | Tgo "+round(mission["telemetry"]["tgo"],1)+" s".
         if mission["phase"] = "vacuum_coast" and mission["telemetry"]["ignition_ut"] > time:seconds {
             set ignition_status to " | PDI ignition in "+round(mission["telemetry"]["ignition_ut"]-time:seconds,1)+" s".
         }else if mission["phase"] = "vacuum_pdi" {
             set ignition_status to " | PDI ignition: NOW".
+        }else if mission["phase"] = "vacuum_terminal_align" or mission["phase"] = "vacuum_translate" or
+            mission["phase"] = "vacuum_pitch_over" {
+            // The tangent-burn command has completed; a numeric burn Tgo is
+            // no longer meaningful, so never leave its last value on-screen.
+            set tgo_status to " | Tgo terminal guidance".
         }
         set mission["display"]:text to mission["phase"]+" | "+mission["reason"]+
             " | Range "+round(mission["distance"],1)+" m | Clearance "+round(mission["clearance"],1)+" m"+
             " | H "+round(lateral_velocity:mag,2)+" m/s | V "+round(ship:verticalspeed,2)+" m/s"+
-            " | PDI "+mission["solver_reason"]+" | Tgo "+round(mission["telemetry"]["tgo"],1)+" s"+ignition_status.
+            " | PDI "+mission["solver_reason"]+tgo_status+ignition_status.
         set mission["next_display"] to time:seconds+0.5.
     }
 }
@@ -710,8 +723,18 @@ function vacuum_descent {
             }
             local ready is pdi_flip_gate(clearance,horizontal_speed,vertical_speed,terminal_command["distance"],
                 vang(ship:facing:vector,surface_up),ship:angularvel:mag*constant:radtodeg,ship:status = "LANDED",pdi_config).
+            local ground_commit is pdi_ground_commit_gate(clearance,horizontal_speed,vertical_speed,terminal_command["distance"],
+                ship:angularvel:mag*constant:radtodeg,pdi_config).
+            if ground_commit and not mission["ground_commit_logged"] {
+                set mission["ground_commit_logged"] to true.
+                flight_log_event("pdi_ground_commit","clearance="+clearance+"|horizontal_speed="+horizontal_speed+
+                    "|vertical_speed="+vertical_speed+"|distance="+terminal_command["distance"]+
+                    "|angular_rate="+ship:angularvel:mag*constant:radtodeg).
+            }
+            if ground_commit { set ready to true. }
             set mission["telemetry"]["flip_ready"] to ready.
-            if ready { if flip_since < 0 { set flip_since to now. } }
+            if ground_commit { set flip_since to now-pdi_config["flip_stable_time"]. }
+            else if ready { if flip_since < 0 { set flip_since to now. } }
             else { set flip_since to -1. }
             if flip_since >= 0 and now-flip_since >= pdi_config["flip_stable_time"] {
                 set mission["flip_committed"] to true.
@@ -821,6 +844,7 @@ function pdi_run {
         "bounds",ship:bounds,"running",true,"cancel",false,"diverted",false,"flip_committed",false,
         "phase","vacuum_plan","reason","planning","solver_reason","not_started","guidance_state","not_started","telemetry",data,
         "distance",0,"clearance",0,"desired_vs",0,"stopping_distance",0,"pitch_target",90,
+        "ground_commit_logged",false,
         "last_solution_ut",time:seconds,"command",lex(),"next_display",0,"gui",gui_,"display",display).
     set cancel:onclick to { set mission["cancel"] to true. }.
     gui_:show().
