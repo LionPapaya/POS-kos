@@ -336,10 +336,9 @@ function pdi_find_ignition {
     local upper_ut is impact_ut-max(20,0.3*guess).
     local best is lex("valid",false,"reason","no_feasible_powered_descent","score",1e9,"attempts",0).
     if upper_ut <= lower_ut { return best. }
-    // Start at the analytic burn-time estimate, then alternate to nearby
-    // early/late starts only if it cannot be validated.  The old ascending
-    // 12-point sweep could spend minutes in kOS finding plans that were never
-    // used, because it scored every candidate after already finding a safe one.
+    // Evaluate every configured starting point.  A candidate that converges
+    // first is not necessarily the best one: retain all validated candidates
+    // and rank them by arrival accuracy, clearance, throttle and burn time.
     local candidate_fractions is list(0.6,0.45,0.75,0.3,0.9).
     local candidate_count is min(pdi_config["ignition_candidates"],candidate_fractions:length).
     local i is 0.
@@ -369,23 +368,40 @@ function pdi_find_ignition {
             }
             set clearance to min(clearance,pdi_path_clearance(coast_path,earliest_ut,pdi_config)).
             if clearance >= pdi_config["terrain_margin"] and position_error < 100 and velocity_error < 2 {
-                // A safe, validated plan is enough to proceed.  Do not make
-                // the pilot wait for lower-score alternatives.
-                set best to lex("valid",true,"reason","powered_descent_ready","score",0,"ignition_ut",ignition_ut,
-                    "arrival_ut",ignition_ut+solve["tgo"],"solution",solve,"clearance",clearance,
-                    "position_error",position_error,"velocity_error",velocity_error,"state",state,"attempts",i+1).
-                pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" accepted after validation").
-                return best.
+                // Lower is better.  Clearance is a safety margin, while the
+                // remaining terms prefer an accurate, efficient arrival.
+                local score is position_error/100+velocity_error/2+solve["command_throttle"]+
+                    max(0,pdi_config["terrain_margin"]*2-clearance)/max(1,pdi_config["terrain_margin"])+
+                    solve["tgo"]/max(1,guess)*0.1.
+                flight_log_event("pdi_ignition_candidate","index="+(i+1)+"|valid=true|converged=true|score="+score+
+                    "|clearance="+clearance+"|position_error="+position_error+"|velocity_error="+velocity_error+
+                    "|throttle="+solve["command_throttle"]+"|ignition_ut="+ignition_ut).
+                if not best["valid"] or score < best["score"] {
+                    set best to lex("valid",true,"reason","powered_descent_ready","score",score,"ignition_ut",ignition_ut,
+                        "arrival_ut",ignition_ut+solve["tgo"],"solution",solve,"clearance",clearance,
+                        "position_error",position_error,"velocity_error",velocity_error,"state",state,"attempts",i+1).
+                    pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" is current best; continuing evaluation").
+                }else{
+                    pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" valid but not best").
+                }
+            }else{
+                pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" rejected by terrain or final-state validation").
+                flight_log_event("pdi_ignition_candidate","index="+(i+1)+"|valid=false|converged=true|reason=validation_failed|clearance="+
+                    clearance+"|position_error="+position_error+"|velocity_error="+velocity_error+"|ignition_ut="+ignition_ut).
             }
-            pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" rejected by terrain or final-state validation").
         }else if solve["valid"] and solve["converged"] {
             pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+" rejected: commanded throttle above 98%").
+            flight_log_event("pdi_ignition_candidate","index="+(i+1)+"|valid=false|converged=true|reason=throttle_limit|throttle="+
+                solve["command_throttle"]+"|ignition_ut="+ignition_ut).
         }else{
             pdi_planning_status("ignition","candidate "+(i+1)+"/"+candidate_count+": "+solve["reason"]).
+            flight_log_event("pdi_ignition_candidate","index="+(i+1)+"|valid="+solve["valid"]+"|converged="+solve["converged"]+
+                "|reason="+solve["reason"]+"|ignition_ut="+ignition_ut).
         }
         set i to i+1.
         wait 0.
     }
+    set best["attempts"] to candidate_count.
     return best.
 }
 

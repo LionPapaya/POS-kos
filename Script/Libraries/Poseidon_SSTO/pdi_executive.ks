@@ -927,7 +927,7 @@ function pdi_run {
             vacuum_solver_telemetry(mission,plan["pdi"]["solution"]).
             flight_log_event("pdi_plan_ready","ignition_ut="+data["ignition_ut"]+"|arrival_ut="+plan["pdi"]["arrival_ut"]+
                 "|clearance="+data["predicted_clearance"]+"|position_error="+plan["pdi"]["position_error"]+"|velocity_error="+plan["pdi"]["velocity_error"]+
-                "|ignition_attempts="+plan["pdi"]["attempts"]+"|candidate_limit="+pdi_config["ignition_candidates"]).
+                "|selected_score="+plan["pdi"]["score"]+"|ignition_attempts="+plan["pdi"]["attempts"]+"|candidate_limit="+pdi_config["ignition_candidates"]).
             local decision is vacuum_approve_node(mission,plan["node"],"deorbit","Execute this node, then automatically fly PDI and land at the displayed target.").
             if decision = "execute" {
                 if not vacuum_execute_node(mission,plan["node"],"deorbit") { vacuum_stop(mission,false,"deorbit_burn_incomplete_manual_control"). return. }
