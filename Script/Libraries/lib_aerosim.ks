@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/atmosphere.ks").
 // Libraries/lib_aerosim.ks
 // Purpose: simple simulation helpers and aerodynamic wrappers used by guidance and control code.
 // - Provides simstate creation/cloning (`current_simstate`, `clone_simstate`).
@@ -6,6 +7,7 @@
 // Notes: Comments added only — no behavior changes.
 FUNCTION current_simstate {
     RETURN  LEXICON(
+        "epoch_ut",TIME:SECONDS,
         "simtime",0,
         "position",-SHIP:ORBIT:BODY:POSITION,
         "velocity",SHIP:VELOCITY:ORBIT,
@@ -19,6 +21,7 @@ FUNCTION clone_simstate {
     PARAMETER simstate.
 
     RETURN  LEXICON(
+        "epoch_ut",simstate_epoch(simstate),
         "simtime",simstate["simtime"],
         "position",simstate["position"],
         "velocity",simstate["velocity"],
@@ -26,6 +29,20 @@ FUNCTION clone_simstate {
         "altitude",simstate["altitude"],
         "latlong",simstate["latlong"]
     ).
+}
+
+// The planet rotates while the forecast advances, and real time also passes
+// while kOS evaluates it. Carry the start epoch so both are accounted for.
+function simstate_epoch {
+    parameter state.
+    if state:haskey("epoch_ut") { return state["epoch_ut"]. }
+    return time:seconds-state["simtime"].
+}
+function sim_geoposition {
+    parameter position, epoch_ut, simtime, angular_velocity is BODY:angularvel.
+    local angle is angular_velocity:mag*constant:radtodeg*(epoch_ut+simtime-time:seconds).
+    if angular_velocity:mag < 0.000000001 { return vec2pos(position). }
+    return vec2pos(rodrigues(position,angular_velocity,-angle)).
 }
 
 function gravitacc {
@@ -53,12 +70,13 @@ function update_simstate {
 
     // Return the new simstate with updated data
     return lexicon(
+        "epoch_ut",simstate_epoch(simstate),
         "simtime", simstate["simtime"] + timestep,
         "position", new_position,
         "velocity", new_velocity,
         "surfvel", new_velocity - vcrs(BODY:angularvel, new_position),
         "altitude", new_position:mag - BODY:radius,
-        "latlong", vec2pos(new_position)
+        "latlong", sim_geoposition(new_position,simstate_epoch(simstate),simstate["simtime"]+timestep)
 
     ).
 }
@@ -78,12 +96,13 @@ function update_simstate_total_accel {
     local new_position to simstate["position"] + simstate["velocity"] * timestep + 0.5 * total_accel * timestep^2.
 
     return lexicon(
+        "epoch_ut",simstate_epoch(simstate),
         "simtime", simstate["simtime"] + timestep,
         "position", new_position,
         "velocity", new_velocity,
         "surfvel", new_velocity - vcrs(sim_context_angularvel, new_position),
         "altitude", new_position:mag - sim_context_radius,
-        "latlong", vec2pos(new_position)
+        "latlong", sim_geoposition(new_position,simstate_epoch(simstate),simstate["simtime"]+timestep)
     ).
 }
 
@@ -102,6 +121,7 @@ function simulate_trajectory {
     parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
     parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
     parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
+    parameter deadline_ut is 1e30.
     //if EGAOA it has to check every timestep to get the new aoa for that alt using AVES["EGAOA"](simstate["altitude"])
 
 
@@ -114,8 +134,11 @@ function simulate_trajectory {
     }
 
     until temp_simstate["altitude"] < alt_ or temp_simstate["altitude"] > max_alt {
+        if time:seconds >= deadline_ut or timestep <= 0 or
+            temp_simstate["simtime"]-simstate["simtime"] > AVES["Entry"]["max_prediction_time"] { return 0. }
+
         if aoa_temp = "EGAOA"{
-            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+            set aoa to entry_command_aoa(temp_simstate["altitude"],temp_simstate["surfvel"]:mag).
         }else{
             set aoa to aoa_temp.
         }
@@ -149,6 +172,7 @@ function simulate_trajectory_time {
     parameter sim_context_vessel_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
     parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
     parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
+    parameter deadline_ut is 1e30.
 
     local temp_simstate is simstate.
     local t0 is simstate["simtime"].
@@ -160,8 +184,11 @@ function simulate_trajectory_time {
     }
 
     until temp_simstate["simtime"] - t0 >= t {
+        if time:seconds >= deadline_ut or timestep <= 0 or
+            temp_simstate["simtime"]-simstate["simtime"] > AVES["Entry"]["max_prediction_time"] { return 0. }
+
         if aoa_temp = "EGAOA"{
-            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+            set aoa to entry_command_aoa(temp_simstate["altitude"],temp_simstate["surfvel"]:mag).
         }else{
             set aoa to aoa_temp.
         }
@@ -195,7 +222,7 @@ function simulate_trajectory_hed{
 
     until abs(compass_for_simstate(temp_simstate)-hed) < toll or temp_simstate["altitude"] < min_alt or temp_simstate["surfvel"]:mag < min_vel {
         if aoa_temp = "EGAOA"{
-            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+            set aoa to entry_command_aoa(temp_simstate["altitude"],temp_simstate["surfvel"]:mag).
         }else{
             set aoa to aoa_temp.
         }
@@ -248,7 +275,7 @@ function simulate_trajectory_hed_pos{
 
     until abs(compass_for_simstate(temp_simstate)-hed) < toll or temp_simstate["altitude"] < min_alt or temp_simstate["surfvel"]:mag < min_vel {
         if aoa_temp = "EGAOA"{
-            set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
+            set aoa to entry_command_aoa(temp_simstate["altitude"],temp_simstate["surfvel"]:mag).
         }else{
             set aoa to aoa_temp.
         }

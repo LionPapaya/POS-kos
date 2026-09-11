@@ -11,15 +11,98 @@ function calibration_reset_file {
     log header to path.
 }
 
+// Calibration must remain usable when an older kOS build or a different FAR
+// bridge omits a convenience suffix.  HASSUFFIX is universal in the supported
+// kOS releases, so optional calls are negotiated instead of aborting the run.
+function calibration_engine_uid {
+    parameter engine, engine_index.
+    if engine:hassuffix("UID") { return engine:uid. }
+    return "index-" + engine_index.
+}
+
+function calibration_engine_name {
+    parameter engine, engine_index.
+    if engine:hassuffix("NAME") { return engine:name. }
+    return "engine-" + engine_index.
+}
+
+function calibration_engine_ignition {
+    parameter engine.
+    if engine:hassuffix("IGNITION") { return engine:ignition. }
+    return false.
+}
+
+function calibration_engine_flameout {
+    parameter engine.
+    if engine:hassuffix("FLAMEOUT") { return engine:flameout. }
+    return false.
+}
+
+function calibration_engine_has_pressure_curve {
+    parameter engine.
+    local supported is true.
+    if not engine:hassuffix("POSSIBLETHRUSTAT") { set supported to false. }
+    if not engine:hassuffix("MAXTHRUSTAT") { set supported to false. }
+    if not engine:hassuffix("AVAILABLETHRUSTAT") { set supported to false. }
+    if not engine:hassuffix("ISPAT") { set supported to false. }
+    return supported.
+}
+
+function calibration_current_pressure {
+    local body_atmosphere is ship:body:atm.
+    if not body_atmosphere:exists { return 0. }
+    if body_atmosphere:hassuffix("ALTITUDEPRESSURE") {
+        return body_atmosphere:altitudepressure(ship:altitude).
+    }
+    return 0.
+}
+
 function calibration_engine_curve {
     parameter engine, engine_index, mode_name, pressures, path.
+    local engine_uid is calibration_engine_uid(engine,engine_index).
+    local engine_name is calibration_engine_name(engine,engine_index).
+    local ignition_state is calibration_engine_ignition(engine).
+    local flameout_state is calibration_engine_flameout(engine).
     for pressure in pressures {
-        log engine_index + "," + engine:uid + "," + engine:name + "," + mode_name + "," +
-            engine:ignition + "," + engine:flameout + "," + pressure + "," +
+        log engine_index + "," + engine_uid + "," + engine_name + "," + mode_name + "," +
+            ignition_state + "," + flameout_state + "," + pressure + "," +
             engine:possiblethrustat(pressure) + "," + engine:maxthrustat(pressure) + "," +
             engine:availablethrustat(pressure) + "," + engine:ispat(pressure) + "," +
             ship:altitude + "," + ship:airspeed to path.
     }
+}
+
+function calibration_engine_observed {
+    parameter engine, engine_index, mode_name, path.
+    local possible_thrust is 0.
+    if engine:hassuffix("POSSIBLETHRUST") {
+        set possible_thrust to engine:possiblethrust.
+    } else if engine:hassuffix("AVAILABLETHRUST") {
+        set possible_thrust to engine:availablethrust.
+    }
+    local max_thrust is possible_thrust.
+    if engine:hassuffix("MAXTHRUST") { set max_thrust to engine:maxthrust. }
+    local available_thrust is possible_thrust.
+    if engine:hassuffix("AVAILABLETHRUST") { set available_thrust to engine:availablethrust. }
+    local current_isp is 0.
+    if engine:hassuffix("ISP") { set current_isp to engine:isp. }
+
+    log engine_index + "," + calibration_engine_uid(engine,engine_index) + "," +
+        calibration_engine_name(engine,engine_index) + "," + mode_name + "," +
+        calibration_engine_ignition(engine) + "," + calibration_engine_flameout(engine) + "," +
+        calibration_current_pressure() + "," + possible_thrust + "," + max_thrust + "," +
+        available_thrust + "," + current_isp + "," + ship:altitude + "," +
+        ship:airspeed to path.
+}
+
+function calibration_export_engine_mode {
+    parameter engine, engine_index, mode_name, pressures, path.
+    if calibration_engine_has_pressure_curve(engine) {
+        calibration_engine_curve(engine,engine_index,mode_name,pressures,path).
+        return true.
+    }
+    calibration_engine_observed(engine,engine_index,mode_name,path).
+    return false.
 }
 
 function calibration_set_aero_configuration {
@@ -68,11 +151,19 @@ for calibration_body in calibration_bodies {
 }
 print "Exported " + calibration_bodies:length + " bodies.".
 
-// BOUNDS values are in its own vessel-oriented coordinates, not the raw KSP
-// world axes. Reading SHIP:BOUNDS once avoids repeatedly forcing a kOS yield.
-local vessel_bounds is ship:bounds.
-local bounds_min is vessel_bounds:relmin.
-local bounds_max is vessel_bounds:relmax.
+// BOUNDS was added after the original kOS releases.  Use it when present, and
+// leave explicit zero dimensions in the metadata on a runtime without it.
+// RELMIN/RELMAX are in vessel-oriented coordinates, not raw KSP world axes.
+local bounds_min is V(0,0,0).
+local bounds_max is V(0,0,0).
+if ship:hassuffix("BOUNDS") {
+    // Reading SHIP:BOUNDS once avoids repeatedly forcing a kOS yield.
+    local vessel_bounds is ship:bounds.
+    set bounds_min to vessel_bounds:relmin.
+    set bounds_max to vessel_bounds:relmax.
+} else {
+    print "Craft bounds unavailable on this kOS version; exporting zeros.".
+}
 local bounds_size is bounds_max-bounds_min.
 local calibration_parts is list().
 list parts in calibration_parts.
@@ -84,8 +175,9 @@ log ship:name + "," + ship:body:name + "," + ship:status + "," + ship:mass + ","
     bounds_size:x + "," + bounds_size:y + "," + bounds_size:z to craft_path.
 print "Exported craft bounds and mass.".
 
-// POSSIBLETHRUSTAT remains useful when an engine is shut down. MAXTHRUSTAT
-// and AVAILABLETHRUSTAT are included so enabled/limited behavior is visible.
+// Pressure-query suffixes are used only when the installed Engine structure
+// advertises the complete set. Otherwise each mode gets one observed sample
+// at the current pressure; the desktop loader treats that as a constant curve.
 local pressures is list(0,0.01,0.025,0.05,0.1,0.2,0.4,0.6,0.8,1,1.5,2,3,5).
 calibration_reset_file(engines_path,
     "engine_index,uid,name,mode,ignition,flameout,pressure_atm,possible_thrust_kn,max_thrust_kn,available_thrust_kn,isp_s,observed_altitude_m,observed_airspeed_mps").
@@ -94,14 +186,29 @@ list engines in calibration_engines.
 local engine_index is 0.
 for calibration_engine in calibration_engines {
     local engine_mode is "single".
-    if calibration_engine:multimode { set engine_mode to calibration_engine:mode. }
-    calibration_engine_curve(calibration_engine,engine_index,engine_mode,pressures,engines_path).
-    if calibration_engine:multimode {
+    local engine_is_multimode is false.
+    if calibration_engine:hassuffix("MULTIMODE") {
+        set engine_is_multimode to calibration_engine:multimode.
+    }
+    local mode_switch_supported is engine_is_multimode.
+    if not calibration_engine:hassuffix("MODE") { set mode_switch_supported to false. }
+    if not calibration_engine:hassuffix("TOGGLEMODE") { set mode_switch_supported to false. }
+    if mode_switch_supported { set engine_mode to calibration_engine:mode. }
+
+    local full_curve_exported is calibration_export_engine_mode(
+        calibration_engine,engine_index,engine_mode,pressures,engines_path).
+    if not full_curve_exported {
+        print "  Engine " + engine_index + ": pressure curve suffixes unavailable; current sample only.".
+    }
+    if mode_switch_supported {
         calibration_engine:togglemode().
         wait 1.
-        calibration_engine_curve(calibration_engine,engine_index,calibration_engine:mode,pressures,engines_path).
+        calibration_export_engine_mode(
+            calibration_engine,engine_index,calibration_engine:mode,pressures,engines_path).
         calibration_engine:togglemode().
         wait 1.
+    } else if engine_is_multimode {
+        print "  Engine " + engine_index + ": multimode suffixes incomplete; current mode only.".
     }
     set engine_index to engine_index+1.
 }
@@ -112,9 +219,16 @@ if not ship:body:atm:exists {
     print "FAR grid skipped: current body has no atmosphere.".
     set far_safe to false.
 }
-if not addons:available("FAR") {
+local far_addon_available is addons:available("FAR").
+if not far_addon_available {
     print "FAR grid skipped: FAR kOS addon is unavailable.".
     set far_safe to false.
+}
+if far_addon_available {
+    if not addons:far:hassuffix("AEROFORCEAT") {
+        print "FAR grid skipped: this FAR bridge has no AEROFORCEAT suffix.".
+        set far_safe to false.
+    }
 }
 if ship:status = "LANDED" or ship:status = "SPLASHED" or alt:radar < 25 {
     print "FAR grid skipped: deployable sweep needs 25 m terrain clearance.".

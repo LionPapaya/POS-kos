@@ -614,6 +614,26 @@ parameter alt_ is ship:altitude.
         + 10.098967 * alt_ / 100000
         + 6.632180.
     }).
+// Kerbin/Poseidon atmospheric limits. Heating is a convective-load proxy,
+// not a part-temperature measurement; validate its margin in KSP/FAR.
+Poseidon_SSTO:add("Entry",lex(
+    "high_speed",2800,"full_high_speed",4000,"high_aoa",28,
+    "max_bank",70,"max_q_kpa",20,"max_aero_g",4,
+    "heat_reference_speed",3200,"heat_reference_q_kpa",6,
+    "max_heat_proxy",1,"solver_budget",12,"retry_interval",25,
+    "max_retargets",2,"max_prediction_time",1800,
+    "plan_max_age",90,"plan_alt_error",8000,"plan_speed_error",700,
+    "offfield_length",3000,"offfield_relief",20,"offfield_grade",0.02
+)).
+Poseidon_SSTO:add("Aerobrake",lex(
+    "min_pe",35000,"max_pe",50000,"pe_step",2500,
+    "exit_apoapsis_floor",120000,"exit_margin",2000,
+    "pullout_lead",30,"max_bank",55,"aoa",25,
+    "floor_altitude",33000,"max_sink",250,"vertical_gain",0.12,
+    "prediction_step",2,"prediction_budget",60,"planning_margin",0.8,
+    "node_lead",180,"max_correction_dv",500,"burn_timeout",120,
+    "alignment_limit",3,"periapsis_tolerance",750
+)).
 Poseidon_SSTO:add("simulation",lex("timestep",5,"entry_ref_alt",60000,"max_iterations",10,"dist_tolerance",5000)).
 local abort_modes is lex().
 //abort_modes:add().

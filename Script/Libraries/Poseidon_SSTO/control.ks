@@ -315,6 +315,28 @@ function envelope_refresh {
         envelope_terrain_reset(envelope,"inhibited","vacuum_landing").
         return.
     }
+    // Atmospheric recovery owns bank/AoA above TEAM. Low-speed throttle
+    // recovery must not ignite engines during a deliberate aerobraking pass.
+    local atmospheric_recovery is false.
+    if defined aerobrake_active and aerobrake_active { set atmospheric_recovery to true. }
+    if defined entry_flight_active and entry_flight_active { set atmospheric_recovery to true. }
+    if atmospheric_recovery and ship:altitude > AVES["TEAMAltitude"] {
+        set envelope["state"] to "normal".
+        set envelope["regime"] to "atmospheric_recovery".
+        set envelope["max_aoa"] to max(AVES["Entry"]["high_aoa"],AVES["Aerobrake"]["aoa"]).
+        set envelope["max_bank"] to AVES["Entry"]["max_bank"].
+        set envelope["min_throttle"] to 0.
+        set envelope["restore_steering"] to false.
+        set envelope["rcs_assist"] to abs(calc_aoa()-dap["aoa"]["target_aoa"]) > 1.
+        set envelope["last_aoa"] to calc_aoa().
+        set envelope["last_speed"] to ship:airspeed.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        envelope_terrain_reset(envelope,"inhibited","atmospheric_recovery").
+        return.
+    }
     local config_envelope is AVES["Envelope"].
     local dt is max(dap["dt"],0.01).
     local actual_aoa is calc_aoa().

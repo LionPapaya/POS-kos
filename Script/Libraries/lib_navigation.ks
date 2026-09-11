@@ -349,8 +349,8 @@ function define_TEAM_interface {
     local target_latlng is latlng(0, 0).
     local ercl_2hac to get_geoposition_along_heading(rnw_start,rnw_heading+180,Aves["HacDistance"]).
     if calcdistance(ship:geoposition,rnw_start) > calcdistance(ship:geoposition,ercl_2hac){
-        set target_latlng to get_geoposition_along_heading(rnw_start,rnw_heading+180,calculate_distance_from_alt(AVES["TEAMAltitude"])).
-    }else{set target_latlng to get_geoposition_along_heading(ercl_2hac,compass_for_prograde()+180,calculate_distance_from_alt(AVES["TEAMAltitude"])).}
+        set target_latlng to get_geoposition_along_heading(rnw_start,rnw_heading+180,calculate_distance_from_alt(target_altitude,rnw_altitude)).
+    }else{set target_latlng to get_geoposition_along_heading(ercl_2hac,compass_for_prograde()+180,calculate_distance_from_alt(target_altitude,rnw_altitude)).}
 
     // Define the TEAM interface box
     local team_interface_box is lexicon(

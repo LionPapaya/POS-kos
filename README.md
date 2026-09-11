@@ -201,7 +201,27 @@ For a same-body orbital rendezvous, choose **Rendezvous** in Orbital Maneuvering
 
 When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. This keeps the abort section easy to extend without documenting work-in-progress behavior.
 
+### Pre-KSP simulation and regression tests
+
+Run the expanded offline suite from the repository root:
+
+```sh
+tools/test-pos all
+```
+
+It executes the real pure-math PDI KerboScript, profiles it under an approximate 2,000-opcode-per-physics-tick scheduler, flies a deterministic 0.02-second independent physics model with reaction-wheel attitude dynamics, audits every `.ks` source, and validates the supplied historical flight logs. Its hosted integration mode also runs the checked-in `POS5.ks` and flight-critical dependencies, automatically approves the deorbit node, and preserves full trace/event evidence while replacing only the production logger with a passive observer. The newly supplied full entry is retained as a successful entry-to-runway-stop regression; the Minmus traces remain known-failure evidence.
+
+For KSP/FAR-specific craft data, run `0:/Tests/POS_Calibrate.ks` from a safely flying or orbiting Poseidon. Its body, craft, engine-mode, and—when the installed FAR bridge exposes the predictor—35,280-point FAR exports are written under `0:/POS_calibration/` and are ignored by Git when copied to `Script/POS_calibration/`. Optional runtime suffixes are detected before use; unsupported engine pressure queries fall back to live samples and an unsupported FAR predictor is skipped explicitly.
+
+See the [simulation framework guide](tools/pos_sim/README.md) for commands, coordinate-handedness rules, calibration steps, model coverage, limitations, and the real-flight data needed next. A passing offline result is a strong preflight check, not a replacement for final KSP integration testing.
+
 ## Credits
 
 - The kOS community libraries and frameworks used for input, navball, and location constants.
 - Giulio Dondi for the Ferram add-on and aerodynamic-force helpers.
+
+### Aerobraking and high-energy entry
+
+Select **Aerobraking (single pass)** in POS, or run `0:/POS6.ks`, for a Poseidon return on the inbound Kerbin patch. The onboard FAR planner selects a 35–50 km approach periapsis, seeking the lowest forecast exit orbit within its load margins. It performs one pass and returns control to coast, with no post-pass periapsis burn or automatic landing. POS3 now handles hyperbolic entry, bounded solver failures and automatic reachable runway/land alternates.
+
+See [atmospheric recovery](docs/atmospheric-recovery.md) for operation, configuration, heating-estimate limitations, telemetry and the required KSP/FAR flight checks.

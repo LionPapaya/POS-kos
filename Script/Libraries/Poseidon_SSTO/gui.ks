@@ -195,8 +195,10 @@ flight_log_set_runway(Location,runway_nr,runway_start,runway_end,runway_heading,
 
 
    
-    ADDONS:TR:SETTARGET(runway_start).
-    ADDONS:TR:RESETDESCENTPROFILE(20).
+    if ADDONS:TR:available {
+        if ADDONS:TR:hasimpact { ADDONS:TR:SETTARGET(runway_start). }
+        ADDONS:TR:RESETDESCENTPROFILE(20).
+    }
     reset_sys().                                                                             
    
 }
@@ -580,7 +582,7 @@ function hide_reentry_lsit_path {
 // Return a display-sized sample of the solver's complete planned ground path.
 function reentry_lsit_entry_path {
     local result is list().
-    if defined entry_traj and entry_traj:haskey("converged_sim") {
+    if defined entry_traj and entry_traj["converged"] and entry_traj:haskey("converged_sim") {
         local converged_sim is entry_traj["converged_sim"].
         if converged_sim:haskey("controll_inputs") {
             local controls is converged_sim["controll_inputs"].
@@ -1003,6 +1005,7 @@ function create_main_gui{
     SET Programm_popup:STYLE:width TO 170.
     Programm_popup:addoption("Launch").
     Programm_popup:addoption("Landing").
+    Programm_popup:addoption("Aerobraking (single pass)").
     Programm_popup:addoption("Vacuum Landing (Suborbital)").
     Programm_popup:addoption("Vacuum Landing (Convenient)").
     Programm_popup:addoption("Orbital Maneuvering").
@@ -1017,6 +1020,9 @@ function create_main_gui{
         }
         if Programm_popup:value = "Landing"{
             set main_step to "POS3".
+        }
+        if Programm_popup:value = "Aerobraking (single pass)" {
+            set main_step to "POS6".
         }
         if Programm_popup:value = "Vacuum Landing (Suborbital)"{
             set main_step to "POS4".
