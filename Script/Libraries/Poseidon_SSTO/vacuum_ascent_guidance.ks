@@ -41,6 +41,14 @@ function vacuum_ascent_pitch_target {
     return vacuum_ascent_clamp(commanded_pitch,ascent_config["terminal_pitch"],90).
 }
 
+// A landed craft need only be nose-up enough for the brief RAPIER kick to
+// unload its tail/rear wheel. Vertical alignment is still commanded after
+// this gate, but it is not required before liftoff.
+function vacuum_ascent_liftoff_pitch_ready {
+    parameter measured_nose_up_pitch, required_liftoff_pitch.
+    return measured_nose_up_pitch >= max(0,required_liftoff_pitch).
+}
+
 function vacuum_ascent_circular_speed {
     parameter orbit_radius, body_gravitational_parameter.
     if orbit_radius <= 0 or body_gravitational_parameter <= 0 { return 0. }

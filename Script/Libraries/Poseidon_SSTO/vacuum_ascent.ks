@@ -203,8 +203,7 @@ function vacuum_ascent_run {
     local cancel is gui_:addbutton("Abort ascent / release controls").
     local mission is lex("config",ascent_config,"target_altitude",ascent_target["altitude"],"target_inclination",ascent_target["inclination"],
         "launch_heading",ascent_target["heading"],"phase","vacuum_ascent_setup","reason","preflight","phase_started",time:seconds,
-        "started",time:seconds,"running",true,"cancel",false,"gui",gui_,"display",display,"next_display",0,"best_vertical_error",180,
-        "last_vertical_improvement",time:seconds).
+        "started",time:seconds,"running",true,"cancel",false,"gui",gui_,"display",display,"next_display",0).
     set cancel:onclick to { set mission["cancel"] to true. }.
     gui_:show().
     rapiersoff().
@@ -217,7 +216,7 @@ function vacuum_ascent_run {
     set dap["vector"]["targetVector"] to ship:up:vector.
     dap:set_vector_auto().
     wait 0.
-    vacuum_ascent_phase(mission,"vacuum_ascent_orient_vertical","using RCS to pitch onto the rear support").
+    vacuum_ascent_phase(mission,"vacuum_ascent_orient_vertical","using RCS until the minimum liftoff pitch is reached").
     until not mission["running"] {
         if mission["cancel"] { vacuum_ascent_stop(mission,false,"pilot_cancelled"). return. }
         if time:seconds-mission["started"] > ascent_config["maximum_ascent_duration"] {
@@ -228,18 +227,15 @@ function vacuum_ascent_run {
         if mission["phase"] = "vacuum_ascent_orient_vertical" {
             set dap["vector"]["targetVector"] to surface_up.
             set dapthrottle to 0.
-            if vertical_error < mission["best_vertical_error"]-ascent_config["vertical_progress_epsilon"] {
-                set mission["best_vertical_error"] to vertical_error.
-                set mission["last_vertical_improvement"] to time:seconds.
-            }
             local standing_pitch is 90-vertical_error.
             vacuum_ascent_tick(mission,90,vertical_error,false,0,0).
-            if vertical_error <= ascent_config["vertical_ready_error"] or
-               (time:seconds-mission["last_vertical_improvement"] >= ascent_config["vertical_settle_time"] and standing_pitch >= ascent_config["minimum_stand_pitch"]) {
-                vacuum_ascent_phase(mission,"vacuum_ascent_nerv_spool","NERV ignition confirmed before liftoff kick").
+            if vacuum_ascent_liftoff_pitch_ready(standing_pitch,ascent_config["minimum_liftoff_pitch"]) {
+                flight_log_event("vacuum_ascent_liftoff_attitude","required_pitch="+ascent_config["minimum_liftoff_pitch"]+
+                    "|actual_pitch="+round(standing_pitch,2)+"|vertical_error="+round(vertical_error,2)).
+                vacuum_ascent_phase(mission,"vacuum_ascent_nerv_spool","minimum liftoff pitch reached; spooling NERVs").
                 nervson().
             }else if time:seconds-mission["phase_started"] >= ascent_config["vertical_timeout"] {
-                vacuum_ascent_stop(mission,false,"vertical_attitude_not_reached"). return.
+                vacuum_ascent_stop(mission,false,"minimum_liftoff_pitch_not_reached"). return.
             }
         }else if mission["phase"] = "vacuum_ascent_nerv_spool" {
             set dap["vector"]["targetVector"] to surface_up.

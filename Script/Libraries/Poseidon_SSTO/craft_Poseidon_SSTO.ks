@@ -408,8 +408,10 @@ Poseidon_SSTO:add("Ascent",lex(
 Poseidon_SSTO:add("VacuumAscent",lex(
     "default_orbit_altitude",15000,"default_inclination",0,
     "minimum_orbit_altitude",5000,"minimum_nerv_twr",1.05,
-    "vertical_ready_error",12,"minimum_stand_pitch",55,
-    "vertical_progress_epsilon",0.5,"vertical_settle_time",1.2,"vertical_timeout",12,
+    // The RAPIER kick only needs enough vertical thrust to unweight the rear
+    // support. Do not wait for a mechanically constrained craft to stand
+    // fully upright before permitting that kick.
+    "minimum_liftoff_pitch",20,"vertical_timeout",12,
     "nerv_spool_time",1,"rapier_kick_duration",1.5,
     "liftoff_radar_altitude",3,"liftoff_vertical_speed",1,"gear_retract_time",1,
     "pitch_start_clearance",100,"minimum_vertical_speed",5,"vertical_recovery_pitch",65,
