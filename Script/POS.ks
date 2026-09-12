@@ -64,6 +64,11 @@ until closed{
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks").
         set main_step to "ask_Step".
     }
+    if main_step = "Aerobrake"{
+        poseidon_gui_main:hide().
+        runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Aerobrake.ks").
+        set main_step to "ask_Step".
+    }
     if main_step = "POS4"{
         poseidon_gui_main:hide().
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", "ASK", "ASK", -1, 90, "suborbital").

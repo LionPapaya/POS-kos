@@ -1032,6 +1032,7 @@ function create_main_gui{
     SET Programm_popup:STYLE:HEIGHT TO 25.
     SET Programm_popup:STYLE:width TO 170.
     Programm_popup:addoption("Launch").
+    Programm_popup:addoption("Aerobraking").
     Programm_popup:addoption("Landing").
     Programm_popup:addoption("Vacuum Landing (Suborbital)").
     Programm_popup:addoption("Vacuum Landing (Convenient)").
@@ -1045,6 +1046,9 @@ function create_main_gui{
         parameter decoy is 1.
         if Programm_popup:value = "Launch"{
             set main_step to "POS1".
+        }
+        if Programm_popup:value = "Aerobraking"{
+            set main_step to "Aerobrake".
         }
         if Programm_popup:value = "Landing"{
             set main_step to "POS3".

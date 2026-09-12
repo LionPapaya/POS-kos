@@ -1,0 +1,6 @@
+// Direct launcher for the atmospheric aerobraking assistant.
+set CONFIG:IPU to 2000.
+if not(defined(POS_LOGGING_ENABLED)) {
+    global POS_LOGGING_ENABLED is false.
+}
+runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Aerobrake.ks").
