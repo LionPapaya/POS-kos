@@ -74,6 +74,11 @@ until closed{
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", 0, 0, -1, 90, "convenient").
         set main_step to "ask_Step".
     }
+    if main_step = "POS6"{
+        poseidon_gui_main:hide().
+        runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Ascent.ks").
+        set main_step to "ask_Step".
+    }
     if main_step = "OM1"{
         poseidon_gui_main:hide().
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_OM1.ks").

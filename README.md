@@ -41,6 +41,13 @@ The orbital maneuvering menu currently provides:
 - Target a supplied latitude/longitude and translate to that surface point after braking.
 - Set the tail down at near-zero surface speed, then pitch down onto the landing gear.
 
+### Vacuum ascent
+
+- Select a circular target-orbit altitude and inclination from the POS dialog.
+- Use RCS to pitch the landed Poseidon onto its rear support before ignition.
+- Use a short full-throttle, closed-cycle RAPIER kick only to lift clear of the tail and gear; the vehicle then retracts the gear and continues on NERVs alone.
+- Build apoapsis on the selected heading, create a circularization node, execute it automatically, then return to the POS menu.
+
 ## Aborts
 
 Abort modes are selected according to the vehicle's situation and are implemented as separate flight phases. The currently implemented runway-stop and return-to-launch-site modes are documented below.
@@ -89,6 +96,7 @@ POS.ks
 ├── POS3 / Poseidon_SSTO_Reentry.ks      de-orbit, entry, and landing
 ├── POS4 / Poseidon_SSTO_Vacuum_Landing.ks  targeted NERV-only landing on an airless body
 ├── POS5 / Poseidon_SSTO_Vacuum_Landing.ks  convenient-site NERV-only landing
+├── POS6 / Poseidon_SSTO_Vacuum_Ascent.ks   NERV ascent from an airless-body landing
 ├── OM1 / Poseidon_SSTO_OM1.ks            orbital maneuvering
 └── POS2 / Poseidon_SSTO_Docking.ks       docking workflow
 ```
@@ -104,6 +112,7 @@ Shared libraries contain the vehicle definition, control loops, GUI, navigation 
 | `Script/POS3.ks` | Shortcut for the re-entry program |
 | `Script/POS4.ks` | Shortcut for the targeted vacuum-landing program |
 | `Script/POS5.ks` | Shortcut for a vacuum landing at the predicted convenient site |
+| `Script/POS6.ks` | Shortcut for an airless-body NERV ascent |
 | `Script/Poseidon_SSTO/` | Main Poseidon mission scripts |
 | `Script/Libraries/Poseidon_SSTO/` | Poseidon-specific vehicle, GUI, control, guidance, and routing code |
 | `Script/Libraries/rsvp/` | Orbital transfer and maneuver calculations |

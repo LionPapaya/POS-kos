@@ -403,6 +403,22 @@ Poseidon_SSTO:add("Ascent",lex(
     "rendezvous_nominal_insertion_time",480,
     "rendezvous_window_angle",3
 )).
+// Airless-body departure profile.  The RAPIERs are deliberately only a brief
+// liftoff assist: once clear of the rear wheel/tail support, ascent is NERV-only.
+Poseidon_SSTO:add("VacuumAscent",lex(
+    "default_orbit_altitude",15000,"default_inclination",0,
+    "minimum_orbit_altitude",5000,"minimum_nerv_twr",1.05,
+    "vertical_ready_error",12,"minimum_stand_pitch",55,
+    "vertical_progress_epsilon",0.5,"vertical_settle_time",1.2,"vertical_timeout",12,
+    "nerv_spool_time",1,"rapier_kick_duration",1.5,
+    "liftoff_radar_altitude",3,"liftoff_vertical_speed",1,"gear_retract_time",1,
+    "pitch_start_clearance",100,"minimum_vertical_speed",5,"vertical_recovery_pitch",65,
+    "initial_pitch",75,"terminal_pitch",10,"prograde_blend_speed",450,
+    "apoapsis_margin",100,"maximum_ascent_duration",900,
+    "node_minimum_lead_time",20,"node_coast_lead_time",45,"node_alignment_timeout",35,
+    "node_alignment_error",2,"node_completion_dv",0.25,"node_iterations",48,
+    "node_error_gain",1000,"node_max_adjustment",20,"orbit_tolerance",300
+)).
 Poseidon_SSTO:add("Abort",lex(
     "contingency_rapiers_out",4,
     "RunwayStop",lex(

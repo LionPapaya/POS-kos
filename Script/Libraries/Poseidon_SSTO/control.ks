@@ -212,6 +212,11 @@ function envelope_terrain_inhibit_reason {
     if defined vacuum_landing_active and vacuum_landing_active {
         return "vacuum_landing".
     }
+    // Vacuum ascent has its own low-altitude clearance controller and must
+    // retain the RCS/vector command that lifts Poseidon from its tail support.
+    if defined vacuum_ascent_active and vacuum_ascent_active {
+        return "vacuum_ascent".
+    }
     if not terrain_config["enabled"] {
         return "disabled".
     }
@@ -338,6 +343,22 @@ function envelope_refresh {
         set envelope["upset_timer"] to 0.
         set envelope["stable_timer"] to 0.
         envelope_terrain_reset(envelope,"inhibited","vacuum_landing").
+        return.
+    }
+    // Like PDI, the airless ascent executive owns RCS, throttle, attitude,
+    // and its clearance gate.  Atmospheric envelope logic must never turn
+    // RCS off or replace the commanded vertical escape while it is active.
+    if defined vacuum_ascent_active and vacuum_ascent_active {
+        set envelope["state"] to "normal".
+        set envelope["regime"] to "vacuum_ascent".
+        set envelope["min_throttle"] to 0.
+        set envelope["rcs_assist"] to false.
+        set envelope["restore_steering"] to false.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        envelope_terrain_reset(envelope,"inhibited","vacuum_ascent").
         return.
     }
     local config_envelope is AVES["Envelope"].
