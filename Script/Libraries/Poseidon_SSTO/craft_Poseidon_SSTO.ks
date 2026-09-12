@@ -22,6 +22,11 @@ function reset_sys{
 
     set dapthrottle to 0.
     if dap:haskey("envelope") {
+        // reset_sys is also the terminal safety path.  Do not preserve a
+        // temporary terrain/upset protection throttle floor after the
+        // guidance loop has stopped: doing so leaves the craft firewalled
+        // with no later DAP tick available to clear it.
+        set dap["envelope"]["min_throttle"] to 0.
         lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
     } else {
         lock throttle to dapthrottle.

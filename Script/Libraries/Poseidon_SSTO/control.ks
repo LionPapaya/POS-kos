@@ -299,6 +299,31 @@ function envelope_terrain_refresh {
 
 function envelope_refresh {
     local envelope is dap["envelope"].
+    // Once the terminal controller commits the aircraft to its flare, it is
+    // the sole owner of thrust and steering through touchdown and any brief
+    // KSP wheel-contact bounce.  Previously a bounce changed SHIP:STATUS
+    // from LANDED back to FLYING after the normal landing-final inhibit had
+    // been cleared by the preceding ground frame.  GPWS then saw the runway
+    // as terrain and commanded a full-power escape; the low-speed/upset
+    // envelope could make the same throttle override independently.
+    //
+    // Keep the dedicated inhibited reason in flight logs: it is a state
+    // transition that proves a landing run, rather than an accidental ground
+    // state, owned the protection handoff.
+    if defined step and step = "landing" {
+        set envelope["state"] to "normal".
+        set envelope["regime"] to "landing".
+        set envelope["min_throttle"] to 0.
+        set envelope["rcs_assist"] to false.
+        set envelope["restore_steering"] to false.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        rcs off.
+        envelope_terrain_reset(envelope,"inhibited","landing_controller",true).
+        return.
+    }
     // PDI owns thrust, RCS and terrain protection throughout the airless
     // descent, including the engine-off pitch onto the wheels. Atmospheric
     // low-speed/upset logic must never restore throttle or take its steering.

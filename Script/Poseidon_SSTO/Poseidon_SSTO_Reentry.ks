@@ -649,11 +649,13 @@ until running = false{
             brakes on.
             log_status("Wheel brakes ON").
         }
-        if ship:airspeed < 5 {
+        if ship:status = "LANDED" and ship:airspeed < 5 {
 
             log_status("Landing completed").
         }
-        if ship:airspeed < 1 {
+        // A momentary stall or a bounce can have near-zero airspeed while
+        // still airborne.  Only wheel contact is a valid terminal condition.
+        if ship:status = "LANDED" and ship:airspeed < 1 {
             set recovery_result to lex("complete",true,"success",true,"reason","landing_complete").
             set step to "end".
             log_status("Landing completed, switching to end phase").
