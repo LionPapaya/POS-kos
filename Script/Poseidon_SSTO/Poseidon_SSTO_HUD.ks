@@ -1,5 +1,23 @@
-set Terminal:width to 81. 
+set Terminal:width to 81.
 set Terminal:HEIGHT to 30.
+
+// Do not read the infinity-valued orbit suffixes on an open trajectory. kOS
+// can fail while pushing that sentinel onto the stack, before a value helper
+// gets a chance to inspect it.
+local hud_escape_orbit is ship:orbit:eccentricity >= 1.
+local hud_apoapsis is "ESCAPE".
+local hud_periapsis is "ESCAPE".
+local hud_eta_apoapsis is "ESCAPE".
+local hud_eta_periapsis is "ESCAPE".
+local hud_period is "ESCAPE".
+if not hud_escape_orbit {
+    set hud_apoapsis to round(ship:apoapsis).
+    set hud_periapsis to round(ship:periapsis).
+    set hud_eta_apoapsis to round(ship:obt:eta:apoapsis).
+    set hud_eta_periapsis to round(ship:obt:eta:periapsis).
+    set hud_period to round(ship:orbit:period).
+}
+
 if not (defined old_latest_status){
     set old_latest_status to "".
     set old_step to "".
@@ -154,9 +172,9 @@ if defined ship and ship:altitude > 70000{
 Print("|==============================================================================|") at(0,15).
 Print("|                                   ORBIT DATA                                 |") at(0,16).
 Print("|                                                                              |") at(0,17).
-Print("| APOAPSIS ="+ round(ship:apoapsis)+ "") at(0,18). Print ("|") at(40,18). print ("PERIAPSIS ="+round(ship:periapsis)+"") at(42,18). Print ("|") at(79,18). 
-Print("| ETA APOAPSIS ="+ round(ship:obt:eta:apoapsis)+ "") at(0,19). Print ("|") at(40,19). print ("ETA PERIAPSIS ="+round(ship:obt:eta:periapsis)+"") at(42,19). Print ("|") at(79,19). 
-Print("| INCLINATION ="+ round(ship:orbit:inclination)+ "") at(0,20). Print ("|") at(40,20). print ("Period ="+round(ship:orbit:period)+"") at(42,20). Print ("|") at(79,20). 
+Print("| APOAPSIS ="+ hud_apoapsis+ "") at(0,18). Print ("|") at(40,18). print ("PERIAPSIS ="+hud_periapsis+"") at(42,18). Print ("|") at(79,18).
+Print("| ETA APOAPSIS ="+ hud_eta_apoapsis+ "") at(0,19). Print ("|") at(40,19). print ("ETA PERIAPSIS ="+hud_eta_periapsis+"") at(42,19). Print ("|") at(79,19).
+Print("| INCLINATION ="+ round(ship:orbit:inclination)+ "") at(0,20). Print ("|") at(40,20). print ("Period ="+hud_period+"") at(42,20). Print ("|") at(79,20).
 Print("|                                                                              |") at(0,21).
 Print("|==============================================================================|") at(0,22).
 Print("|                                   Message BOX                                |") at(0,23).
