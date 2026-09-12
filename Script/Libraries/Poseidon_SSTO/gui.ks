@@ -1380,6 +1380,7 @@ function get_rendezvous_target {
     target_row:addlabel("Vessel:").
     local target_menu is target_row:addpopupmenu().
     target_menu:addoption("None").
+    list targets in all_vessels.
     for rendezvous_candidate in all_vessels {
         if rendezvous_candidate <> ship and rendezvous_candidate:body = ship:body {
             target_menu:addoption(rendezvous_candidate:name).
@@ -1731,6 +1732,7 @@ function create_assent_gui{
     GLOBAL assent_rendezvous_text IS assent_rendezvous_box:ADDLABEL("<b>RENDEZVOUS:</b>").
     GLOBAL assent_rendezvous_menu IS assent_rendezvous_box:ADDPOPUPMENU().
     assent_rendezvous_menu:ADDOPTION("None").
+    list targets in all_vessels.
     for rendezvous_candidate in all_vessels {
         if rendezvous_candidate <> ship and rendezvous_candidate:body = ship:body {
             assent_rendezvous_menu:ADDOPTION(rendezvous_candidate:name).
