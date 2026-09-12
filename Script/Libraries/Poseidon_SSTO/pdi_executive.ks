@@ -123,6 +123,9 @@ function vacuum_stop {
     flight_log_event("vacuum_landing_complete","success="+success+"|reason="+reason+"|target_distance="+mission["distance"]).
     set recovery_result to lex("complete",true,"success",success,"reason",reason).
     dap:set_off().
+    // PDI has finished: leave neither vector steering nor stock SAS holding
+    // the vehicle after it has pitched down onto the gear.
+    sas off.
     unlock throttle.
     set vacuum_landing_active to false.
     set PDI_PLANNING_STATUS_ACTIVE to false.
@@ -762,6 +765,8 @@ function vacuum_descent {
                 local success is not mission["diverted"].
                 local reason is "gear_touchdown".
                 if not success { set reason to "emergency_site_touchdown". }
+                flight_log_event("pdi_pitchdown_complete","pitch="+pitch_for()+"|roll="+roll_for()+
+                    "|surface_speed="+surface_velocity:mag+"|target_distance="+mission["distance"]+"|controls=released").
                 vacuum_stop(mission,success,reason).
                 return.
             }

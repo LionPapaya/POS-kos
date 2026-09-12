@@ -39,9 +39,10 @@ function pdi_terminal_command {
         // lateral energy, but it must never climb to regain the hold height.
         set desired_vs to pdi_clamp((hold_height-clearance)*0.25,-terminal_config["maximum_terminal_descent_speed"],0).
     }
-    if clearance <= terminal_config["ground_commit_clearance"] {
-        // In the final metres, use a deliberate low-speed descent.  The
-        // executive cuts thrust as soon as the ground-commit envelope holds.
+    if clearance <= terminal_config["final_descent_clearance"] {
+        // In the final descent envelope, prefer a controlled touchdown over
+        // an extended hover to remove lateral error.  The executive waits
+        // until the separate ground-commit envelope before it cuts thrust.
         set desired_vs to -terminal_config["ground_commit_descent_speed"].
     } else {
         // Never demand a descent that consumes the remaining vertical

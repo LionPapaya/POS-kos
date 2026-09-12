@@ -45,9 +45,12 @@ function pdi_defaults {
         "maximum_translation_speed",25,"maximum_lateral_acceleration",2,
         "maximum_terminal_tilt",25,"maximum_terminal_descent_speed",3,"terminal_velocity_gain",0.7,
         "terminal_alignment_full_thrust",5,"terminal_alignment_thrust_cutoff",90,
-        "ground_commit_clearance",2,"ground_commit_descent_speed",2,
+        // Once lateral precision is no longer worth a prolonged hover, fly a
+        // controlled final descent.  The separate ground-commit threshold
+        // below still determines when engines are cut for pitch-over.
+        "final_descent_clearance",15,"ground_commit_clearance",2,"ground_commit_descent_speed",2,
         "ground_commit_max_vertical_speed",2.8,"ground_commit_min_vertical_speed",0.5,
-        "ground_commit_max_horizontal_speed",3.5,"ground_commit_max_distance",8,
+        "ground_commit_max_horizontal_speed",3.5,"ground_commit_max_distance",200,
         "ground_commit_max_angular_rate",4,
         "capture_distance",5,"capture_speed",0.4,"capture_height",30,
         "flip_clearance",0.4,"flip_vertical_speed",0.3,"flip_horizontal_speed",0.3,
