@@ -457,7 +457,13 @@ until running = false{
                     "latlong", latlng(avg_lat, avg_lng)
                 ).
 
-                local e_ref is calculate_spacecraft_energy(s_step["altitude"], s_step["surfvel"]:mag, 2.5, 0.9).
+                // Interpolate the two nearest reference energies directly.
+                // Energy is quadratic in speed, so calculating it from the
+                // blended state creates a non-linear target and visible d_e
+                // changes as the selected trajectory samples advance.
+                local e_ref1 is calculate_spacecraft_energy(s_step1["altitude"], s_step1["surfvel"]:mag, 2.5, 0.9).
+                local e_ref2 is calculate_spacecraft_energy(s_step2["altitude"], s_step2["surfvel"]:mag, 2.5, 0.9).
+                local e_ref is interpolate_entry_reference_energy(e_ref1,e_ref2,d1,d2,cur_target_dist).
                 local e_dot is calculate_spacecraft_energy(ship:altitude,ship:airspeed,2.5,0.9).
                 set alpha_md_pid:setpoint to e_ref.
                 

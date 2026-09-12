@@ -571,6 +571,21 @@ function reentry_lsit_screen_position {
     ).
 }
 
+// The L/SIT shuttle bug faces screen-right in its unrotated artwork. Convert
+// the live surface track into that screen frame, then select the closest one
+// of the eight pre-rotated images. This keeps the icon pointing along the
+// ground track even though the L/SIT map is runway-relative.
+function reentry_lsit_ssto_image {
+    parameter course_heading.
+    local outward_heading is runway_heading + 180.
+    local relative_heading is normalized_heading_error(course_heading, outward_heading).
+    local screen_rotation is 180 - relative_heading.
+    until screen_rotation >= 0 { set screen_rotation to screen_rotation + 360. }
+    until screen_rotation < 360 { set screen_rotation to screen_rotation - 360. }
+    local rotation_degrees is mod(round(screen_rotation / 45), 8) * 45.
+    return "Libraries/gui_images/ssto_lsit_" + rotation_degrees + ".png".
+}
+
 function hide_reentry_lsit_path {
     for path_bug in traj_disp_path {
         set path_bug:visible to false.
@@ -666,9 +681,26 @@ function update_reentry_gui {
         "aoa", calc_aoa(),
         "l/d", 0
     ).
-    // TEAM is the terminal phase even when the caller's console_mode still
-    // contains the last entry display name from the same update tick.
+    // Entry uses the Traj 2 V/SIT. TEAM starts on the wider Traj 2 L/SIT,
+    // then moves to the close-in Traj 3 L/SIT when it reaches base. Retain
+    // that close-in view through a possible go-around and the landing step.
+    if not(defined reentry_lsit_terminal_active) {
+        global reentry_lsit_terminal_active is false.
+    }
+    if not(defined step) or (step <> "TEAM" and step <> "landing") {
+        set reentry_lsit_terminal_active to false.
+    }
     if defined step and step = "TEAM" {
+        set inputs["mode"] to "TRAJ 2 L/SIT".
+        if defined terminal_route and terminal_route:haskey("phase") and
+           (terminal_route["phase"] = "base" or terminal_route["phase"] = "final") {
+            set reentry_lsit_terminal_active to true.
+        }
+    }
+    if defined step and step = "landing" {
+        set reentry_lsit_terminal_active to true.
+    }
+    if reentry_lsit_terminal_active {
         set inputs["mode"] to "TRAJ 3".
     }
     set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
@@ -685,10 +717,7 @@ function update_reentry_gui {
         traj_data:show().
     }
 
-    local lsit_mode is inputs["mode"] = "TRAJ 2" or
-        inputs["mode"] = "TRAJ 2 high" or
-        inputs["mode"] = "TRAJ 2 int" or
-        inputs["mode"] = "TRAJ 3".
+    local lsit_mode is inputs["mode"] = "TRAJ 2 L/SIT" or inputs["mode"] = "TRAJ 3".
     if not lsit_mode {
         set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
         hide_reentry_lsit_path().
@@ -866,55 +895,52 @@ function update_reentry_gui {
         }
     }
 
-    // TRAJ 2 L/SIT: top-down runway-relative ground track.  The three entry
-    // energy variants share the same lateral display and planned trajectory.
+    // TRAJ 2 V/SIT: the entry display and early TEAM circuit use the original
+    // velocity/altitude view. The three entry energy variants only change the
+    // horizontal speed scale.
     if inputs["mode"] = "TRAJ 2" or inputs["mode"] = "TRAJ 2 high" or inputs["mode"] = "TRAJ 2 int" {
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_lsit_bg.png".
-        set traj_disp_ssto:image to "Libraries/gui_images/ssto_lsit_bug.png".
-        set traj_disp_ssto:style:margin:top to 0.
-
-        local current_geometry is reentry_lsit_geometry(ship:geoposition).
-        set traj_data_pitch:text to ("RNG "+round(current_geometry["distance"] / 1000, 1)+" km").
-        set traj_data_yaw:text to ("XTK "+round(current_geometry["cross_track"] / 1000, 1)+" km").
-        set traj_data_roll:text to ("HDG "+round(inputs["yaw"]) + " deg").
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
+        set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
+        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
+        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
+        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
         set traj_data_mach:text to ("Mach "+round(inputs["mach"], 2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"], 2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"], 2)).
 
-        local max_along_track is 350000.
-        local max_cross_track is 150000.
-        local shuttle_position is reentry_lsit_screen_position(
-            ship:geoposition, max_along_track, max_cross_track
-        ).
-        set traj_disp_ssto:style:padding:top to shuttle_position["y"].
-        set traj_disp_ssto:style:margin:h to shuttle_position["x"].
+        local max_alt is 26000.
+        local min_alt is 10000.
+        local ssto_margin_v is 130 - (inputs["alt"] - min_alt) / (max_alt - min_alt) * 220.
+        set traj_disp_ssto:style:padding:top to ssto_margin_v.
+        local max_spd is 1500.
+        if inputs["mode"] = "TRAJ 2 high" { set max_spd to 1700. }
+        if inputs["mode"] = "TRAJ 2 int" { set max_spd to 2000. }
+        set traj_disp_ssto:style:margin:h to 50 + (inputs["spd"] - 500) / (max_spd - 500) * 650.
 
-        local previous_absolute_y is shuttle_position["y"].
-        if inputs:haskey("guid_pos_valid") and inputs["guid_pos_valid"] {
-            local prediction_position is reentry_lsit_screen_position(
-                inputs["guid_pos"], max_along_track, max_cross_track
-            ).
-            // traj_disp_pred was added after traj_disp_ssto, so subtract the
-            // shuttle offset just like the established TRAJ 1 workaround.
-            set traj_disp_pred:style:padding:top to prediction_position["y"] - shuttle_position["y"].
-            set traj_disp_pred:style:margin:h to prediction_position["x"].
+        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0) {
+            local ratio is (inputs["guid_alt"] - min_alt) / (max_alt - min_alt).
+            if ratio < 0 { set ratio to 0. }
+            if ratio > 1 { set ratio to 1. }
+            set traj_disp_pred:style:padding:top to (116 - ratio * 220) - ssto_margin_v.
+            set traj_disp_pred:style:margin:h to 50 + (inputs["guid_spd"] - 500) / (max_spd - 500) * 650.
             set traj_disp_pred:visible to true.
-            set previous_absolute_y to prediction_position["y"].
         } else {
             set traj_disp_pred:visible to false.
         }
-
-        update_reentry_lsit_path(
-            reentry_lsit_entry_path(), max_along_track, max_cross_track, previous_absolute_y
-        ).
+        hide_reentry_lsit_path().
     }
 
-    // TRAJ 3 L/SIT: a tighter runway/pattern view driven by terminal_route.
-    if inputs["mode"] = "TRAJ 3" {
+    // TEAM starts on the wide Traj 2 L/SIT and moves to the tighter Traj 3
+    // L/SIT after reaching base. Both views use the live terminal route.
+    if inputs["mode"] = "TRAJ 2 L/SIT" or inputs["mode"] = "TRAJ 3" {
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".
-        set traj_disp_ssto:image to "Libraries/gui_images/ssto_lsit_bug.png".
+        if inputs["mode"] = "TRAJ 2 L/SIT" {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_lsit_bg.png".
+        } else {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".
+        }
+        set traj_disp_ssto:image to reentry_lsit_ssto_image(compass_for_prograde()).
         set traj_disp_ssto:style:margin:top to 0.
 
         local current_geometry is reentry_lsit_geometry(ship:geoposition).
@@ -927,6 +953,10 @@ function update_reentry_gui {
 
         local max_along_track is 50000.
         local max_cross_track is 20000.
+        if inputs["mode"] = "TRAJ 2 L/SIT" {
+            set max_along_track to 350000.
+            set max_cross_track to 150000.
+        }
         local shuttle_position is reentry_lsit_screen_position(
             ship:geoposition, max_along_track, max_cross_track
         ).

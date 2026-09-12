@@ -448,6 +448,19 @@ function calculate_spacecraft_energy{
 
   return total_mechanical_energy.
 }
+// Blend adjacent entry-trajectory energy references by the live range-to-go.
+// Interpolating energy directly avoids the non-linear result from blending
+// velocity first and then squaring it in the kinetic-energy calculation.
+function interpolate_entry_reference_energy {
+  parameter e_ref1, e_ref2, distance1, distance2, current_distance.
+  local distance_span is distance2 - distance1.
+  if abs(distance_span) < 0.00001 {
+    return (e_ref1 + e_ref2) / 2.
+  }
+  local blend is (current_distance - distance1) / distance_span.
+  set blend to max(0,min(1,blend)).
+  return e_ref1 + (e_ref2 - e_ref1) * blend.
+}
 function invert_in_range{
   parameter in,min_,max_.
   local diff_min is abs(in-min_).
