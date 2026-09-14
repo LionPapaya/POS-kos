@@ -390,7 +390,9 @@ function envelope_refresh {
         set requested_pitch to dap["css"]["pitch_out"].
     }
 
-    if ship:altitude > 70000 {
+    // Atmospheric envelope interventions are unnecessary above the body's
+    // atmosphere and must also remain disabled on airless bodies.
+    if not ship:body:atm:exists or ship:altitude > ship:body:atm:height {
         envelope_terrain_reset(envelope).
         set envelope["max_aoa"] to config_envelope["max_aoa_normal"].
         set envelope["max_bank"] to config_envelope["max_bank_normal"].
