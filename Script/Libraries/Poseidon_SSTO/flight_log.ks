@@ -530,3 +530,38 @@ function flight_log_tick {
     if POS_LOG_LEVEL = 2 { set POS_LOG_NEXT_SAMPLE_TIME to time:seconds + 1. }
     flight_log_write_sample(program_name,current_step,current_substep).
 }
+
+// Observed maneuver phases (not private upstream state names). Runs only in
+// real-flight execution. Low logs transitions; medium samples at 1 Hz; high
+// samples once per physics tick. Samples share events.csv for schema stability.
+function flight_log_maneuver_observe {
+    parameter maneuver, half_time, evidence.
+    if POS_LOG_LEVEL = 0 { return. }
+    local phase is "aligning".
+    if ship:control:mainthrottle > 0 { set phase to "burning". }
+    else if evidence["burn_seen"] { set phase to "cutoff". }
+    else if warp > 0 { set phase to "coasting". }
+    else if vang(ship:facing:vector,maneuver:deltav) <= 0.5 { set phase to "waiting". }
+    if phase <> evidence["phase"] {
+        flight_log_event("maneuver_phase","from="+evidence["phase"]+"|to="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag).
+        set evidence["phase"] to phase.
+    }
+    if POS_LOG_LEVEL < 2 { return. }
+    if time:seconds < evidence["next_sample"] { return. }
+    local sample_period is 0.02.
+    if POS_LOG_LEVEL = 2 { set sample_period to 1. }
+    set evidence["next_sample"] to time:seconds+sample_period.
+    flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
+}
+
+function flight_log_rcs_observe {
+    parameter apsis, target_altitude, evidence.
+    if POS_LOG_LEVEL < 2 { return. }
+    if time:seconds < evidence["next_sample"] { return. }
+    local sample_period is 0.02.
+    if POS_LOG_LEVEL = 2 { set sample_period to 1. }
+    set evidence["next_sample"] to time:seconds+sample_period.
+    local actual is ship:apoapsis.
+    if apsis = "periapsis" { set actual to ship:periapsis. }
+    flight_log_event("rcs_correction_sample","apsis="+apsis+"|target_m="+target_altitude+"|actual_m="+actual+"|error_m="+(actual-target_altitude)+"|fore="+ship:control:fore+"|mass="+ship:mass).
+}

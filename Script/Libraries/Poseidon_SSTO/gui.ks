@@ -1333,12 +1333,8 @@ function get_om_mode {
     local OM_MODE_menu is OM_MODE_box :addpopupmenu().
     OM_MODE_menu:addoption("RSVP").
     OM_MODE_menu:addoption("Rendezvous").
-    OM_MODE_menu:addoption("execute Node").
-    OM_MODE_menu:addoption("change Apoapsis").
-    OM_MODE_menu:addoption("change Periapsis").
-    OM_MODE_menu:addoption("change Inclination").
-    OM_MODE_menu:addoption("Circluarize").
-
+    OM_MODE_menu:addoption("Execute node").
+    for command in pos_om_catalog() { OM_MODE_menu:addoption(command["label"]). }
 
     set OM_MODE_menu:onchange to {
         parameter new_value.

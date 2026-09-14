@@ -63,13 +63,23 @@ function rendezvous_same_body {
     flight_log_event("rendezvous_plan_ready","nodes=2").
     flight_log_capture_rendezvous(target_vessel,"departure_burn",2,false).
     flight_log_tick("orbital_maneuver","rendezvous","departure_burn").
-    execute_node().
+    if not pos_execute_node() {
+        set result["reason"] to "maneuver_execution_incomplete".
+        flight_log_event("rendezvous_burn_failed",result["reason"]).
+        flight_log_capture_rendezvous(target_vessel,"failed",0,false).
+        return result.
+    }
 
     set Lastest_status to "Rendezvous transfer: matching target velocity".
     flight_log_event("rendezvous_departure_complete","").
     flight_log_capture_rendezvous(target_vessel,"arrival_burn",1,false).
     flight_log_tick("orbital_maneuver","rendezvous","arrival_burn").
-    execute_node().
+    if not pos_execute_node() {
+        set result["reason"] to "maneuver_execution_incomplete".
+        flight_log_event("rendezvous_burn_failed",result["reason"]).
+        flight_log_capture_rendezvous(target_vessel,"failed",0,false).
+        return result.
+    }
 
     local final_distance is (target_vessel:position-ship:position):mag.
     local final_relative_speed is (target_vessel:velocity:orbit-ship:velocity:orbit):mag.

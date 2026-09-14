@@ -1,80 +1,64 @@
+// Poseidon adapter; the upstream execute_node implementation lives unchanged
+// in lib_orbital_nodes.ks. All existing flight programs call this adapter.
+RUNONCEPATH("0:/Libraries/lib_orbital_nodes.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 
-function execute_node{
-    
-    set nd to nextnode.
-    set Lastest_status to "Node in: " + round(nd:eta) + ", DeltaV: " + round(nd:deltav:mag).
-    set max_acc to ship:maxthrust/ship:mass.
-    update_readouts().
-    set burn_duration to nd:deltav:mag/max_acc+0.001.
-    set Lastest_status to "Crude Estimated burn duration: " + round(burn_duration) + "s".
-    update_readouts().
-    until nd:eta <= (burn_duration/2 + 60){
-        WARPTO(time:seconds + (nd:eta-(burn_duration/2 + 60))).
-        update_readouts().
+function pos_execute_node {
+    parameter warp_to_node is true.
+    lock throttle to 0.
+    set ship:control:pilotmainthrottle to 0.
+    if not hasnode {
+        flight_log_event("maneuver_rejected","reason=no_node").
+        return false.
     }
-    
-
-    lock np to nd:deltav.
-    lock steering to np.
-
-    //now we need to wait until the burn vector and ship's facing are aligned
-    until vang(np, ship:facing:vector) < 0.25{
-        update_readouts().
+    local maneuver is nextnode.
+    if maneuver:deltav:mag < 0.1 {
+        flight_log_event("maneuver_no_burn_needed","dv="+maneuver:deltav:mag).
+        remove maneuver.
+        return true.
     }
-
-    //the ship is facing the right direction, let's wait for our burn time
-    until nd:eta <= (burn_duration/2){
-        update_readouts().
+    // Poseidon activates its selected engines before reaching this adapter.
+    // Reject unavailable propulsion rather than triggering upstream auto-stage.
+    if ship:availablethrust <= 0 or ship_isp() <= 0 {
+        flight_log_event("maneuver_rejected","reason=no_active_engine_thrust").
+        print "Maneuver retained: activate engines before execution.".
+        return false.
     }
-    set tset to 0.
-    lock throttle to tset.
-
-    set done to False.
-    //initial deltav
-    set dv0 to nd:deltav.
-    until done
-    {
-        //recalculate current max_acceleration, as it changes while we burn through fuel
-        set max_acc to ship:maxthrust/ship:mass.
-        update_readouts().
-        //throttle is 100% until there is less than 1 second of time left to burn
-        //when there is less than 1 second - decrease the throttle linearly
-        set tset to min(nd:deltav:mag/max_acc, 1).
-
-       //here's the tricky part, we need to cut the throttle as soon as our nd:deltav and initial deltav start facing opposite directions
-       //this check is done via checking the dot product of those 2 vectors
-       if vdot(dv0, nd:deltav) < 0
-        {
-            set Lastest_status to "End burn, remain dv " + round(nd:deltav:mag,1) + "m/s, vdot: " + round(vdot(dv0, nd:deltav),1).
-            
-            lock throttle to 0.
-            break.
-            
+    local half_time is half_burn_time(maneuver).
+    if maneuver:eta <= half_time+10 {
+        flight_log_event("maneuver_rejected","reason=insufficient_lead_time|eta="+maneuver:eta+"|half_burn_s="+half_time).
+        print "Maneuver retained: insufficient time to start this burn.".
+        return false.
+    }
+    local observing is true.
+    local evidence is lex("phase","aligning","next_sample",0,"remaining_dv",maneuver:deltav:mag,"burn_seen",false).
+    flight_log_event("maneuver_execute_requested","ut="+maneuver:time+"|dv="+maneuver:deltav:mag+"|half_burn_s="+half_time+"|executor=silvernuke911").
+    // A passive flight observer leaves the imported control loop unchanged.
+    // No trigger or logging work is installed by the planning library.
+    when true then {
+        if not observing { return false. }
+        if hasnode {
+            if nextnode = maneuver {
+                if ship:control:mainthrottle > 0 { set evidence["burn_seen"] to true. }
+                set evidence["remaining_dv"] to maneuver:deltav:mag.
+                flight_log_maneuver_observe(maneuver,half_time,evidence).
+            }
         }
-
-        //we have very little left to burn, less then 0.1m/s
-        if nd:deltav:mag < 0.1
-        {
-            set Lastest_status to  "Finalizing burn, remain dv " + round(nd:deltav:mag,1) + "m/s, vdot: " + round(vdot(dv0, nd:deltav),1).
-            //we burn slowly until our node vector starts to drift significantly from initial vector
-            //this usually means we are on point
-            wait until vdot(dv0, nd:deltav) < 0.5.
-            update_readouts().
-            lock throttle to 0.
-            set Lastest_status to  "End burn, remain dv " + round(nd:deltav:mag,1) + "m/s, vdot: " + round(vdot(dv0, nd:deltav),1).
-            set done to True.
-        }
+        return observing.
     }
-    
-    update_readouts().
-    wait 1.
-
+    // Manual kOS steering preserves support for pilots without maneuver SAS.
+    execute_node(false,warp_to_node,"engine",true).
+    set observing to false.
+    lock throttle to 0.
+    set ship:control:pilotmainthrottle to 0.
+    unlock steering.
     sas off.
-
-    //we no longer need the maneuver node
-    remove nd.
-
-    //set throttle to 0 just in case.
-    SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
-    dap:setup().
+    if defined dap { dap:setup(). }
+    local removed is true.
+    for remaining_node in allnodes {
+        if remaining_node = maneuver { set removed to false. }
+    }
+    local completed is removed and evidence["burn_seen"].
+    flight_log_event("maneuver_execution_returned","completed="+completed+"|node_removed="+removed+"|last_remaining_dv="+evidence["remaining_dv"]+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
+    return completed.
 }
