@@ -57,9 +57,9 @@ function pos_om_inputs {
     local panel is gui(550,500).
     panel:addlabel(command["label"]).
     if command["note"] <> "" {
-        local note is panel:addlabel(command["note"]).
-        set note:style:width to 520.
-        set note:style:wordwrap to true.
+        local maneuver_note is panel:addlabel(command["note"]).
+        set maneuver_note:style:width to 520.
+        set maneuver_note:style:wordwrap to true.
     }
     local mode_menu is panel:addpopupmenu().
     for mode_name in command["modes"] { mode_menu:addoption(mode_name). }
