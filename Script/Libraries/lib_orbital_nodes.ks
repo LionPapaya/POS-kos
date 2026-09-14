@@ -3920,3 +3920,68 @@ function pos_plan_inclination {
     result:add("dv",maneuver:deltav:mag).
     return result.
 }
+
+//==================================================||
+//      FUNCTION: pos_return_from_a_moon            ||
+//--------------------------------------------------||
+// PURPOSE:                                         ||
+//   Creates an escape burn from the current moon   ||
+//   that returns to its parent body with a chosen  ||
+//   periapsis altitude. The burn occurs at the     ||
+//   current orbit's next periapsis.                ||
+//                                                  ||
+// ASSUMPTIONS:                                     ||
+//   - The moon's orbit about its parent is treated ||
+//     as circular at the burn time.                ||
+//   - The parent-return orbit starts at the moon's ||
+//     orbital radius and has that point as its     ||
+//     apoapsis.                                    ||
+//                                                  ||
+// PARAMETERS:                                      ||
+//   target_periapsis : (scalar) Desired altitude  ||
+//                      above the parent body (m)  ||
+//                                                  ||
+// RETURNS:                                         ||
+//   A maneuver node that escapes the current moon  ||
+//   and targets the requested parent periapsis.    ||
+//==================================================||
+function pos_return_from_a_moon {
+    local parameter target_periapsis.
+
+    if target_periapsis < 0 {
+        return null_mnv("[ ORBT ERROR ] : Target periapsis must be above the parent body's surface").
+    }
+    if obt:eccentricity >= 1 {
+        return null_mnv("[ ORBT ERROR ] : Return from a moon requires a closed parking orbit").
+    }
+
+    local parent_body is body:body.
+    local burn_ut is time:seconds + eta:periapsis.
+    local moon_position is positionat(body,burn_ut) - parent_body:position.
+    local moon_velocity is velocityat(body,burn_ut):orbit.
+    local moon_orbit_radius is moon_position:mag.
+    local target_radius is parent_body:radius + target_periapsis.
+
+    if target_radius >= moon_orbit_radius {
+        return null_mnv("[ ORBT ERROR ] : Target periapsis must be below the current moon orbit").
+    }
+    if moon_velocity:mag <= 0 {
+        return null_mnv("[ ORBT ERROR ] : Unable to determine the moon's parent-body velocity").
+    }
+
+    // Construct the parent-body return ellipse with apoapsis at the moon.
+    local return_smja is (moon_orbit_radius + target_radius) / 2.
+    local return_apoapsis_velocity is sqrt(parent_body:mu * (2 / moon_orbit_radius - 1 / return_smja)).
+    local parent_return_velocity is moon_velocity:normalized * return_apoapsis_velocity.
+    local escape_velocity is parent_return_velocity - moon_velocity.
+
+    // Raise the required parent-relative excess velocity out of the moon's
+    // gravity well at the ship's next periapsis, then express it as a node.
+    local parking_radius is body:radius + obt:periapsis.
+    local escape_burn_velocity is escape_velocity:normalized * sqrt(
+        escape_velocity:mag^2 + 2 * body:mu / parking_radius
+    ).
+    local current_velocity is velocityat(ship,burn_ut):orbit.
+    local dV is escape_burn_velocity - current_velocity.
+    return inertial_to_PRN(dV,burn_ut).
+}
