@@ -3985,3 +3985,45 @@ function pos_return_from_a_moon {
     local dV is escape_burn_velocity - current_velocity.
     return inertial_to_PRN(dV,burn_ut).
 }
+
+//==================================================||
+//      FUNCTION: pos_capture_at_body               ||
+//--------------------------------------------------||
+// PURPOSE:                                         ||
+//   Creates a retrograde maneuver at the current  ||
+//   body's next periapsis that captures an incoming||
+//   hyperbolic trajectory into a circular orbit.   ||
+//                                                  ||
+// ASSUMPTIONS:                                     ||
+//   - The vessel is already inside the body's SOI.||
+//   - The current trajectory is hyperbolic and its||
+//     next periapsis is above the body's surface. ||
+//                                                  ||
+// RETURNS:                                         ||
+//   A maneuver node vector for circular capture at||
+//   periapsis, or a null maneuver on invalid input.||
+//==================================================||
+function pos_capture_at_body {
+    if obt:eccentricity < 1 {
+        return null_mnv("[ ORBT ERROR ] : Body capture requires a hyperbolic incoming trajectory").
+    }
+    if ship:periapsis < 0 {
+        return null_mnv("[ ORBT ERROR ] : Capture periapsis must be above the body's surface").
+    }
+    if eta:periapsis <= 0 {
+        return null_mnv("[ ORBT ERROR ] : No future periapsis is available for body capture").
+    }
+
+    local burn_ut is time:seconds+eta:periapsis.
+    local position is positionat(ship,burn_ut)-body:position.
+    local velocity is velocityat(ship,burn_ut):orbit.
+    local radial_axis is position:normalized.
+    local tangential_velocity is velocity-radial_axis*vdot(velocity,radial_axis).
+    if tangential_velocity:mag <= 0 {
+        return null_mnv("[ ORBT ERROR ] : Unable to determine the periapsis velocity direction").
+    }
+
+    local circular_speed is orbital_velocity_circular(position:mag,"radius").
+    local capture_velocity is tangential_velocity:normalized*circular_speed.
+    return inertial_to_PRN(capture_velocity-velocity,burn_ut).
+}

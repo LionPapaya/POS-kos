@@ -15,6 +15,7 @@ function pos_om_catalog {
     commands:add(lex("label","Resonant orbit","key","resonance","modes",list("at apoapsis","at periapsis","after fixed time","at altitude"),"fields",list(list("Period ratio",1.5,0.001,1000),list("Base period (s); 0 = current orbit",0,0,1000000000000.0),list("Mode value: delay (s) or altitude (m)",240,0,1000000000000.0)),"target",false,"note","")).
     commands:add(lex("label","Change argument of periapsis","key","argument","modes",list("nearest","first half","second half"),"fields",list(list("Target angle (deg)",0,0,360)),"target",false,"note","")).
     commands:add(lex("label","Return from current moon","key","return_from_moon","modes",list("at periapsis"),"fields",list(list("Target parent periapsis altitude (m)",80000,0,1000000000000.0)),"target",false,"note","Plans an escape burn at the current orbit's next periapsis. Review the parent-body trajectory before executing.")).
+    commands:add(lex("label","Capture at current body","key","capture_at_body","modes",list("at periapsis"),"fields",list(),"target",false,"note","For an incoming hyperbolic trajectory: circularizes at the current body's next periapsis.")).
     commands:add(lex("label","Match target plane","key","match_planes","modes",list("at nearest node","at cheapest node","at AN","at DN"),"fields",list(),"target",true,"note","")).
     commands:add(lex("label","Match target velocity","key","match_velocity","modes",list("at closest approach","after fixed time"),"fields",list(list("Mode value: delay (s) or altitude (m)",240,0,1000000000000.0)),"target",true,"note","")).
     commands:add(lex("label","Intercept at chosen time","key","intercept_time","modes",list("chosen time"),"fields",list(list("Departure delay (s)",240,30,1000000000000.0),list("Flight time after departure (s)",3600,1,1000000000000.0)),"target",true,"note","")).
@@ -43,6 +44,7 @@ function pos_om_plan {
     if key = "resonance" { return change_resonant_orbit(n[0],mode,base_period,n[2]). }
     if key = "argument" { return change_argument_of_periapsis(n[0],mode). }
     if key = "return_from_moon" { return pos_return_from_a_moon(n[0]). }
+    if key = "capture_at_body" { return pos_capture_at_body(). }
     if key = "match_planes" { return match_planes_with_target(mode). }
     if key = "match_velocity" { return match_velocities_with_target(mode,n[0]). }
     if key = "intercept_time" { return intercept_target_at_chosen_time(n[0],n[1]). }
@@ -127,7 +129,7 @@ function pos_om_validate {
     }
     // The exposed planners use finite orbital periods. Hyperbolic variants
     // remain available in the copied library for direct use.
-    if ship:orbit:eccentricity >= 1 { return "This UI requires a closed starting orbit.". }
+    if ship:orbit:eccentricity >= 1 and key <> "capture_at_body" { return "This UI requires a closed starting orbit.". }
     if mode = "at altitude" {
         local altitude_value is n[0].
         if key <> "circularize" { set altitude_value to n[1]. }
@@ -140,6 +142,8 @@ function pos_om_validate {
     if key = "both_apses" and n[0] > n[1] { return "Periapsis must not exceed apoapsis.". }
     if key = "semimajoraxis" and n[0] <= ship:body:radius { return "Semimajor axis must exceed the body radius.". }
     if key = "return_from_moon" and ship:body:body = ship:body { return "Return from a moon requires the vessel to orbit a moon with a parent body.". }
+    if key = "capture_at_body" and ship:orbit:eccentricity < 1 { return "Body capture requires an incoming hyperbolic trajectory.". }
+    if key = "capture_at_body" and ship:periapsis < 0 { return "Capture periapsis must be above the current body's surface.". }
     if key = "fine_tune" and n[2] <> round(n[2]) { return "Search samples must be an integer.". }
     if key = "porkchop1" or key = "porkchop2" {
         if n[1] <= n[0] or n[3] <= n[2] { return "Window end and maximum flight time must exceed their start values.". }
