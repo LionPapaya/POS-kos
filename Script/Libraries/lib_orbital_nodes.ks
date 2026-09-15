@@ -4015,15 +4015,15 @@ function pos_capture_at_body {
     }
 
     local burn_ut is time:seconds+eta:periapsis.
-    local position is positionat(ship,burn_ut)-body:position.
-    local velocity is velocityat(ship,burn_ut):orbit.
-    local radial_axis is position:normalized.
-    local tangential_velocity is velocity-radial_axis*vdot(velocity,radial_axis).
+    local pos is positionat(ship,burn_ut)-body:position.
+    local vel is velocityat(ship,burn_ut):orbit.
+    local radial_axis is pos:normalized.
+    local tangential_velocity is vel-radial_axis*vdot(vel,radial_axis).
     if tangential_velocity:mag <= 0 {
         return null_mnv("[ ORBT ERROR ] : Unable to determine the periapsis velocity direction").
     }
 
-    local circular_speed is orbital_velocity_circular(position:mag,"radius").
+    local circular_speed is orbital_velocity_circular(pos:mag,"radius").
     local capture_velocity is tangential_velocity:normalized*circular_speed.
-    return inertial_to_PRN(capture_velocity-velocity,burn_ut).
+    return inertial_to_PRN(capture_velocity-vel,burn_ut).
 }
