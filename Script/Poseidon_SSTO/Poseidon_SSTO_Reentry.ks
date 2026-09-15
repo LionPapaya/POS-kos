@@ -189,6 +189,8 @@ until running = false{
                     set nd to deorbit.
                     clearVecDraws().
                     execute_node().
+                
+            
 
                     if ship:apoapsis < 500000{
                         set step to "reentry_low".
