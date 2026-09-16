@@ -346,11 +346,13 @@ function define_TEAM_interface {
     // every runway, including low-elevation runways.
     set target_altitude to rnw_altitude + AVES["TEAMAltitude"].
 
-    local target_latlng is latlng(0, 0).
-    local ercl_2hac to get_geoposition_along_heading(rnw_start,rnw_heading+180,Aves["HacDistance"]).
-    if calcdistance(ship:geoposition,rnw_start) > calcdistance(ship:geoposition,ercl_2hac){
-        set target_latlng to get_geoposition_along_heading(rnw_start,rnw_heading+180,calculate_distance_from_alt(AVES["TEAMAltitude"])).
-    }else{set target_latlng to get_geoposition_along_heading(ercl_2hac,compass_for_prograde()+180,calculate_distance_from_alt(AVES["TEAMAltitude"])).}
+    // Put the interface on the extended runway centerline at the distance
+    // corresponding to TEAMAltitude on the glideslope. Then move 10 km from
+    // that point toward the vessel to define the entry target location.
+    local ercl_distance is calculate_distance_from_alt(target_altitude,rnw_altitude).
+    local ercl_target is get_geoposition_along_heading(rnw_start,rnw_heading+180,ercl_distance).
+    local target_heading is heading_between(ercl_target,ship:geoposition).
+    local target_latlng is get_geoposition_along_heading(ercl_target,target_heading,10000).
 
     // Define the TEAM interface box
     local team_interface_box is lexicon(
