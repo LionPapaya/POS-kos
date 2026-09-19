@@ -454,10 +454,10 @@ until running = false{
                 // Energy is quadratic in speed, so calculating it from the
                 // blended state creates a non-linear target and visible d_e
                 // changes as the selected trajectory samples advance.
-                local e_ref1 is calculate_spacecraft_energy(s_step1["altitude"], s_step1["surfvel"]:mag, 2.5, 0.9).
-                local e_ref2 is calculate_spacecraft_energy(s_step2["altitude"], s_step2["surfvel"]:mag, 2.5, 0.9).
+                local e_ref1 is calculate_spacecraft_energy(s_step1["altitude"], s_step1["surfvel"]:mag).
+                local e_ref2 is calculate_spacecraft_energy(s_step2["altitude"], s_step2["surfvel"]:mag).
                 local e_ref is e_ref1+(e_ref2-e_ref1)*reference_fraction.
-                local e_dot is calculate_spacecraft_energy(ship:altitude,ship:airspeed,2.5,0.9).
+                local e_dot is calculate_spacecraft_energy(ship:altitude,ship:airspeed).
                 set alpha_md_pid:setpoint to e_ref.
                 
                 set e_gui_inputs["guid_alt"] to s_step["altitude"].

@@ -633,7 +633,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     )
 )).
 Poseidon_SSTO:add("EG_rev°",5).
-Poseidon_SSTO:add("EG_am_range",20).
+Poseidon_SSTO:add("EG_am_range",10).
 Poseidon_SSTO:add("EGAOA",{
 parameter alt_ is ship:altitude.
     if alt_ <= 20000 {

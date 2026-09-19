@@ -431,22 +431,18 @@ function findkeywithvalue {
 function calculate_spacecraft_energy{
   parameter alt_ is ship:altitude.
   parameter vel is ship:airspeed.
-  parameter alt_offset is 1.  // Multiplier for altitude importance
-  parameter vel_offset is 1.  // Multiplier for velocity importance
   parameter mass_ is ship:mass.
   parameter bod_mass is body:mass.
   parameter bod_rad is body:RADIUS.
 
+  // Specific mechanical energy must increase with both altitude and speed.
+  // Use the conventional signed gravitational potential so this remains a
+  // physical quantity rather than a tunable guidance score.
+  local distance_from_center to bod_rad + alt_.
+  local gravitational_potential_energy to -(constant:G * bod_mass * mass_) / distance_from_center.
+  local kinetic_energy to 0.5 * mass_ * vel * vel.
 
-  local distance_from_center to bod_rad + (alt_ * alt_offset).
-
-  local gravitational_potential_energy to (constant:G * bod_mass * mass) / distance_from_center.
-
-  local kinetic_energy to 0.5 * mass_ * (vel * vel) * vel_offset.
-
-  local total_mechanical_energy to kinetic_energy + gravitational_potential_energy.
-
-  return total_mechanical_energy.
+  return kinetic_energy + gravitational_potential_energy.
 }
 // Blend adjacent entry-trajectory energy references by the live range-to-go.
 // Interpolating energy directly avoids the non-linear result from blending
