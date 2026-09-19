@@ -16,6 +16,13 @@ global terminal_route_debug is lex(
     "target_distance", 0,
     "remaining_distance", 0,
     "target_altitude", 0,
+    "profile_region", "inactive",
+    "profile_altitude", 0,
+    "profile_gradient", 0,
+    "profile_error", 0,
+    "profile_feedforward_vs", 0,
+    "landing_desired_vs", 0,
+    "landing_flare_fraction", 0,
     "desired_vertical_speed", 0,
     "pitch_bias", 0,
     "target_aoa", 0,
@@ -273,6 +280,9 @@ function terminal_route_init {
         "hold_segment", hold_radius * 1.42,
         "target_altitude", ship:altitude,
         "remaining_distance", 0,
+        "profile_region", "inactive",
+        "profile_altitude", 0,
+        "profile_gradient", 0,
         "energy_margin", 0,
         "airbrake", false,
         "gear", false,
@@ -373,7 +383,8 @@ function terminal_route_update {
     local target is terminal_route_current_target(route).
     local target_distance is calcdistance_m(ship:geoposition, target).
     local remaining_distance is terminal_route_remaining_distance(route).
-    local profile_altitude is calculate_glideslope_alt(remaining_distance).
+    local profile is calculate_glideslope_profile(remaining_distance).
+    local profile_altitude is profile["altitude"].
     local body_gravity is ship:body:mu / (ship:body:radius ^ 2).
     local target_energy is profile_altitude - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * body_gravity).
     local energy_margin is terminal_route_energy_height() - target_energy.
@@ -470,6 +481,17 @@ function terminal_route_update {
     // This avoids oscillation and keeps the approach stable once the pattern
     // has already committed to downwind or base.
     local direct_distance is geometry["distance"].
+    local direct_profile is calculate_glideslope_profile(direct_distance).
+    local active_profile_region is "inactive".
+    if route["phase"] = "final" { set active_profile_region to direct_profile["region"]. }
+    if active_profile_region <> route["profile_region"] {
+        flight_log_event("terminal_profile_region","from="+route["profile_region"]+"|to="+active_profile_region+
+            "|distance="+round(direct_distance,1)+"|altitude="+round(geometry["altitude"],1)+
+            "|vertical_speed="+round(ship:verticalspeed,2)).
+        set route["profile_region"] to active_profile_region.
+    }
+    set route["profile_altitude"] to direct_profile["altitude"].
+    set route["profile_gradient"] to direct_profile["gradient"].
     local landing_gate is config_TR["LandingGate"].
     // Thrust and brakes must represent opposite energy states.  In
     // particular, do not use airbrakes merely because speed crosses a target:
@@ -478,7 +500,10 @@ function terminal_route_update {
     local low_speed is ship:airspeed < config_TR["Propulsion"]["throttle_speed"].
     set route["airbrake"] to route["phase"] <> "go_around" and energy_margin > config_TR["brake_energy"] and not low_energy and not low_speed.
     set route["gear"] to direct_distance < landing_gate["gear_distance"] and geometry["altitude"] < landing_gate["gear_altitude"].
-    local landing_stable is route["phase"] = "final" and direct_distance < landing_gate["distance"] and
+    // Do not start the landing handoff timer until the preflare is complete
+    // and the aircraft is established on the three-degree shallow segment.
+    local landing_stable is route["phase"] = "final" and route["profile_region"] = "shallow" and
+        direct_distance < landing_gate["distance"] and
         geometry["altitude"] < landing_gate["altitude"] and geometry["along_track"] > landing_gate["minimum_along_track"] and
         abs(geometry["heading_error"]) < landing_gate["heading_error"] and abs(geometry["cross_track"]) < landing_gate["cross_track"] and
         ship:airspeed > landing_gate["minimum_speed"] and ship:airspeed < landing_gate["maximum_speed"].
@@ -502,6 +527,10 @@ function terminal_route_update {
     set terminal_route_debug["target_distance"] to target_distance.
     set terminal_route_debug["remaining_distance"] to remaining_distance.
     set terminal_route_debug["target_altitude"] to target_altitude.
+    set terminal_route_debug["profile_region"] to route["profile_region"].
+    set terminal_route_debug["profile_altitude"] to route["profile_altitude"].
+    set terminal_route_debug["profile_gradient"] to route["profile_gradient"].
+    set terminal_route_debug["profile_error"] to route["profile_altitude"] - ship:altitude.
     set terminal_route_debug["energy_margin"] to energy_margin.
     set terminal_route_debug["target_energy"] to target_energy.
     set terminal_route_debug["airbrake"] to route["airbrake"].
@@ -521,11 +550,20 @@ function terminal_route_fly {
     local distance is route["remaining_distance"].
     local time_to_go is max(distance / max(ship:airspeed, config_TR["time_to_go_min_speed"]), config_TR["time_to_go_min"]).
     local desired_vertical_speed is 0.
+    local profile_feedforward_vs is 0.
     local pid_log is "none".
     if route["phase"] = "final" {
-        local final_vs_dist is distance * config_TR["final_vs_distance_factor"].
-        local alt_tgt is calculate_glideslope_alt(final_vs_dist).
-        set desired_vertical_speed to calc_vvdot(final_vs_dist, ship:airspeed, alt_tgt, ship:altitude).
+        local profile is calculate_glideslope_profile(distance).
+        local horizontal_groundspeed is sqrt(max(0,ship:velocity:surface:mag^2 - ship:verticalspeed^2)).
+        local runway_closure_speed is horizontal_groundspeed * max(0,cos(route["geometry"]["heading_error"])).
+        set runway_closure_speed to max(runway_closure_speed,config_TR["time_to_go_min_speed"]).
+        set profile_feedforward_vs to -runway_closure_speed * profile["gradient"].
+        local altitude_error is profile["altitude"] - ship:altitude.
+        set desired_vertical_speed to profile_feedforward_vs + altitude_error / config_TR["final_profile_correction_time"].
+        set desired_vertical_speed to max(config_TR["final_profile_min_vertical_speed"],
+            min(config_TR["final_profile_max_vertical_speed"],desired_vertical_speed)).
+        set route["profile_altitude"] to profile["altitude"].
+        set route["profile_gradient"] to profile["gradient"].
     } else {
         set desired_vertical_speed to (route["target_altitude"] - ship:altitude) / time_to_go.
     }
@@ -652,6 +690,10 @@ function terminal_route_fly {
         set dap["aoa"]["base_pitch"] to pitch_bias.
     }
     set terminal_route_debug["desired_vertical_speed"] to desired_vertical_speed.
+    set terminal_route_debug["profile_altitude"] to route["profile_altitude"].
+    set terminal_route_debug["profile_gradient"] to route["profile_gradient"].
+    set terminal_route_debug["profile_error"] to route["profile_altitude"] - ship:altitude.
+    set terminal_route_debug["profile_feedforward_vs"] to profile_feedforward_vs.
     set terminal_route_debug["pitch_bias"] to pitch_bias.
     set terminal_route_debug["target_aoa"] to target_aoa.
     set terminal_route_debug["throttle"] to dapthrottle.

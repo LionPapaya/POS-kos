@@ -204,7 +204,7 @@ function TEAM_guid_old{
             rnw["head"]+180,        
             (calcdistance_m(team_internal["sim"]["latlong"],rnw["pos"])*0.4)).
         LOCAL DIST IS CALCDISTANCE_M(team_internal["hac_entry"]["latlng"],team_internal["sim"]["latlong"]).
-        if dist < AVES["glideslope"]["switch12"]{
+        if dist < AVES["glideslope"]["preflare_end"]{
             SET OUT["team_input"]["step"] TO "fla".
         }
         RETURN OUT.

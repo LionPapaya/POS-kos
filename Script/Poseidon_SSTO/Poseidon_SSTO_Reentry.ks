@@ -41,6 +41,7 @@ if not(force_tgt["force"]){
 }
 //}
 set deorbit_periapsis_set_flag to false.
+set landing_flare_started to false.
 dap:setup().
 set console_mode to "DATA".
 until running = false{
@@ -602,6 +603,10 @@ until running = false{
             if landing_commit["stable"] {
                 if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
                 abort_set_fuel_dump(false).
+                flight_log_event("landing_handoff","distance="+round(terminal_route["remaining_distance"],1)+
+                    "|altitude="+round(ship:altitude-runway_altitude,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+                    "|target_vertical_speed="+round(terminal_route_debug["desired_vertical_speed"],2)+
+                    "|profile_region="+terminal_route["profile_region"]+"|glideslope_error="+round(landing_commit["glideslope_error"],1)).
                 set step to "landing".
                 set dap["str_mode"] to "aerostr".
             }else{
@@ -624,14 +629,23 @@ until running = false{
         // desired sink rate by height produces a smooth flare without holding
         // the craft level over the runway.
         local desired_vs is landing_config["approach_vertical_speed"].
+        local flare_fraction is 0.
         if alt_ovr_runway < landing_config["flare_start_altitude"] {
-            local flare_fraction is max(0,min(1,
+            set flare_fraction to max(0,min(1,
                 (landing_config["flare_start_altitude"] - alt_ovr_runway) /
                 max(landing_config["flare_start_altitude"] - landing_config["touchdown_altitude"],1)
             )).
             set desired_vs to landing_config["approach_vertical_speed"] +
                 (landing_config["touchdown_vertical_speed"] - landing_config["approach_vertical_speed"]) * flare_fraction.
+            if not landing_flare_started {
+                set landing_flare_started to true.
+                flight_log_event("landing_flare_start","altitude="+round(alt_ovr_runway,1)+
+                    "|distance="+round(calcdistance_m(ship:geoposition,runway_start),1)+
+                    "|vertical_speed="+round(ship:verticalspeed,2)+"|target_vertical_speed="+round(desired_vs,2)).
+            }
         }
+        set terminal_route_debug["landing_desired_vs"] to desired_vs.
+        set terminal_route_debug["landing_flare_fraction"] to flare_fraction.
 
         // Keep aerostr control for final alignment.  Drive turn_pitch directly
         // so the flare has pitch authority without using distance_pitch.

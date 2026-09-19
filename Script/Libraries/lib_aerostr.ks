@@ -137,27 +137,85 @@ function calc_vvdot {
     local vvdot is (t_alt - alt_) / t.
     return vvdot.
 }
-function calculate_glideslope_alt {
-    parameter distance,rnw_alt is runway_altitude, gs is AVES["glideslope"].//angle1, target1, switch12, angle2.
-    
-    if distance >= gs["switch12"] {
-        return ((distance - gs["target1"]) * gs["angle1"])+rnw_alt.
-    }else {
-        return (distance *  gs["angle2"])+rnw_alt.
+// Return the continuously differentiable final-approach profile.  The steep
+// line is joined to a three-degree shallow glide with a cubic Hermite curve,
+// so both altitude and flight-path angle are continuous through preflare.
+// The shallow aimpoint is beyond the runway threshold; this leaves room to
+// establish the shallow glide before the height-based final flare begins.
+function calculate_glideslope_profile {
+    parameter distance,rnw_alt is runway_altitude, gs is AVES["glideslope"].
+    local steep_gradient is gs["angle1"].
+    local shallow_gradient is gs["angle2"].
+    local preflare_start is gs["preflare_start"].
+    local preflare_end is gs["preflare_end"].
+
+    if distance >= preflare_start {
+        return lex(
+            "altitude",((distance - gs["target1"]) * steep_gradient)+rnw_alt,
+            "gradient",steep_gradient,
+            "region","steep"
+        ).
     }
+    if distance <= preflare_end {
+        return lex(
+            "altitude",((distance + gs["shallow_aimpoint"]) * shallow_gradient)+rnw_alt,
+            "gradient",shallow_gradient,
+            "region","shallow"
+        ).
+    }
+
+    local span is preflare_start - preflare_end.
+    local t is (distance - preflare_end) / span.
+    local shallow_altitude is (preflare_end + gs["shallow_aimpoint"]) * shallow_gradient.
+    local steep_altitude is (preflare_start - gs["target1"]) * steep_gradient.
+    local altitude is
+        (2*t^3 - 3*t^2 + 1) * shallow_altitude +
+        (t^3 - 2*t^2 + t) * span * shallow_gradient +
+        (-2*t^3 + 3*t^2) * steep_altitude +
+        (t^3 - t^2) * span * steep_gradient.
+    local altitude_derivative is
+        (6*t^2 - 6*t) * shallow_altitude +
+        (3*t^2 - 4*t + 1) * span * shallow_gradient +
+        (-6*t^2 + 6*t) * steep_altitude +
+        (3*t^2 - 2*t) * span * steep_gradient.
+    return lex(
+        "altitude",altitude+rnw_alt,
+        "gradient",altitude_derivative/span,
+        "region","preflare"
+    ).
+}
+function calculate_glideslope_alt {
+    parameter distance,rnw_alt is runway_altitude, gs is AVES["glideslope"].
+    return calculate_glideslope_profile(distance,rnw_alt,gs)["altitude"].
 }
 function calculate_distance_from_alt {
-    parameter alt_, rnw_alt is runway_altitude, gs is AVES["glideslope"]. // angle1, target1, switch12, angle2.
+    parameter alt_, rnw_alt is runway_altitude, gs is AVES["glideslope"].
 
-    // Calculate the altitude difference
     local alt_diff is alt_ - rnw_alt.
-
-    // Determine which segment of the glideslope the altitude falls into
-    if alt_diff >= gs["switch12"] * gs["angle1"] {
-        return (alt_diff / gs["angle1"]) + gs["target1"].
-    } else {
-        return alt_diff / gs["angle2"].
+    local shallow_boundary is (gs["preflare_end"] + gs["shallow_aimpoint"]) * gs["angle2"].
+    local steep_boundary is (gs["preflare_start"] - gs["target1"]) * gs["angle1"].
+    if alt_diff <= shallow_boundary {
+        return (alt_diff / gs["angle2"]) - gs["shallow_aimpoint"].
     }
+    if alt_diff >= steep_boundary {
+        return (alt_diff / gs["angle1"]) + gs["target1"].
+    }
+
+    // The Hermite segment is monotonic but has no useful simple inverse.
+    // A bounded bisection keeps this helper consistent with the real profile.
+    local low_distance is gs["preflare_end"].
+    local high_distance is gs["preflare_start"].
+    local iterations is 0.
+    until iterations >= 18 {
+        local middle_distance is (low_distance + high_distance) / 2.
+        if calculate_glideslope_alt(middle_distance,rnw_alt,gs) < alt_ {
+            set low_distance to middle_distance.
+        }else{
+            set high_distance to middle_distance.
+        }
+        set iterations to iterations + 1.
+    }
+    return (low_distance + high_distance) / 2.
 }
 function calculate_vertical_glideslope_distance {
     parameter distance is calcdistance_m(ship:geoposition,runway_start),alt_ is ship:altitude, gs is AVES["glideslope"].

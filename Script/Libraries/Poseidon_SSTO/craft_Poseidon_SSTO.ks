@@ -446,14 +446,24 @@ Poseidon_SSTO:add("MinPitch",-30).
 Poseidon_SSTO:add("MaxYaw",40).
 Poseidon_SSTO:add("Rotation_rate",lex("high",10,"low",18)).
 Poseidon_SSTO:add("Pitch_rate",lex("high",4,"low",9)).
-Poseidon_SSTO:add("Glideslope",lex("angle1",0.268,"angle2",0.0875,"target1",450,"switch12",700)).
+// Fifteen-degree steep approach, smooth preflare from 1.5 km to 400 m, then
+// a three-degree glide aimed 875 m beyond the threshold.  The downstream
+// final flare remains height based and is deliberately separate.
+Poseidon_SSTO:add("Glideslope",lex(
+    "angle1",0.268,
+    "angle2",0.0524077793,
+    "target1",450,
+    "preflare_start",1500,
+    "preflare_end",400,
+    "shallow_aimpoint",875
+)).
 // Final flare controller.  A more negative touchdown_vertical_speed and a
 // lower flare_start_altitude make a firmer, shorter landing; raising either
 // makes the touchdown softer at the cost of more runway.
 Poseidon_SSTO:add("Landing",lex(
     "flare_start_altitude",35,
     "touchdown_altitude",3,
-    "approach_vertical_speed",-8.5,
+    "approach_vertical_speed",-7,
     "touchdown_vertical_speed",-0.7,
     "pitch_gain",2.9,
     "minimum_turn_pitch",-2,
@@ -533,7 +543,9 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "hold_descent_rate",24,
     "downwind_descent_rate",20,
     "final_descent_rate",28,
-    "final_vs_distance_factor",0.7,
+    "final_profile_correction_time",5,
+    "final_profile_min_vertical_speed",-45,
+    "final_profile_max_vertical_speed",-4,
     "early_descent_margin",250,
     "hold_aoa_max",22,
     "bank_deadband",1,
@@ -596,7 +608,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     ),
     "LandingCommit",lex(
         "maximum_cross_track",150,"maximum_heading_error",5,"maximum_glideslope_error",60,
-        "minimum_vertical_speed",-45,"maximum_vertical_speed",-15,
+        "minimum_vertical_speed",-12,"maximum_vertical_speed",-3,
         "minimum_speed",110,"maximum_speed",165,"maximum_bank",10,"minimum_along_track",0
     ),
     // A runway may be changed only while there is enough room to rebuild the
