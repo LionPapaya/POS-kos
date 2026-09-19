@@ -43,6 +43,15 @@ if not(force_tgt["force"]){
 set deorbit_periapsis_set_flag to false.
 set landing_flare_started to false.
 global entry_reference_time is -1.
+global entry_predictive_bank is 0.
+global entry_predictive_plan_bank is 0.
+global entry_predictive_next_update is -1.
+global entry_predictive_lower_bank is 0.
+global entry_predictive_upper_bank is 0.
+global entry_predictive_lower_miss is 0.
+global entry_predictive_upper_miss is 0.
+global entry_predictive_sensitivity is 0.
+global entry_predictive_valid is false.
 dap:setup().
 set console_mode to "DATA".
 until running = false{
@@ -259,8 +268,8 @@ until running = false{
                 if entry_traj:converged{
                     // Entry solver converged: configure guidance to follow the planned bank profile.
                     // - Provide user feedback via Lastest_status and logs.
-                    // - Disable the basic reentry fallback and initialize the alpha modulation PID.
-                    // - Set PID output limits around the computed bank angle (entry_traj["bank"]).
+                    // - Disable the basic reentry fallback and initialize the live-state
+                    //   two-candidate predictive bank controller from the computed bank.
                     // - Determine which side (left/right) the initial entry turn should use by comparing
                     //   the heading-to-target and prograde directions.
                     set Lastest_status to "Guidance Converged in "+entry_traj["iterations"]+" iterations".
@@ -268,10 +277,9 @@ until running = false{
                     wait 3.
                     set Lastest_status to "bank is "+entry_traj["bank"].
                     set basice_reentry_guidance to false.
-                    set alpha_md_pid to pidloop(0.26,0.31,0.65).
-                    set alpha_md_pid:maxoutput to entry_traj["bank"]+AVES["EG_am_range"].
-                    set alpha_md_pid:minoutput to max(entry_traj["bank"]-AVES["EG_am_range"],0).
-                    set alpha_md_pid:setpoint to 0.
+                    set entry_predictive_plan_bank to entry_traj["bank"].
+                    set entry_predictive_bank to entry_traj["bank"].
+                    set entry_predictive_next_update to time:seconds+10.
                     local heading_error is heading_to_target(Team_interface["target_latlng"]) - compass_for_prograde().
                     if heading_error > 0{
                         set entry_turnside to "right".
@@ -458,8 +466,6 @@ until running = false{
                 local e_ref2 is calculate_spacecraft_energy(s_step2["altitude"], s_step2["surfvel"]:mag).
                 local e_ref is e_ref1+(e_ref2-e_ref1)*reference_fraction.
                 local e_dot is calculate_spacecraft_energy(ship:altitude,ship:airspeed).
-                set alpha_md_pid:setpoint to e_ref.
-                
                 set e_gui_inputs["guid_alt"] to s_step["altitude"].
                 set e_gui_inputs["guid_spd"] to s_step["surfvel"]:mag.
                 set e_gui_inputs["guid_pos"] to s_step["latlong"].
@@ -481,7 +487,65 @@ until running = false{
                 }else if heading_error < -AVES["EG_rev°"]{
                     set entry_turnside to "left".
                 }
-                local bank_out is invert_in_range(alpha_md_pid:update(time:seconds,e_dot),alpha_md_pid:minoutput,alpha_md_pid:maxoutput).
+                // Every ten seconds, simulate two complete trajectories from one
+                // snapshot of the current live state. Their TEAM-box miss
+                // distances choose the better candidate. The initial trajectory bank
+                // remains the center of the overall authority envelope.
+                if time:seconds >= entry_predictive_next_update {
+                    local prediction_start_time is time:seconds.
+                    set entry_predictive_next_update to prediction_start_time+10.
+                    local prediction_start is current_simstate().
+                    // Freeze every live dependency once so the two candidates
+                    // differ only by bank magnitude, even though kOS yields
+                    // while each synchronous trajectory is being evaluated.
+                    local prediction_mu is BODY:mu.
+                    local prediction_radius is BODY:radius.
+                    local prediction_angularvel is BODY:angularvel.
+                    local prediction_mass is SHIP:MASS.
+                    local prediction_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
+                    local prediction_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
+                    local prediction_right is VCRS(prediction_top,prediction_fore):NORMALIZED.
+                    local prediction_minimum_bank is max(0,entry_predictive_plan_bank-AVES["EG_am_range"]).
+                    local prediction_maximum_bank is min(90,entry_predictive_plan_bank+AVES["EG_am_range"]).
+                    set entry_predictive_lower_bank to max(prediction_minimum_bank,entry_predictive_bank-3).
+                    set entry_predictive_upper_bank to min(prediction_maximum_bank,entry_predictive_bank+3).
+
+                    local prediction_low is sim_with_bank(
+                        clone_simstate(prediction_start),entry_predictive_lower_bank,
+                        Team_interface["target_altitude"],Team_interface["target_latlng"],AVES["simulation"]["timestep"],
+                        prediction_mu,prediction_radius,prediction_angularvel,prediction_mass,
+                        prediction_fore,prediction_top,prediction_right,true
+                    ).
+                    local prediction_high is sim_with_bank(
+                        clone_simstate(prediction_start),entry_predictive_upper_bank,
+                        Team_interface["target_altitude"],Team_interface["target_latlng"],AVES["simulation"]["timestep"],
+                        prediction_mu,prediction_radius,prediction_angularvel,prediction_mass,
+                        prediction_fore,prediction_top,prediction_right,true
+                    ).
+                    set entry_predictive_lower_miss to entry_team_box_miss(
+                        prediction_low["final_state"],Team_interface["target_latlng"],Team_interface["team_interface_box"]
+                    ).
+                    set entry_predictive_upper_miss to entry_team_box_miss(
+                        prediction_high["final_state"],Team_interface["target_latlng"],Team_interface["team_interface_box"]
+                    ).
+                    local prediction_command is entry_predictive_bank_command(
+                        entry_predictive_bank,entry_predictive_lower_bank,entry_predictive_lower_miss,
+                        entry_predictive_upper_bank,entry_predictive_upper_miss,prediction_minimum_bank,
+                        prediction_maximum_bank,3
+                    ).
+                    set entry_predictive_valid to prediction_command["valid"].
+                    set entry_predictive_sensitivity to prediction_command["sensitivity"].
+                    if entry_predictive_valid {
+                        set entry_predictive_bank to prediction_command["bank"].
+                    }
+                    flight_log_entry_prediction(
+                        entry_predictive_plan_bank,entry_predictive_bank,entry_predictive_lower_bank,
+                        entry_predictive_lower_miss,entry_predictive_upper_bank,entry_predictive_upper_miss,
+                        entry_predictive_sensitivity,entry_predictive_valid,time:seconds-prediction_start_time,
+                        entry_predictive_next_update
+                    ).
+                }
+                local bank_out is entry_predictive_bank.
                 local d_t_a is time_to_alt(ship:altitude,ship:verticalspeed,AVES["TEAMAltitude"]).
                 if not(d_t_A = 0) and d_t_A < 20 and abs(heading_error) < AVES["EG_rev°"] and time_to_pos(ship:geoposition,Team_interface["target_latlng"],ship:airspeed) > 15{
                     Set Lastest_status to "Low Altitude".

@@ -285,6 +285,59 @@ function sim_with_bank{
     return out.
 }
 
+// Return the geometric miss distance from a simulated endpoint to the TEAM
+// box. A state inside both tolerances has zero miss; an outside state combines
+// its remaining horizontal and vertical miss.
+function entry_team_box_miss {
+    parameter final_state.
+    parameter target_latlong.
+    parameter team_interface_box.
+    local horizontal_miss is max(0,calcdistance_m(final_state["latlong"],target_latlong)-team_interface_box["dist_tolerance"]).
+    local altitude_miss is 0.
+    if final_state["altitude"] < team_interface_box["min_altitude"] {
+        set altitude_miss to team_interface_box["min_altitude"]-final_state["altitude"].
+    } else if final_state["altitude"] > team_interface_box["max_altitude"] {
+        set altitude_miss to final_state["altitude"]-team_interface_box["max_altitude"].
+    }
+    return sqrt(horizontal_miss*horizontal_miss+altitude_miss*altitude_miss).
+}
+
+// Move one candidate step toward the endpoint that is closer to the TEAM box.
+// If both candidates enter the box, or their misses are indistinguishable,
+// retain the current bank. Keeping this pure lets the exact flight-law
+// arithmetic run in the offline KerboScript tests.
+function entry_predictive_bank_command {
+    parameter current_bank.
+    parameter lower_bank.
+    parameter lower_error.
+    parameter upper_bank.
+    parameter upper_error.
+    parameter minimum_bank.
+    parameter maximum_bank.
+    parameter maximum_change.
+
+    local bank_span is upper_bank-lower_bank.
+    local error_span is upper_error-lower_error.
+    local valid_solution is abs(bank_span) > 0.001.
+    local next_bank is current_bank.
+    local sensitivity is 0.
+    if valid_solution {
+        set sensitivity to error_span/bank_span.
+        if lower_error < upper_error-0.001 {
+            set next_bank to lower_bank.
+        } else if upper_error < lower_error-0.001 {
+            set next_bank to upper_bank.
+        }
+        set next_bank to max(current_bank-maximum_change,min(current_bank+maximum_change,next_bank)).
+        set next_bank to max(minimum_bank,min(maximum_bank,next_bank)).
+    }
+    return lex(
+        "valid",valid_solution,
+        "bank",next_bank,
+        "sensitivity",sensitivity
+    ).
+}
+
 // Temporary entry-solver diagnostics.  This intentionally does not use the
 // structured flight logger: those logs describe the live vehicle and exclude
 // the synchronous simulation that calc_entry_traj performs.  The one call in
