@@ -523,7 +523,7 @@ Poseidon_SSTO:add("Envelope",lex(
         "final_inhibit_max_vertical_speed",-5,
         // Being below glideslope is a terrain hazard; being above it is not.
         // GPWS therefore has only this lower bound, with no upper bound.
-        "final_inhibit_min_glideslope_error",-60,
+        "final_inhibit_min_glideslope_error",-25,
         "pullup_aoa",20,
         "pullup_min_base_pitch",0
     )
@@ -543,7 +543,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "hold_descent_rate",24,
     "downwind_descent_rate",20,
     "final_descent_rate",28,
-    "final_profile_correction_time",5,
+    "final_profile_correction_time",3,
     "final_profile_min_vertical_speed",-45,
     "final_profile_max_vertical_speed",-4,
     "early_descent_margin",250,
@@ -570,11 +570,10 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "hold_descent_time_limit",20,
     "downwind_descent_time_limit",20,
     "final_descent_time_limit",15,
-    "final_pitch_pid_p",0.5,
-    "final_pitch_pid_i",0.2,
-    "final_pitch_pid_d",0.4,
-    "final_pitch_pid_max",15,
-    "final_pitch_pid_min",-35,
+    "final_pitch_trim_aoa",7,
+    "final_pitch_vertical_speed_gain",0.8,
+    "final_pitch_command_max",25,
+    "final_pitch_command_min",-20,
     "pitch_bias_gain",0.35,
     "nominal_target_aoa",16,
     "max_energy_aoa",20,

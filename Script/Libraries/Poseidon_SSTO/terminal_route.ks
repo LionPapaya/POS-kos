@@ -21,6 +21,8 @@ global terminal_route_debug is lex(
     "profile_gradient", 0,
     "profile_error", 0,
     "profile_feedforward_vs", 0,
+    "profile_pitch_feedforward", 0,
+    "pitch_saturated", false,
     "landing_desired_vs", 0,
     "landing_flare_fraction", 0,
     "desired_vertical_speed", 0,
@@ -283,6 +285,7 @@ function terminal_route_init {
         "profile_region", "inactive",
         "profile_altitude", 0,
         "profile_gradient", 0,
+        "pitch_saturated", false,
         "energy_margin", 0,
         "airbrake", false,
         "gear", false,
@@ -577,17 +580,28 @@ function terminal_route_fly {
     }
 
     local pitch_bias is 0.
+    local profile_pitch_feedforward is 0.
+    local pitch_saturated is false.
     if route["phase"] = "final" {
-        if not (defined final_pitch_bias_pid){
-            set final_pitch_bias_pid to pidloop(config_TR["final_pitch_pid_p"],config_TR["final_pitch_pid_i"],config_TR["final_pitch_pid_d"]).
-            set final_pitch_bias_pid:maxoutput to config_TR["final_pitch_pid_max"].
-            set final_pitch_bias_pid:minoutput to config_TR["final_pitch_pid_min"].
+        local pitch_solution is calculate_glideslope_pitch_command(
+            desired_vertical_speed,ship:verticalspeed,ship:velocity:surface:mag,
+            config_TR["final_pitch_trim_aoa"],config_TR["final_pitch_vertical_speed_gain"],
+            config_TR["final_pitch_command_min"],config_TR["final_pitch_command_max"]
+        ).
+        set pitch_bias to pitch_solution["command"].
+        set profile_pitch_feedforward to pitch_solution["feedforward"].
+        set pitch_saturated to pitch_solution["saturated"].
+        set pid_log to pitch_solution["correction"].
+        if pitch_saturated <> route["pitch_saturated"] {
+            flight_log_event("terminal_pitch_saturation","active="+pitch_saturated+
+                "|distance="+round(distance,1)+"|altitude="+round(ship:altitude-runway_altitude,1)+
+                "|vertical_speed="+round(ship:verticalspeed,2)+"|target_vertical_speed="+round(desired_vertical_speed,2)+
+                "|pitch_command="+round(pitch_bias,2)).
         }
-        set final_pitch_bias_pid:setpoint to desired_vertical_speed.
-        set pitch_bias to final_pitch_bias_pid:update(time:seconds, ship:verticalspeed).
-        set pid_log to pitch_bias.
+        set route["pitch_saturated"] to pitch_saturated.
     } else {
         set pitch_bias to max(config_TR["pitch_bias_min"], min(config_TR["pitch_bias_max"], (desired_vertical_speed - ship:verticalspeed) * config_TR["pitch_bias_gain"])).
+        set route["pitch_saturated"] to false.
     }
     local target_aoa is config_TR["nominal_target_aoa"].
     local max_energy_aoa is config_TR["max_energy_aoa"].
@@ -694,6 +708,8 @@ function terminal_route_fly {
     set terminal_route_debug["profile_gradient"] to route["profile_gradient"].
     set terminal_route_debug["profile_error"] to route["profile_altitude"] - ship:altitude.
     set terminal_route_debug["profile_feedforward_vs"] to profile_feedforward_vs.
+    set terminal_route_debug["profile_pitch_feedforward"] to profile_pitch_feedforward.
+    set terminal_route_debug["pitch_saturated"] to pitch_saturated.
     set terminal_route_debug["pitch_bias"] to pitch_bias.
     set terminal_route_debug["target_aoa"] to target_aoa.
     set terminal_route_debug["throttle"] to dapthrottle.

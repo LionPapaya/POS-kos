@@ -188,6 +188,26 @@ function calculate_glideslope_alt {
     parameter distance,rnw_alt is runway_altitude, gs is AVES["glideslope"].
     return calculate_glideslope_profile(distance,rnw_alt,gs)["altitude"].
 }
+// Convert the desired flight-path vertical speed into an absolute pitch trim,
+// then add immediate closed-loop correction for sink-rate error.  Keeping the
+// trim out of an integral controller prevents the steep-glide nose-down trim
+// from taking most of the preflare to unwind.
+function calculate_glideslope_pitch_command {
+    parameter desired_vertical_speed, actual_vertical_speed, surface_speed_value,
+        trim_aoa, vertical_speed_gain, minimum_pitch, maximum_pitch.
+    local protected_speed is max(abs(surface_speed_value),1).
+    local path_ratio is max(-1,min(1,desired_vertical_speed/protected_speed)).
+    local path_pitch is arcsin(path_ratio) + trim_aoa.
+    local sink_correction is (desired_vertical_speed - actual_vertical_speed) * vertical_speed_gain.
+    local raw_pitch_command is path_pitch + sink_correction.
+    local pitch_command is max(minimum_pitch,min(maximum_pitch,raw_pitch_command)).
+    return lex(
+        "command",pitch_command,
+        "feedforward",path_pitch,
+        "correction",sink_correction,
+        "saturated",pitch_command <> raw_pitch_command
+    ).
+}
 function calculate_distance_from_alt {
     parameter alt_, rnw_alt is runway_altitude, gs is AVES["glideslope"].
 
