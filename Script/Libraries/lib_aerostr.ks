@@ -168,7 +168,7 @@ function calculate_glideslope_profile {
     local t is (distance - preflare_end) / span.
     local shallow_altitude is (preflare_end + gs["shallow_aimpoint"]) * shallow_gradient.
     local steep_altitude is (preflare_start - gs["target1"]) * steep_gradient.
-    local altitude is
+    local profile_height is
         (2*t^3 - 3*t^2 + 1) * shallow_altitude +
         (t^3 - 2*t^2 + t) * span * shallow_gradient +
         (-2*t^3 + 3*t^2) * steep_altitude +
@@ -179,7 +179,7 @@ function calculate_glideslope_profile {
         (-6*t^2 + 6*t) * steep_altitude +
         (3*t^2 - 2*t) * span * steep_gradient.
     return lex(
-        "altitude",altitude+rnw_alt,
+        "altitude",profile_height+rnw_alt,
         "gradient",altitude_derivative/span,
         "region","preflare"
     ).
