@@ -229,7 +229,8 @@ function flight_log_begin {
     set POS_LOG_ENTRY to lex(
         "reference_lat",0,"reference_lng",0,"reference_altitude",0,"reference_speed",0,
         "energy_reference",0,"energy_actual",0,"energy_error",0,"heading_error",0,
-        "bank_command",0,"time_to_interface",0,"turn_side","","lift_to_drag",0
+        "bank_command",0,"time_to_interface",0,"turn_side","","lift_to_drag",0,
+        "segment_start_time",0,"segment_end_time",0,"segment_fraction",0,"segment_cross_track",0
     ).
     set POS_LOG_VACUUM to lex(
         "phase","inactive","target_lat",0,"target_lng",0,"target_altitude",0,
