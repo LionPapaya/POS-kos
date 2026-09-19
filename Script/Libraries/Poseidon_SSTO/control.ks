@@ -316,11 +316,24 @@ function envelope_refresh {
     // transition that proves a landing run, rather than an accidental ground
     // state, owned the protection handoff.
     if defined step and step = "landing" {
+        // Recovery modes replace STEERING's normal dap_steering lock with a
+        // direct AoA lock.  Reclaim that lock before clearing the recovery
+        // state; otherwise an aerostr-to-aerostr landing handoff never calls
+        // set_aerostr_auto(), and the last GPWS pull-up attitude remains in
+        // control even though the flare is producing new pitch commands.
+        local landing_restore_steering is envelope["restore_steering"] or
+            envelope["state"] = "terrain_pullup" or
+            envelope["state"] = "upset_zero_aoa" or
+            envelope["state"] = "upset_pullup".
+        if landing_restore_steering {
+            flight_log_event("landing_steering_handoff","from="+envelope["state"]+
+                "|to="+dap["str_mode"]+"|target_pitch="+round(dap["aerostr"]["targetPitch"],2)).
+        }
         set envelope["state"] to "normal".
         set envelope["regime"] to "landing".
         set envelope["min_throttle"] to 0.
         set envelope["rcs_assist"] to false.
-        set envelope["restore_steering"] to false.
+        set envelope["restore_steering"] to landing_restore_steering.
         set envelope["pitchdown_timer"] to 0.
         set envelope["authority_timer"] to 0.
         set envelope["upset_timer"] to 0.
