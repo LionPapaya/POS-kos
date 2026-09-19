@@ -522,8 +522,12 @@ Poseidon_SSTO:add("Envelope",lex(
         "final_inhibit_min_vertical_speed",-45,
         "final_inhibit_max_vertical_speed",-5,
         // Being below glideslope is a terrain hazard; being above it is not.
-        // GPWS therefore has only this lower bound, with no upper bound.
+        // GPWS therefore has only this lower bound, with no upper bound.  The
+        // planned preflare intentionally flies below the geometric profile;
+        // while that controller is active, use its wider demonstrated corridor
+        // without relaxing any of the other final-capture gates.
         "final_inhibit_min_glideslope_error",-25,
+        "final_inhibit_preflare_min_glideslope_error",-40,
         "pullup_aoa",20,
         "pullup_min_base_pitch",0
     )

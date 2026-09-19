@@ -194,8 +194,16 @@ function envelope_terrain_landing_inhibit_reason {
     if defined step and step = "TEAM" and defined terminal_route and
        terminal_route:haskey("phase") and terminal_route["phase"] = "final" {
         local terrain_config is AVES["Envelope"]["Terrain"].
-        local final_capture is terminal_route_final_approach_capture(terminal_route,terrain_config["final_inhibit_min_vertical_speed"],terrain_config["final_inhibit_max_vertical_speed"],terrain_config["final_inhibit_min_glideslope_error"],0,false).
+        local planned_preflare_pullup is defined terminal_route_debug and
+            terminal_route_debug:haskey("preflare_pullup_active") and
+            terminal_route_debug["preflare_pullup_active"].
+        local minimum_glideslope_error is terrain_config["final_inhibit_min_glideslope_error"].
+        if planned_preflare_pullup {
+            set minimum_glideslope_error to terrain_config["final_inhibit_preflare_min_glideslope_error"].
+        }
+        local final_capture is terminal_route_final_approach_capture(terminal_route,terrain_config["final_inhibit_min_vertical_speed"],terrain_config["final_inhibit_max_vertical_speed"],minimum_glideslope_error,0,false).
         if final_capture["captured"] {
+            if planned_preflare_pullup { return "terminal_preflare_pullup". }
             return "terminal_final_captured".
         }
     }
@@ -250,7 +258,9 @@ function envelope_terrain_refresh {
 
     local inhibit_reason is envelope_terrain_inhibit_reason(envelope,terrain_config).
     if inhibit_reason <> "" {
-        local final_captured is inhibit_reason = "terminal_final_captured" or inhibit_reason = "landing_final_captured".
+        local final_captured is inhibit_reason = "terminal_final_captured" or
+            inhibit_reason = "terminal_preflare_pullup" or
+            inhibit_reason = "landing_final_captured".
         envelope_terrain_reset(envelope,"inhibited",inhibit_reason,final_captured).
         if envelope["state"] = "terrain_pullup" {
             set envelope["state"] to "normal".
