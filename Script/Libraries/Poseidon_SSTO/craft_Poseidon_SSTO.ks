@@ -574,6 +574,12 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_pitch_vertical_speed_gain",0.8,
     "final_pitch_command_max",25,
     "final_pitch_command_min",-20,
+    // Before GPWS becomes necessary, reproduce its 20-degree pull-up pitch
+    // with the engines left at idle.  Blend it in only while below the curved
+    // preflare/shallow profile so an on-profile approach keeps normal control.
+    "final_preflare_pullup_start_error",5,
+    "final_preflare_pullup_full_error",15,
+    "final_preflare_pullup_pitch",20,
     "pitch_bias_gain",0.35,
     "nominal_target_aoa",16,
     "max_energy_aoa",20,
@@ -602,7 +608,10 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     ),
     "LandingGate",lex(
         "distance",1500,"altitude",120,"heading_error",8,"cross_track",300,
-        "minimum_speed",105,"maximum_speed",175,"minimum_along_track",-250,"stable_time",2,
+        // The shallow segment is only about 2.8 seconds long at approach
+        // speed.  Handoff while the sink rate is still inside LandingCommit,
+        // then let the height-based flare finish the pull-up.
+        "minimum_speed",105,"maximum_speed",175,"minimum_along_track",-250,"stable_time",0.75,
         "gear_distance",2200,"gear_altitude",180,"airbrake_minimum_altitude",100
     ),
     "LandingCommit",lex(

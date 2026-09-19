@@ -23,6 +23,8 @@ global terminal_route_debug is lex(
     "profile_feedforward_vs", 0,
     "profile_pitch_feedforward", 0,
     "pitch_saturated", false,
+    "preflare_pullup_active", false,
+    "preflare_pullup_fraction", 0,
     "landing_desired_vs", 0,
     "landing_flare_fraction", 0,
     "desired_vertical_speed", 0,
@@ -286,6 +288,7 @@ function terminal_route_init {
         "profile_altitude", 0,
         "profile_gradient", 0,
         "pitch_saturated", false,
+        "preflare_pullup_active", false,
         "energy_margin", 0,
         "airbrake", false,
         "gear", false,
@@ -515,7 +518,13 @@ function terminal_route_update {
     }else{
         set route["landing_stable_since"] to -1.
     }
+    local landing_was_ready is route["landing_ready"].
     set route["landing_ready"] to landing_stable and time:seconds - route["landing_stable_since"] >= landing_gate["stable_time"].
+    if route["landing_ready"] and not landing_was_ready {
+        flight_log_event("landing_gate_ready","distance="+round(direct_distance,1)+
+            "|altitude="+round(geometry["altitude"],1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+            "|profile_region="+route["profile_region"]+"|stable_time="+round(landing_gate["stable_time"],2)).
+    }
 
     set terminal_route_debug["active"] to true.
     set terminal_route_debug["phase"] to route["phase"].
@@ -554,6 +563,8 @@ function terminal_route_fly {
     local time_to_go is max(distance / max(ship:airspeed, config_TR["time_to_go_min_speed"]), config_TR["time_to_go_min"]).
     local desired_vertical_speed is 0.
     local profile_feedforward_vs is 0.
+    local profile_altitude_error is 0.
+    local active_profile_region is "inactive".
     local pid_log is "none".
     if route["phase"] = "final" {
         local profile is calculate_glideslope_profile(distance).
@@ -562,6 +573,8 @@ function terminal_route_fly {
         set runway_closure_speed to max(runway_closure_speed,config_TR["time_to_go_min_speed"]).
         set profile_feedforward_vs to -runway_closure_speed * profile["gradient"].
         local altitude_error is profile["altitude"] - ship:altitude.
+        set profile_altitude_error to altitude_error.
+        set active_profile_region to profile["region"].
         set desired_vertical_speed to profile_feedforward_vs + altitude_error / config_TR["final_profile_correction_time"].
         set desired_vertical_speed to max(config_TR["final_profile_min_vertical_speed"],
             min(config_TR["final_profile_max_vertical_speed"],desired_vertical_speed)).
@@ -582,6 +595,8 @@ function terminal_route_fly {
     local pitch_bias is 0.
     local profile_pitch_feedforward is 0.
     local pitch_saturated is false.
+    local preflare_pullup_active is false.
+    local preflare_pullup_fraction is 0.
     if route["phase"] = "final" {
         local pitch_solution is calculate_glideslope_pitch_command(
             desired_vertical_speed,ship:verticalspeed,ship:velocity:surface:mag,
@@ -592,6 +607,21 @@ function terminal_route_fly {
         set profile_pitch_feedforward to pitch_solution["feedforward"].
         set pitch_saturated to pitch_solution["saturated"].
         set pid_log to pitch_solution["correction"].
+        local pullup_solution is calculate_preflare_pullup_command(
+            active_profile_region,profile_altitude_error,pitch_bias,
+            config_TR["final_preflare_pullup_start_error"],config_TR["final_preflare_pullup_full_error"],
+            config_TR["final_preflare_pullup_pitch"]
+        ).
+        set pitch_bias to pullup_solution["command"].
+        set preflare_pullup_active to pullup_solution["active"].
+        set preflare_pullup_fraction to pullup_solution["fraction"].
+        if preflare_pullup_active <> route["preflare_pullup_active"] {
+            flight_log_event("terminal_preflare_pullup","active="+preflare_pullup_active+
+                "|distance="+round(distance,1)+"|altitude="+round(ship:altitude-runway_altitude,1)+
+                "|profile_error="+round(profile_altitude_error,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+                "|pitch_command="+round(pitch_bias,2)+"|fraction="+round(preflare_pullup_fraction,2)).
+        }
+        set route["preflare_pullup_active"] to preflare_pullup_active.
         if pitch_saturated <> route["pitch_saturated"] {
             flight_log_event("terminal_pitch_saturation","active="+pitch_saturated+
                 "|distance="+round(distance,1)+"|altitude="+round(ship:altitude-runway_altitude,1)+
@@ -602,6 +632,10 @@ function terminal_route_fly {
     } else {
         set pitch_bias to max(config_TR["pitch_bias_min"], min(config_TR["pitch_bias_max"], (desired_vertical_speed - ship:verticalspeed) * config_TR["pitch_bias_gain"])).
         set route["pitch_saturated"] to false.
+        if route["preflare_pullup_active"] {
+            flight_log_event("terminal_preflare_pullup","active=False|reason=left_final").
+        }
+        set route["preflare_pullup_active"] to false.
     }
     local target_aoa is config_TR["nominal_target_aoa"].
     local max_energy_aoa is config_TR["max_energy_aoa"].
@@ -710,6 +744,8 @@ function terminal_route_fly {
     set terminal_route_debug["profile_feedforward_vs"] to profile_feedforward_vs.
     set terminal_route_debug["profile_pitch_feedforward"] to profile_pitch_feedforward.
     set terminal_route_debug["pitch_saturated"] to pitch_saturated.
+    set terminal_route_debug["preflare_pullup_active"] to preflare_pullup_active.
+    set terminal_route_debug["preflare_pullup_fraction"] to preflare_pullup_fraction.
     set terminal_route_debug["pitch_bias"] to pitch_bias.
     set terminal_route_debug["target_aoa"] to target_aoa.
     set terminal_route_debug["throttle"] to dapthrottle.

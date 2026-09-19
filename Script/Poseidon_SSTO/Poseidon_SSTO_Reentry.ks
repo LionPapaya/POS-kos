@@ -607,9 +607,17 @@ until running = false{
                     "|altitude="+round(ship:altitude-runway_altitude,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
                     "|target_vertical_speed="+round(terminal_route_debug["desired_vertical_speed"],2)+
                     "|profile_region="+terminal_route["profile_region"]+"|glideslope_error="+round(landing_commit["glideslope_error"],1)).
+                set terminal_route_debug["preflare_pullup_active"] to false.
+                set terminal_route_debug["preflare_pullup_fraction"] to 0.
                 set step to "landing".
                 set dap["str_mode"] to "aerostr".
             }else{
+                flight_log_event("landing_commit_rejected","distance="+round(terminal_route["remaining_distance"],1)+
+                    "|altitude="+round(ship:altitude-runway_altitude,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+                    "|airspeed="+round(ship:airspeed,2)+"|glideslope_error="+round(landing_commit["glideslope_error"],1)+
+                    "|cross_track="+round(terminal_route["geometry"]["cross_track"],1)+
+                    "|heading_error="+round(terminal_route["geometry"]["heading_error"],1)+
+                    "|gpws_state="+dap["envelope"]["terrain_state"]).
                 set terminal_route["go_around_count"] to terminal_route["go_around_count"] + 1.
                 set terminal_route["go_around_reason"] to "landing_commit_unstable".
                 terminal_route_change_phase(terminal_route,"go_around").

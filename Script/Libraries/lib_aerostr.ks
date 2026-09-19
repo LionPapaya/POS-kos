@@ -208,6 +208,34 @@ function calculate_glideslope_pitch_command {
         "saturated",pitch_command <> raw_pitch_command
     ).
 }
+// Add a smooth, closed-loop pull-up floor when the aircraft falls below the
+// curved preflare profile.  At the configured full-error point this commands
+// the same absolute pitch used by the GPWS escape, but it leaves throttle at
+// the terminal controller's idle setting.  The floor is deliberately absent
+// on the steep segment and fades to zero near the profile to avoid a command
+// step or a second open-loop flare schedule.
+function calculate_preflare_pullup_command {
+    parameter profile_region, profile_error, normal_pitch,
+        start_error, full_error, pullup_pitch.
+    local eligible_region is profile_region = "preflare" or profile_region = "shallow".
+    local pullup_fraction is 0.
+    if eligible_region {
+        set pullup_fraction to max(0,min(1,
+            (profile_error - start_error) / max(full_error - start_error,1)
+        )).
+    }
+    local pullup_floor is pullup_pitch * pullup_fraction.
+    local commanded_pitch is normal_pitch.
+    if pullup_fraction > 0 {
+        set commanded_pitch to max(commanded_pitch,pullup_floor).
+    }
+    return lex(
+        "command",commanded_pitch,
+        "active",pullup_fraction > 0 and commanded_pitch > normal_pitch,
+        "fraction",pullup_fraction,
+        "floor",pullup_floor
+    ).
+}
 function calculate_distance_from_alt {
     parameter alt_, rnw_alt is runway_altitude, gs is AVES["glideslope"].
 
