@@ -461,6 +461,47 @@ function interpolate_entry_reference_energy {
   set blend to max(0,min(1,blend)).
   return e_ref1 + (e_ref2 - e_ref1) * blend.
 }
+// Select the closest adjacent chronological ground-track segment. min_simtime
+// prevents a crossing or looping path from moving the reference backward.
+function find_entry_reference_segment {
+  parameter control_inputs, live_geoposition, min_simtime is -1.
+  local best_score is 1e30.
+  local best_start_time is -1.
+  local best_end_time is -1.
+  local best_fraction is 0.
+  local live_vector is live_geoposition:position.
+  // sim_with_bank inserts these keys in increasing simtime order. Walking the
+  // key list keeps this live-controller lookup linear in trajectory length.
+  local control_times is control_inputs:keys.
+  if control_times:length >= 2 {
+    for segment_index in range(0,control_times:length-1) {
+      local start_time is control_times[segment_index].
+      local end_time is control_times[segment_index+1].
+      if start_time >= min_simtime and end_time > start_time {
+        local segment_start is control_inputs[start_time]["simstate"]["latlong"]:position.
+        local segment_end is control_inputs[end_time]["simstate"]["latlong"]:position.
+        local segment_vector is segment_end-segment_start.
+        local segment_length_squared is vdot(segment_vector,segment_vector).
+        local segment_fraction is 0.
+        if segment_length_squared > 0.00001 {
+          set segment_fraction to vdot(live_vector-segment_start,segment_vector)/segment_length_squared.
+          set segment_fraction to max(0,min(1,segment_fraction)).
+        }
+        local projected_vector is segment_start+segment_vector*segment_fraction.
+        local segment_score is (live_vector-projected_vector):mag.
+        if segment_score < best_score {
+          set best_score to segment_score.
+          set best_start_time to start_time.
+          set best_end_time to end_time.
+          set best_fraction to segment_fraction.
+        }
+      }
+    }
+  }
+  return lex("valid",best_start_time >= 0 and best_end_time >= 0,
+    "start_time",best_start_time,"end_time",best_end_time,
+    "fraction",best_fraction,"cross_track",best_score).
+}
 function invert_in_range{
   parameter in,min_,max_.
   local diff_min is abs(in-min_).

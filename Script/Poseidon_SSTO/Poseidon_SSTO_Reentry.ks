@@ -42,6 +42,7 @@ if not(force_tgt["force"]){
 //}
 set deorbit_periapsis_set_flag to false.
 set landing_flare_started to false.
+global entry_reference_time is -1.
 dap:setup().
 set console_mode to "DATA".
 until running = false{
@@ -253,6 +254,7 @@ until running = false{
                 flight_log_set_entry_target(Team_interface).
                 set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"]).
                 flight_log_entry_solver_result(entry_traj).
+                set entry_reference_time to -1.
 
                 if entry_traj:converged{
                     // Entry solver converged: configure guidance to follow the planned bank profile.
@@ -418,45 +420,33 @@ until running = false{
                     }          
                 }
                 flight_log_entry_solver_result(entry_traj).
+                set entry_reference_time to -1.
                     
 
                 }
             }else{
-                local l is lex().
-                for t in entry_traj["converged_sim"]["controll_inputs"]:keys{
-                    l:add(t,calcdistance_m(Team_interface["target_latlng"],entry_traj["converged_sim"]["controll_inputs"][t]["simstate"]["latlong"])).
+                local reference_segment is find_entry_reference_segment(entry_traj["converged_sim"]["controll_inputs"],ship:geoposition,entry_reference_time).
+                if not reference_segment["valid"] {
+                    set entry_reference_time to -1.
+                    set reference_segment to find_entry_reference_segment(entry_traj["converged_sim"]["controll_inputs"],ship:geoposition).
                 }
-                //get closest time step to target latlng
-                local t_ is FindClosestTimeStep(l,calcdistance_m(ship:geoposition,Team_interface["target_latlng"])).
-                // get second closest time step to target latlng
-                l:remove(findkeywithvalue(l,t_)).
-                local t2_ is findClosestTimeStep(l,calcdistance_m(ship:geoposition,Team_interface["target_latlng"])).
-
-                local cur_target_dist is calcdistance_m(ship:geoposition, Team_interface["target_latlng"]).
-                local d1 is calcdistance_m(entry_traj["converged_sim"]["controll_inputs"][t_]["simstate"]["latlong"], Team_interface["target_latlng"]).
-                local d2 is calcdistance_m(entry_traj["converged_sim"]["controll_inputs"][t2_]["simstate"]["latlong"], Team_interface["target_latlng"]).
-
-                // Weight by inverse distance from the current distance (small eps to avoid div0)
-                local eps is 0.00001.
-                local w1 is 1 / (abs(d1 - cur_target_dist) + eps).
-                local w2 is 1 / (abs(d2 - cur_target_dist) + eps).
+                local t_ is reference_segment["start_time"].
+                local t2_ is reference_segment["end_time"].
+                local reference_fraction is reference_segment["fraction"].
+                set entry_reference_time to t_.
                 local s_step1 is entry_traj["converged_sim"]["controll_inputs"][t_]["simstate"].
                 local s_step2 is entry_traj["converged_sim"]["controll_inputs"][t2_]["simstate"].
 
-                local wsum is w1 + w2.
-                if wsum = 0 { set wsum to eps. }.
-
-                // Create a weighted average s_step from both simulation states
-                // Compute weighted average latitude and longitude separately
-                local avg_lat is (s_step1["latlong"]:lat * w1 + s_step2["latlong"]:lat * w2) / wsum.
-                local avg_lng is (s_step1["latlong"]:lng * w1 + s_step2["latlong"]:lng * w2) / wsum.
+                // Blend continuously along the selected adjacent path segment.
+                local avg_lat is s_step1["latlong"]:lat+(s_step2["latlong"]:lat-s_step1["latlong"]:lat)*reference_fraction.
+                local avg_lng is s_step1["latlong"]:lng+(s_step2["latlong"]:lng-s_step1["latlong"]:lng)*reference_fraction.
                 
                 local s_step is lex(
-                    "simtime", (s_step1["simtime"] * w1 + s_step2["simtime"] * w2) / wsum,
-                    "position", (s_step1["position"] * w1 + s_step2["position"] * w2) / wsum,
-                    "velocity", (s_step1["velocity"] * w1 + s_step2["velocity"] * w2) / wsum,
-                    "surfvel", (s_step1["surfvel"] * w1 + s_step2["surfvel"] * w2) / wsum,
-                    "altitude", (s_step1["altitude"] * w1 + s_step2["altitude"] * w2) / wsum,
+                    "simtime", s_step1["simtime"]+(s_step2["simtime"]-s_step1["simtime"])*reference_fraction,
+                    "position", s_step1["position"]+(s_step2["position"]-s_step1["position"])*reference_fraction,
+                    "velocity", s_step1["velocity"]+(s_step2["velocity"]-s_step1["velocity"])*reference_fraction,
+                    "surfvel", s_step1["surfvel"]+(s_step2["surfvel"]-s_step1["surfvel"])*reference_fraction,
+                    "altitude", s_step1["altitude"]+(s_step2["altitude"]-s_step1["altitude"])*reference_fraction,
                     "latlong", latlng(avg_lat, avg_lng)
                 ).
 
@@ -466,7 +456,7 @@ until running = false{
                 // changes as the selected trajectory samples advance.
                 local e_ref1 is calculate_spacecraft_energy(s_step1["altitude"], s_step1["surfvel"]:mag, 2.5, 0.9).
                 local e_ref2 is calculate_spacecraft_energy(s_step2["altitude"], s_step2["surfvel"]:mag, 2.5, 0.9).
-                local e_ref is interpolate_entry_reference_energy(e_ref1,e_ref2,d1,d2,cur_target_dist).
+                local e_ref is e_ref1+(e_ref2-e_ref1)*reference_fraction.
                 local e_dot is calculate_spacecraft_energy(ship:altitude,ship:airspeed,2.5,0.9).
                 set alpha_md_pid:setpoint to e_ref.
                 
@@ -520,7 +510,7 @@ until running = false{
                 }else{
                     set dap["aoa"]["target_bank"] to bank_out.
                 }
-                flight_log_capture_entry_guidance(s_step,e_ref,e_dot,d_e,heading_error,dap["aoa"]["target_bank"],d_t_a,entry_turnside,e_gui_inputs["l/d"]).
+                flight_log_capture_entry_guidance(s_step,e_ref,e_dot,d_e,heading_error,dap["aoa"]["target_bank"],d_t_a,entry_turnside,e_gui_inputs["l/d"],t_,t2_,reference_fraction,reference_segment["cross_track"]).
 
                 //log ("target_aoa"+dap["aoa"]["target_bank"]) to log.txt.
                 //log(s_step["altitude"]+","+s_step["latlong"]:lat+","+s_step["latlong"]:lng) to log_sim.txt.
