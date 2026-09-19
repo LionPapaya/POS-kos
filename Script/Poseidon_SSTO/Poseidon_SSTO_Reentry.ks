@@ -495,16 +495,14 @@ until running = false{
                     local prediction_start_time is time:seconds.
                     set entry_predictive_next_update to prediction_start_time+10.
                     local prediction_start is current_simstate().
-                    // Freeze every live dependency once so the two candidates
-                    // differ only by bank magnitude, even though kOS yields
-                    // while each synchronous trajectory is being evaluated.
+                    // Keep the body/model scalars consistent between candidates.
+                    // Do not freeze SHIP:FACING: sim_aeroaccel_load deliberately
+                    // samples the latest live vessel axes on every integration
+                    // step for FAR and the Rodrigues force transformations.
                     local prediction_mu is BODY:mu.
                     local prediction_radius is BODY:radius.
                     local prediction_angularvel is BODY:angularvel.
                     local prediction_mass is SHIP:MASS.
-                    local prediction_fore is SHIP:FACING:FOREVECTOR:NORMALIZED.
-                    local prediction_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
-                    local prediction_right is VCRS(prediction_top,prediction_fore):NORMALIZED.
                     local prediction_minimum_bank is max(0,entry_predictive_plan_bank-AVES["EG_am_range"]).
                     local prediction_maximum_bank is min(90,entry_predictive_plan_bank+AVES["EG_am_range"]).
                     set entry_predictive_lower_bank to max(prediction_minimum_bank,entry_predictive_bank-3).
@@ -514,13 +512,15 @@ until running = false{
                         clone_simstate(prediction_start),entry_predictive_lower_bank,
                         Team_interface["target_altitude"],Team_interface["target_latlng"],AVES["simulation"]["timestep"],
                         prediction_mu,prediction_radius,prediction_angularvel,prediction_mass,
-                        prediction_fore,prediction_top,prediction_right,true
+                        SHIP:FACING:FOREVECTOR:NORMALIZED,SHIP:FACING:TOPVECTOR:NORMALIZED,
+                        VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED,true
                     ).
                     local prediction_high is sim_with_bank(
                         clone_simstate(prediction_start),entry_predictive_upper_bank,
                         Team_interface["target_altitude"],Team_interface["target_latlng"],AVES["simulation"]["timestep"],
                         prediction_mu,prediction_radius,prediction_angularvel,prediction_mass,
-                        prediction_fore,prediction_top,prediction_right,true
+                        SHIP:FACING:FOREVECTOR:NORMALIZED,SHIP:FACING:TOPVECTOR:NORMALIZED,
+                        VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED,true
                     ).
                     set entry_predictive_lower_miss to entry_team_box_miss(
                         prediction_low["final_state"],Team_interface["target_latlng"],Team_interface["team_interface_box"]
