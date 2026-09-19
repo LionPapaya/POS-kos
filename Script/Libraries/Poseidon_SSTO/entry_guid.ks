@@ -302,30 +302,48 @@ function entry_team_box_miss {
     return sqrt(horizontal_miss*horizontal_miss+altitude_miss*altitude_miss).
 }
 
-// Move one candidate step toward the endpoint that is closer to the TEAM box.
-// If both candidates enter the box, or their misses are indistinguishable,
-// retain the current bank. Keeping this pure lets the exact flight-law
-// arithmetic run in the offline KerboScript tests.
+// Signed downrange residual used to decide which side of the TEAM target a
+// candidate reaches. This is the same range convention used by calc_entry_traj:
+// positive travels farther than the target range; negative falls short.
+function entry_predictive_range_error {
+    parameter start_latlong.
+    parameter final_latlong.
+    parameter target_latlong.
+    return calcdistance_m(start_latlong,final_latlong)-calcdistance_m(start_latlong,target_latlong).
+}
+
+// Use the signed range residuals to estimate the zero-crossing bank. TEAM-box
+// misses remain the fallback when the local range sensitivity is degenerate.
+// Every result is limited per update and by the total authority envelope.
 function entry_predictive_bank_command {
     parameter current_bank.
     parameter lower_bank.
-    parameter lower_error.
+    parameter lower_range_error.
+    parameter lower_miss.
     parameter upper_bank.
-    parameter upper_error.
+    parameter upper_range_error.
+    parameter upper_miss.
     parameter minimum_bank.
     parameter maximum_bank.
     parameter maximum_change.
 
     local bank_span is upper_bank-lower_bank.
-    local error_span is upper_error-lower_error.
+    local error_span is upper_range_error-lower_range_error.
     local valid_solution is abs(bank_span) > 0.001.
+    local valid_range_sensitivity is valid_solution and abs(error_span) > 0.001.
     local next_bank is current_bank.
     local sensitivity is 0.
-    if valid_solution {
+    if valid_range_sensitivity {
         set sensitivity to error_span/bank_span.
-        if lower_error < upper_error-0.001 {
+        // Secant extrapolation is intentional when both candidates miss on
+        // the same side; that is precisely when unsigned miss cannot recover.
+        set next_bank to lower_bank-lower_range_error/sensitivity.
+        set next_bank to max(current_bank-maximum_change,min(current_bank+maximum_change,next_bank)).
+        set next_bank to max(minimum_bank,min(maximum_bank,next_bank)).
+    } else if valid_solution {
+        if lower_miss < upper_miss-0.001 {
             set next_bank to lower_bank.
-        } else if upper_error < lower_error-0.001 {
+        } else if upper_miss < lower_miss-0.001 {
             set next_bank to upper_bank.
         }
         set next_bank to max(current_bank-maximum_change,min(current_bank+maximum_change,next_bank)).

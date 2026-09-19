@@ -38,7 +38,8 @@ global POS_LOG_EVENT_FILE is "".
 // Version 15 adds entry reference-segment telemetry so continuous energy
 // interpolation and monotonic trajectory progress can be verified in flight.
 // Version 16 adds live-state predictive entry-bank telemetry.
-global POS_LOG_SCHEMA_VERSION is 16.
+// Version 17 adds signed candidate range residuals and active authority.
+global POS_LOG_SCHEMA_VERSION is 17.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -101,15 +102,18 @@ function flight_log_rendezvous_columns {
 
 function flight_log_entry_predictive_header {
     return ",entry_predictive_plan_bank,entry_predictive_bank,entry_predictive_lower_bank,"+
-        "entry_predictive_lower_miss,entry_predictive_upper_bank,entry_predictive_upper_miss,"+
+        "entry_predictive_lower_range_error,entry_predictive_lower_miss,entry_predictive_upper_bank,"+
+        "entry_predictive_upper_range_error,entry_predictive_upper_miss,entry_predictive_authority,"+
         "entry_predictive_sensitivity,entry_predictive_valid,entry_predictive_elapsed,"+
         "entry_predictive_next_update".
 }
 
 function flight_log_entry_predictive_columns {
     return ","+POS_LOG_ENTRY["predictive_plan_bank"]+","+POS_LOG_ENTRY["predictive_bank"]+","+
-        POS_LOG_ENTRY["predictive_lower_bank"]+","+POS_LOG_ENTRY["predictive_lower_miss"]+","+
-        POS_LOG_ENTRY["predictive_upper_bank"]+","+POS_LOG_ENTRY["predictive_upper_miss"]+","+
+        POS_LOG_ENTRY["predictive_lower_bank"]+","+POS_LOG_ENTRY["predictive_lower_range_error"]+","+
+        POS_LOG_ENTRY["predictive_lower_miss"]+","+POS_LOG_ENTRY["predictive_upper_bank"]+","+
+        POS_LOG_ENTRY["predictive_upper_range_error"]+","+POS_LOG_ENTRY["predictive_upper_miss"]+","+
+        POS_LOG_ENTRY["predictive_authority"]+","+
         POS_LOG_ENTRY["predictive_sensitivity"]+","+POS_LOG_ENTRY["predictive_valid"]+","+
         POS_LOG_ENTRY["predictive_elapsed"]+","+POS_LOG_ENTRY["predictive_next_update"].
 }
@@ -170,7 +174,8 @@ global POS_LOG_ENTRY is lex(
     "bank_command",0,"time_to_interface",0,"turn_side","","lift_to_drag",0,
     "segment_start_time",0,"segment_end_time",0,"segment_fraction",0,"segment_cross_track",0,
     "predictive_plan_bank",0,"predictive_bank",0,"predictive_lower_bank",0,
-    "predictive_lower_miss",0,"predictive_upper_bank",0,"predictive_upper_miss",0,
+    "predictive_lower_range_error",0,"predictive_lower_miss",0,"predictive_upper_bank",0,
+    "predictive_upper_range_error",0,"predictive_upper_miss",0,"predictive_authority",0,
     "predictive_sensitivity",0,"predictive_valid",false,"predictive_elapsed",0,
     "predictive_next_update",0
 ).
@@ -252,7 +257,8 @@ function flight_log_begin {
         "bank_command",0,"time_to_interface",0,"turn_side","","lift_to_drag",0,
         "segment_start_time",0,"segment_end_time",0,"segment_fraction",0,"segment_cross_track",0,
         "predictive_plan_bank",0,"predictive_bank",0,"predictive_lower_bank",0,
-        "predictive_lower_miss",0,"predictive_upper_bank",0,"predictive_upper_miss",0,
+        "predictive_lower_range_error",0,"predictive_lower_miss",0,"predictive_upper_bank",0,
+        "predictive_upper_range_error",0,"predictive_upper_miss",0,"predictive_authority",0,
         "predictive_sensitivity",0,"predictive_valid",false,"predictive_elapsed",0,
         "predictive_next_update",0
     ).
@@ -350,23 +356,29 @@ function flight_log_entry_solver_result {
 // Record only completed live guidance predictions.  This observer is called
 // outside sim_with_bank so logging remains absent from all trajectory models.
 function flight_log_entry_prediction {
-    parameter plan_bank, command_bank, lower_bank, lower_miss, upper_bank, upper_miss.
+    parameter plan_bank, command_bank, lower_bank, lower_range_error, lower_miss.
+    parameter upper_bank, upper_range_error, upper_miss, authority.
     parameter sensitivity, valid_solution, elapsed_time, next_update.
     if POS_LOG_LEVEL < 1 { return. }
     set POS_LOG_ENTRY["predictive_plan_bank"] to plan_bank.
     set POS_LOG_ENTRY["predictive_bank"] to command_bank.
     set POS_LOG_ENTRY["predictive_lower_bank"] to lower_bank.
+    set POS_LOG_ENTRY["predictive_lower_range_error"] to lower_range_error.
     set POS_LOG_ENTRY["predictive_lower_miss"] to lower_miss.
     set POS_LOG_ENTRY["predictive_upper_bank"] to upper_bank.
+    set POS_LOG_ENTRY["predictive_upper_range_error"] to upper_range_error.
     set POS_LOG_ENTRY["predictive_upper_miss"] to upper_miss.
+    set POS_LOG_ENTRY["predictive_authority"] to authority.
     set POS_LOG_ENTRY["predictive_sensitivity"] to sensitivity.
     set POS_LOG_ENTRY["predictive_valid"] to valid_solution.
     set POS_LOG_ENTRY["predictive_elapsed"] to elapsed_time.
     set POS_LOG_ENTRY["predictive_next_update"] to next_update.
     flight_log_event("entry_bank_prediction","valid="+valid_solution+"|plan_bank="+round(plan_bank,3)+
         "|command_bank="+round(command_bank,3)+"|lower_bank="+round(lower_bank,3)+
-        "|lower_miss="+round(lower_miss,1)+"|upper_bank="+round(upper_bank,3)+
-        "|upper_miss="+round(upper_miss,1)+"|sensitivity="+round(sensitivity,3)+
+        "|lower_range_error="+round(lower_range_error,1)+"|lower_miss="+round(lower_miss,1)+
+        "|upper_bank="+round(upper_bank,3)+"|upper_range_error="+round(upper_range_error,1)+
+        "|upper_miss="+round(upper_miss,1)+"|authority="+round(authority,3)+
+        "|sensitivity="+round(sensitivity,3)+
         "|elapsed="+round(elapsed_time,3)).
 }
 

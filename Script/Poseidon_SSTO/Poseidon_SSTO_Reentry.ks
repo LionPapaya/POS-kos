@@ -50,6 +50,8 @@ global entry_predictive_lower_bank is 0.
 global entry_predictive_upper_bank is 0.
 global entry_predictive_lower_miss is 0.
 global entry_predictive_upper_miss is 0.
+global entry_predictive_lower_range_error is 0.
+global entry_predictive_upper_range_error is 0.
 global entry_predictive_sensitivity is 0.
 global entry_predictive_valid is false.
 dap:setup().
@@ -503,8 +505,9 @@ until running = false{
                     local prediction_radius is BODY:radius.
                     local prediction_angularvel is BODY:angularvel.
                     local prediction_mass is SHIP:MASS.
-                    local prediction_minimum_bank is max(0,entry_predictive_plan_bank-AVES["EG_am_range"]).
-                    local prediction_maximum_bank is min(90,entry_predictive_plan_bank+AVES["EG_am_range"]).
+                    local prediction_authority is AVES["EG_am_range"].
+                    local prediction_minimum_bank is max(0,entry_predictive_plan_bank-prediction_authority).
+                    local prediction_maximum_bank is min(90,entry_predictive_plan_bank+prediction_authority).
                     set entry_predictive_lower_bank to max(prediction_minimum_bank,entry_predictive_bank-3).
                     set entry_predictive_upper_bank to min(prediction_maximum_bank,entry_predictive_bank+3).
 
@@ -528,10 +531,16 @@ until running = false{
                     set entry_predictive_upper_miss to entry_team_box_miss(
                         prediction_high["final_state"],Team_interface["target_latlng"],Team_interface["team_interface_box"]
                     ).
+                    set entry_predictive_lower_range_error to entry_predictive_range_error(
+                        prediction_start["latlong"],prediction_low["final_state"]["latlong"],Team_interface["target_latlng"]
+                    ).
+                    set entry_predictive_upper_range_error to entry_predictive_range_error(
+                        prediction_start["latlong"],prediction_high["final_state"]["latlong"],Team_interface["target_latlng"]
+                    ).
                     local prediction_command is entry_predictive_bank_command(
-                        entry_predictive_bank,entry_predictive_lower_bank,entry_predictive_lower_miss,
-                        entry_predictive_upper_bank,entry_predictive_upper_miss,prediction_minimum_bank,
-                        prediction_maximum_bank,3
+                        entry_predictive_bank,entry_predictive_lower_bank,entry_predictive_lower_range_error,
+                        entry_predictive_lower_miss,entry_predictive_upper_bank,entry_predictive_upper_range_error,
+                        entry_predictive_upper_miss,prediction_minimum_bank,prediction_maximum_bank,3
                     ).
                     set entry_predictive_valid to prediction_command["valid"].
                     set entry_predictive_sensitivity to prediction_command["sensitivity"].
@@ -540,7 +549,8 @@ until running = false{
                     }
                     flight_log_entry_prediction(
                         entry_predictive_plan_bank,entry_predictive_bank,entry_predictive_lower_bank,
-                        entry_predictive_lower_miss,entry_predictive_upper_bank,entry_predictive_upper_miss,
+                        entry_predictive_lower_range_error,entry_predictive_lower_miss,entry_predictive_upper_bank,
+                        entry_predictive_upper_range_error,entry_predictive_upper_miss,prediction_authority,
                         entry_predictive_sensitivity,entry_predictive_valid,time:seconds-prediction_start_time,
                         entry_predictive_next_update
                     ).
