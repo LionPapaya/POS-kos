@@ -592,6 +592,22 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_alignment_heading_tolerance",1.5,
     "final_heading_correction",2,
     "final_aoa_offset",6,
+    "HighEnergyFinal",lex(
+        // Direct finals from the entry interface need a flight-path command,
+        // not the low-speed final controller's fixed -45 m/s sink limit.
+        "activation_speed",400,
+        "activation_energy_margin",1000,
+        "aim_distance",1500,
+        "minimum_time_to_aim",1,
+        "pitch_kp",0.08,
+        "pitch_ki",0.002,
+        "pitch_kd",0.02,
+        "minimum_pitch",-30,
+        "maximum_pitch",25,
+        "exit_speed",250,
+        "exit_desired_vertical_speed",-55,
+        "profile_capture_tolerance",500
+    ),
     "debug_log_interval",0.5,
     "max_landing_mass", 36,
     "Geometry",lex(

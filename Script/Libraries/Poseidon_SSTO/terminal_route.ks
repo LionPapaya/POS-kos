@@ -30,6 +30,11 @@ global terminal_route_debug is lex(
     "desired_vertical_speed", 0,
     "pitch_bias", 0,
     "target_aoa", 0,
+    "high_energy_final_active", false,
+    "high_energy_desired_vs", 0,
+    "high_energy_pitch_command", 0,
+    "high_energy_pid_output", 0,
+    "high_energy_time_to_aim", 0,
     "handoff_blend_active", false,
     "handoff_blend_elapsed", 0,
     "handoff_raw_target_aoa", 0,
@@ -161,6 +166,32 @@ function terminal_route_waypoint_captured {
     return false.
 }
 
+// Convert the remaining altitude and distance to the preflare intercept into
+// a high-speed final command.  This remains pure guidance mathematics so the
+// real KerboScript implementation is exercised directly by offline tests.
+function calculate_high_energy_final_command {
+    parameter altitude_above_runway.
+    parameter remaining_distance.
+    parameter horizontal_closure_speed.
+    parameter aim_altitude_above_runway.
+    parameter high_energy_config.
+
+    local distance_to_aim is max(
+        remaining_distance-high_energy_config["aim_distance"],1
+    ).
+    local time_to_aim is max(
+        distance_to_aim/max(horizontal_closure_speed,1),
+        high_energy_config["minimum_time_to_aim"]
+    ).
+    local desired_vertical_speed is
+        (aim_altitude_above_runway-altitude_above_runway)/time_to_aim.
+    return lex(
+        "desired_vertical_speed",desired_vertical_speed,
+        "time_to_aim",time_to_aim,
+        "distance_to_aim",distance_to_aim
+    ).
+}
+
 function terminal_route_change_phase {
     parameter route, new_phase.
     if route["phase"] <> new_phase {
@@ -275,6 +306,15 @@ function terminal_route_init {
         get_geoposition_along_heading(downwind_fix, runway_heading + 90, hold_radius)
     ).
 
+    local high_energy_config is config_TR["HighEnergyFinal"].
+    local high_energy_pitch_pid is pidloop(
+        high_energy_config["pitch_kp"],
+        high_energy_config["pitch_ki"],
+        high_energy_config["pitch_kd"]
+    ).
+    set high_energy_pitch_pid:minoutput to high_energy_config["minimum_pitch"].
+    set high_energy_pitch_pid:maxoutput to high_energy_config["maximum_pitch"].
+
     local route is lex(
         "phase", "reposition",
         "side", side,
@@ -302,6 +342,8 @@ function terminal_route_init {
         "landing_stable_since", -1,
         "go_around_count", 0,
         "go_around_reason", "",
+        "high_energy_final_active", false,
+        "high_energy_pitch_pid", high_energy_pitch_pid,
         "last_phase_change_time", time:seconds
     ).
 
@@ -570,7 +612,54 @@ function terminal_route_fly {
     local profile_altitude_error is 0.
     local active_profile_region is "inactive".
     local pid_log is "none".
-    if route["phase"] = "final" {
+    local high_energy_config is config_TR["HighEnergyFinal"].
+    local high_energy_aim_profile is calculate_glideslope_profile(high_energy_config["aim_distance"]).
+    local high_energy_horizontal_speed is sqrt(max(0,ship:velocity:surface:mag^2 - ship:verticalspeed^2)).
+    local high_energy_closure_speed is high_energy_horizontal_speed *
+        max(0,cos(route["geometry"]["heading_error"])).
+    local high_energy_solution is calculate_high_energy_final_command(
+        route["geometry"]["altitude"],distance,high_energy_closure_speed,
+        high_energy_aim_profile["altitude"]-runway_altitude,high_energy_config
+    ).
+    local high_energy_was_active is route["high_energy_final_active"].
+    if route["phase"] = "final" and not route["high_energy_final_active"] and
+       ship:airspeed >= high_energy_config["activation_speed"] and
+       route["energy_margin"] >= high_energy_config["activation_energy_margin"] and
+       distance > high_energy_config["aim_distance"] {
+        set route["high_energy_final_active"] to true.
+        set route["high_energy_pitch_pid"] to pidloop(
+            high_energy_config["pitch_kp"],
+            high_energy_config["pitch_ki"],
+            high_energy_config["pitch_kd"]
+        ).
+        set route["high_energy_pitch_pid"]:minoutput to high_energy_config["minimum_pitch"].
+        set route["high_energy_pitch_pid"]:maxoutput to high_energy_config["maximum_pitch"].
+    }
+    if route["high_energy_final_active"] {
+        local high_energy_profile_error is route["profile_altitude"]-ship:altitude.
+        local high_energy_captured is
+            ship:airspeed <= high_energy_config["exit_speed"] and
+            high_energy_solution["desired_vertical_speed"] >= high_energy_config["exit_desired_vertical_speed"] and
+            abs(high_energy_profile_error) <= high_energy_config["profile_capture_tolerance"].
+        if route["phase"] <> "final" or high_energy_captured {
+            set route["high_energy_final_active"] to false.
+        }
+    }
+    if route["high_energy_final_active"] <> high_energy_was_active {
+        flight_log_event("terminal_high_energy_final","active="+route["high_energy_final_active"]+
+            "|distance="+round(distance,1)+"|altitude="+round(route["geometry"]["altitude"],1)+
+            "|airspeed="+round(ship:airspeed,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+            "|desired_vertical_speed="+round(high_energy_solution["desired_vertical_speed"],2)+
+            "|profile_error="+round(route["profile_altitude"]-ship:altitude,1)).
+    }
+
+    if route["phase"] = "final" and route["high_energy_final_active"] {
+        set desired_vertical_speed to high_energy_solution["desired_vertical_speed"].
+        set profile_feedforward_vs to desired_vertical_speed.
+        set profile_altitude_error to route["profile_altitude"]-ship:altitude.
+        set active_profile_region to route["profile_region"].
+        set pid_log to "high_energy_final".
+    } else if route["phase"] = "final" {
         local profile is calculate_glideslope_profile(distance).
         local horizontal_groundspeed is sqrt(max(0,ship:velocity:surface:mag^2 - ship:verticalspeed^2)).
         local runway_closure_speed is horizontal_groundspeed * max(0,cos(route["geometry"]["heading_error"])).
@@ -601,7 +690,18 @@ function terminal_route_fly {
     local pitch_saturated is false.
     local preflare_pullup_active is false.
     local preflare_pullup_fraction is 0.
-    if route["phase"] = "final" {
+    local high_energy_pid_output is 0.
+    if route["phase"] = "final" and route["high_energy_final_active"] {
+        set route["high_energy_pitch_pid"]:setpoint to desired_vertical_speed.
+        set high_energy_pid_output to route["high_energy_pitch_pid"]:update(time:seconds,ship:verticalspeed).
+        set pitch_bias to high_energy_pid_output.
+        set pitch_saturated to
+            pitch_bias <= high_energy_config["minimum_pitch"] or
+            pitch_bias >= high_energy_config["maximum_pitch"].
+        set route["pitch_saturated"] to pitch_saturated.
+        set route["preflare_pullup_active"] to false.
+        set pid_log to high_energy_pid_output.
+    } else if route["phase"] = "final" {
         local pitch_solution is calculate_glideslope_pitch_command(
             desired_vertical_speed,ship:verticalspeed,ship:velocity:surface:mag,
             config_TR["final_pitch_trim_aoa"],config_TR["final_pitch_vertical_speed_gain"],
@@ -752,6 +852,11 @@ function terminal_route_fly {
     set terminal_route_debug["preflare_pullup_fraction"] to preflare_pullup_fraction.
     set terminal_route_debug["pitch_bias"] to pitch_bias.
     set terminal_route_debug["target_aoa"] to target_aoa.
+    set terminal_route_debug["high_energy_final_active"] to route["high_energy_final_active"].
+    set terminal_route_debug["high_energy_desired_vs"] to high_energy_solution["desired_vertical_speed"].
+    set terminal_route_debug["high_energy_pitch_command"] to pitch_bias.
+    set terminal_route_debug["high_energy_pid_output"] to high_energy_pid_output.
+    set terminal_route_debug["high_energy_time_to_aim"] to high_energy_solution["time_to_aim"].
     set terminal_route_debug["throttle"] to dapthrottle.
     set terminal_route_debug["Pid_log"] to pid_log.
 
