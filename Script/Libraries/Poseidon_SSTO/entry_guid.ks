@@ -229,6 +229,55 @@ function entry_sim_heading_for_simstate {
     return heading_between(simstate["latlong"], projected_latlong).
 }
 
+// Select the irreversible EG -> TEAM handoff once the live vehicle captures
+// the interface, has clearly passed it, or has fallen below it.  Keeping this
+// decision separate from terminal control prevents TEAM commands from moving
+// the aircraft out of the gate before the state transition is committed.
+function entry_team_handoff_reason {
+    parameter target_distance_m.
+    parameter closest_distance_m.
+    parameter current_altitude_m.
+    parameter target_altitude_m.
+    parameter current_airspeed_mps.
+    parameter current_vertical_speed_mps.
+    parameter gate_elapsed_s.
+    parameter handoff_config.
+
+    local inside_primary_gate is
+        target_distance_m <= handoff_config["distance_tolerance"] and
+        current_altitude_m >= target_altitude_m + handoff_config["minimum_altitude_offset"] and
+        current_altitude_m <= target_altitude_m + handoff_config["maximum_altitude_offset"] and
+        current_airspeed_mps <= handoff_config["maximum_airspeed"] and
+        current_vertical_speed_mps <= handoff_config["maximum_climb_rate"].
+    if inside_primary_gate and gate_elapsed_s >= handoff_config["stable_time"] {
+        return "gate".
+    }
+
+    local passed_gate is
+        closest_distance_m <= handoff_config["distance_tolerance"] and
+        target_distance_m >= closest_distance_m + handoff_config["passed_distance_growth"] and
+        current_altitude_m <= target_altitude_m + handoff_config["passed_maximum_altitude_offset"] and
+        current_airspeed_mps <= handoff_config["maximum_airspeed"].
+    if passed_gate { return "passed_gate". }
+
+    if current_altitude_m < target_altitude_m + handoff_config["minimum_altitude_offset"] and
+       current_airspeed_mps <= handoff_config["maximum_airspeed"] {
+        return "below_interface".
+    }
+    return "".
+}
+
+// Rate-limit the first TEAM commands from the command actually being flown at
+// handoff.  Unlike the old pre-handoff blend, this cannot change gate capture.
+function entry_handoff_rate_limit {
+    parameter current_command.
+    parameter requested_command.
+    parameter elapsed_s.
+    parameter rate_per_s.
+    local maximum_change is max(0,elapsed_s) * max(0,rate_per_s).
+    return max(current_command-maximum_change,min(current_command+maximum_change,requested_command)).
+}
+
 function sim_with_bank{
     parameter simstate.
     parameter bank_angle.

@@ -634,6 +634,20 @@ Poseidon_SSTO:add("TerminalRoute",lex(
 )).
 Poseidon_SSTO:add("EG_rev°",5).
 Poseidon_SSTO:add("EG_am_range",10).
+Poseidon_SSTO:add("EntryHandoff",lex(
+    "distance_tolerance",5000,
+    "minimum_altitude_offset",-1000,
+    "maximum_altitude_offset",1500,
+    "maximum_airspeed",1500,
+    "maximum_climb_rate",10,
+    "stable_time",0.25,
+    "passed_distance_growth",1000,
+    "passed_maximum_altitude_offset",2500,
+    "predictive_minimum_sensitivity",100,
+    "transition_aoa_rate",0.75,
+    "transition_bank_rate",3,
+    "transition_capture_tolerance",0.25
+)).
 Poseidon_SSTO:add("EGAOA",{
 parameter alt_ is ship:altitude.
     if alt_ <= 20000 {

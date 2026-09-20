@@ -54,6 +54,13 @@ global entry_predictive_lower_range_error is 0.
 global entry_predictive_upper_range_error is 0.
 global entry_predictive_sensitivity is 0.
 global entry_predictive_valid is false.
+global entry_predictive_frozen is false.
+global entry_team_closest_distance is 999999999.
+global entry_team_gate_since is -1.
+global team_handoff_transition_active is false.
+global team_handoff_transition_start is 0.
+global team_handoff_start_aoa is 0.
+global team_handoff_start_bank is 0.
 dap:setup().
 set console_mode to "DATA".
 until running = false{
@@ -544,6 +551,18 @@ until running = false{
                     ).
                     set entry_predictive_valid to prediction_command["valid"].
                     set entry_predictive_sensitivity to prediction_command["sensitivity"].
+                    local prediction_was_frozen is entry_predictive_frozen.
+                    set entry_predictive_frozen to entry_predictive_valid and
+                        abs(entry_predictive_sensitivity) < AVES["EntryHandoff"]["predictive_minimum_sensitivity"].
+                    if entry_predictive_frozen <> prediction_was_frozen {
+                        flight_log_event("entry_prediction_freeze","active="+entry_predictive_frozen+
+                            "|sensitivity="+round(entry_predictive_sensitivity,3)+
+                            "|threshold="+AVES["EntryHandoff"]["predictive_minimum_sensitivity"]+
+                            "|held_bank="+round(entry_predictive_bank,3)).
+                    }
+                    if entry_predictive_frozen {
+                        set entry_predictive_valid to false.
+                    }
                     if entry_predictive_valid {
                         set entry_predictive_bank to prediction_command["bank"].
                     }
@@ -551,34 +570,12 @@ until running = false{
                         entry_predictive_plan_bank,entry_predictive_bank,entry_predictive_lower_bank,
                         entry_predictive_lower_range_error,entry_predictive_lower_miss,entry_predictive_upper_bank,
                         entry_predictive_upper_range_error,entry_predictive_upper_miss,prediction_authority,
-                        entry_predictive_sensitivity,entry_predictive_valid,time:seconds-prediction_start_time,
+                        entry_predictive_sensitivity,entry_predictive_valid,entry_predictive_frozen,time:seconds-prediction_start_time,
                         entry_predictive_next_update
                     ).
                 }
                 local bank_out is entry_predictive_bank.
-                local d_t_a is time_to_alt(ship:altitude,ship:verticalspeed,AVES["TEAMAltitude"]).
-                if not(d_t_A = 0) and d_t_A < 20 and abs(heading_error) < AVES["EG_rev°"] and time_to_pos(ship:geoposition,Team_interface["target_latlng"],ship:airspeed) > 15{
-                    Set Lastest_status to "Low Altitude".
-                    if  abs(heading_error) > 2{
-                        set bank_out to 10.
-
-                    }else {
-                        set bank_out to  abs(heading_error) * 5.
-                    }
-
-                }
-                if time_to_pos(ship:geoposition,Team_interface["target_latlng"],ship:airspeed) < 35{
-                    set dap["aoa"]["target_aoa"] to max(time_to_pos(ship:geoposition,Team_interface["target_latlng"],ship:airspeed) / 1.5,5).
-                    Set Lastest_status to "Transition".
-                }
-                if time_to_pos(ship:geoposition,Team_interface["target_latlng"],ship:airspeed) < 8{
-                    if  abs(heading_error) > 2{
-                        set bank_out to 10.
-
-                    }else {
-                        set bank_out to  abs(heading_error) * 5.
-                    }
-                }
+                local d_t_a is time_to_alt(ship:altitude,ship:verticalspeed,Team_interface["target_altitude"]).
                 if entry_turnside = "right"{
                     set dap["aoa"]["target_bank"] to -bank_out.
                 }else{
@@ -607,15 +604,47 @@ until running = false{
             rcs off.
             
         }
-        if ship:altitude < AVES["TEAMAltitude"] and ship:airspeed < 1500{
-            reset_sys().
-            set step to "TEAM".
-            set Lastest_status to "TEAM".
-            rcs on.
-            clearVecDraws().
-            set dap["aoa"]["target_bank"] to 0.
-            set dap["str_mode"] to "aoa".
-            
+        if defined Team_interface {
+            local handoff_config is AVES["EntryHandoff"].
+            local team_target_distance is calcdistance_m(ship:geoposition,Team_interface["target_latlng"]).
+            set entry_team_closest_distance to min(entry_team_closest_distance,team_target_distance).
+            local inside_team_gate is
+                team_target_distance <= handoff_config["distance_tolerance"] and
+                ship:altitude >= Team_interface["target_altitude"] + handoff_config["minimum_altitude_offset"] and
+                ship:altitude <= Team_interface["target_altitude"] + handoff_config["maximum_altitude_offset"] and
+                ship:airspeed <= handoff_config["maximum_airspeed"] and
+                ship:verticalspeed <= handoff_config["maximum_climb_rate"].
+            if inside_team_gate {
+                if entry_team_gate_since < 0 { set entry_team_gate_since to time:seconds. }
+            } else {
+                set entry_team_gate_since to -1.
+            }
+            local team_gate_elapsed is 0.
+            if entry_team_gate_since >= 0 { set team_gate_elapsed to time:seconds-entry_team_gate_since. }
+            local team_handoff_reason is entry_team_handoff_reason(
+                team_target_distance,entry_team_closest_distance,ship:altitude,
+                Team_interface["target_altitude"],ship:airspeed,ship:verticalspeed,
+                team_gate_elapsed,handoff_config
+            ).
+            if team_handoff_reason <> "" {
+                set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
+                set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
+                set team_handoff_transition_start to time:seconds.
+                set team_handoff_transition_active to true.
+                flight_log_event("team_handoff","reason="+team_handoff_reason+
+                    "|distance="+round(team_target_distance,1)+"|closest_distance="+round(entry_team_closest_distance,1)+
+                    "|altitude="+round(ship:altitude,1)+"|target_altitude="+round(Team_interface["target_altitude"],1)+
+                    "|airspeed="+round(ship:airspeed,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+                    "|start_aoa="+round(team_handoff_start_aoa,2)+"|start_bank="+round(team_handoff_start_bank,2)).
+                reset_sys().
+                set step to "TEAM".
+                set Lastest_status to "TEAM".
+                rcs on.
+                clearVecDraws().
+                set dap["aoa"]["target_aoa"] to team_handoff_start_aoa.
+                set dap["aoa"]["target_bank"] to team_handoff_start_bank.
+                set dap["str_mode"] to "aoa".
+            }
         }
     }
     if step = "TEAM"{
@@ -640,6 +669,34 @@ until running = false{
         }
         set terminal_route to terminal_route_update(terminal_route).
         terminal_route_fly(terminal_route).
+        if team_handoff_transition_active {
+            local transition_elapsed is time:seconds-team_handoff_transition_start.
+            local raw_team_aoa is dap["aoa"]["target_aoa"].
+            local raw_team_bank is dap["aoa"]["target_bank"].
+            if dap["str_mode"] = "aoa" {
+                set dap["aoa"]["target_aoa"] to entry_handoff_rate_limit(
+                    team_handoff_start_aoa,raw_team_aoa,transition_elapsed,
+                    AVES["EntryHandoff"]["transition_aoa_rate"]
+                ).
+                set dap["aoa"]["target_bank"] to entry_handoff_rate_limit(
+                    team_handoff_start_bank,raw_team_bank,transition_elapsed,
+                    AVES["EntryHandoff"]["transition_bank_rate"]
+                ).
+                if abs(dap["aoa"]["target_aoa"]-raw_team_aoa) <= AVES["EntryHandoff"]["transition_capture_tolerance"] and
+                   abs(dap["aoa"]["target_bank"]-raw_team_bank) <= AVES["EntryHandoff"]["transition_capture_tolerance"] {
+                    set team_handoff_transition_active to false.
+                    flight_log_event("team_handoff_blend_complete","elapsed="+round(transition_elapsed,2)+
+                        "|aoa="+round(raw_team_aoa,2)+"|bank="+round(raw_team_bank,2)).
+                }
+            } else {
+                set team_handoff_transition_active to false.
+                flight_log_event("team_handoff_blend_complete","elapsed="+round(transition_elapsed,2)+"|reason=steering_mode_changed").
+            }
+            set terminal_route_debug["handoff_blend_active"] to team_handoff_transition_active.
+            set terminal_route_debug["handoff_blend_elapsed"] to transition_elapsed.
+            set terminal_route_debug["handoff_raw_target_aoa"] to raw_team_aoa.
+            set terminal_route_debug["handoff_raw_target_bank"] to raw_team_bank.
+        }
         update_team_dap_gui().
         update_terminal_route_gui().
         if ship:altitude > 22000{
