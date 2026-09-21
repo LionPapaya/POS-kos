@@ -66,6 +66,16 @@ set console_mode to "DATA".
 until running = false{
     update_readouts().
     dap:update().
+    // The TEAM interface is created only after the entry target is planned.
+    // Keep the display input harmless during earlier deorbit/setup ticks.
+    local entry_display_range_remaining is 0.
+    if defined Team_interface {
+        if Team_interface:haskey("target_latlng") {
+            set entry_display_range_remaining to calcdistance_m(
+                ship:geoposition, Team_interface["target_latlng"]
+            ).
+        }
+    }
     local e_gui_inputs is lex(
         "mode", console_mode,
         "alt", ship:altitude,
@@ -74,7 +84,7 @@ until running = false{
         "guid_alt", 0,
         "guid_pos", 0,
         "guid_pos_valid", false,
-        "range_remaining", calcdistance_m(ship:geoposition, Team_interface["target_latlng"]),
+        "range_remaining", entry_display_range_remaining,
         "pitch", pitch_for(),
         "yaw", compass_for(),
         "roll", roll_for(),
