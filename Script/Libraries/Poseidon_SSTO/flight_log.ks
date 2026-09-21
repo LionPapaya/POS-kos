@@ -130,7 +130,7 @@ function flight_log_terminal_energy_header {
 }
 
 function flight_log_terminal_energy_columns {
-    if not defined terminal_route_debug {
+    if not(defined terminal_route_debug) {
         return ",0,0,0,0,0,0,0".
     }
     return ","+terminal_route_debug["energy_capture"]+","+terminal_route_debug["energy_drag_work"]+","+
