@@ -5,6 +5,26 @@
 // The low-entry graph uses an offline nominal generated from successful flights.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_nominal_profile.ks").
 
+// Empirical KSP/Unity placement calibration for the two energy-versus-range
+// pages.  X/Y offsets are absolute on-screen corrections for each bug; the
+// green bug's Y value is converted to relative vbox padding during update.
+global reentry_traj1_vsit_calibration is lex(
+    "energy_px_per_km", 5.691,
+    "range_px_per_km", 0.245,
+    "ssto_x_offset", -4.2,
+    "ssto_y_offset", -8.4,
+    "pred_x_offset", -4.2,
+    "pred_y_offset", -33.4
+).
+global reentry_traj2_vsit_calibration is lex(
+    "energy_px_per_km", 9.834,
+    "range_px_per_km", 0.858,
+    "ssto_x_offset", -4.2,
+    "ssto_y_offset", -15.3,
+    "pred_x_offset", -4.2,
+    "pred_y_offset", -41.8
+).
+
 function update_readouts{
     runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
@@ -734,14 +754,14 @@ function update_reentry_gui {
         set console_time:text to ((timestamp():clock)).
         local page_energy_min is entry_nominal_traj1_energy_min.
         local page_energy_max is entry_nominal_traj1_energy_max.
-        local page_range_max is entry_nominal_traj1_range_max.
+        local vsit_calibration is reentry_traj1_vsit_calibration.
         if inputs["mode"] = "TRAJ 1 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
         } else {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_entry_nominal.png".
             set page_energy_min to entry_nominal_traj2_energy_min.
             set page_energy_max to entry_nominal_traj2_energy_max.
-            set page_range_max to entry_nominal_traj2_range_max.
+            set vsit_calibration to reentry_traj2_vsit_calibration.
         }
 
         local energy_height is entry_nominal_energy_height(inputs["alt"], inputs["spd"]).
@@ -754,20 +774,27 @@ function update_reentry_gui {
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
 
-        local energy_ratio is (energy_height-page_energy_min)/
-            (page_energy_max-page_energy_min).
-        set energy_ratio to max(0, min(1, energy_ratio)).
-        local range_ratio is inputs["range_remaining"]/page_range_max.
-        set range_ratio to max(0, min(1, range_ratio)).
-        local ssto_margin_v is 140-range_ratio*220.
+        local clamped_energy_height is max(
+            page_energy_min, min(page_energy_max, energy_height)
+        ).
+        local energy_from_left_km is
+            (clamped_energy_height-page_energy_min)/1000.
+        local ssto_margin_h is 50 + energy_from_left_km *
+            vsit_calibration["energy_px_per_km"] +
+            vsit_calibration["ssto_x_offset"].
+        local ssto_margin_v is 140 - inputs["range_remaining"]/1000 *
+            vsit_calibration["range_px_per_km"] +
+            vsit_calibration["ssto_y_offset"].
         set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-        set traj_disp_ssto:STYLE:margin:h to 50+energy_ratio*650.
+        set traj_disp_ssto:STYLE:margin:h to ssto_margin_h.
 
-        local nominal_ratio is nominal_range/page_range_max.
-        set nominal_ratio to max(0, min(1, nominal_ratio)).
-        local nominal_margin_v is 140-nominal_ratio*220.
+        local nominal_margin_v is 140 - nominal_range/1000 *
+            vsit_calibration["range_px_per_km"] +
+            vsit_calibration["pred_y_offset"].
         set traj_disp_pred:STYLE:padding:top to nominal_margin_v-ssto_margin_v.
-        set traj_disp_pred:STYLE:margin:h to 50+energy_ratio*650.
+        set traj_disp_pred:STYLE:margin:h to 50 + energy_from_left_km *
+            vsit_calibration["energy_px_per_km"] +
+            vsit_calibration["pred_x_offset"].
         set traj_disp_pred:visible to true.
         hide_reentry_lsit_path().
     }
