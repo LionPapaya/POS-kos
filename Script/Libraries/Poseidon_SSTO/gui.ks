@@ -684,8 +684,8 @@ function update_reentry_gui {
         "aoa", calc_aoa(),
         "l/d", 0
     ).
-    // Entry uses the Traj 2 V/SIT. TEAM starts on the wider Traj 2 L/SIT,
-    // then moves to the close-in Traj 3 L/SIT when it reaches base. Retain
+    // Entry uses two zoomed energy/range V/SIT pages. TEAM starts on the wide
+    // Traj 3 L/SIT, then moves to the close-in Traj 4 L/SIT at base. Retain
     // that close-in view through a possible go-around and the landing step.
     if not(defined reentry_lsit_terminal_active) {
         global reentry_lsit_terminal_active is false.
@@ -694,7 +694,7 @@ function update_reentry_gui {
         set reentry_lsit_terminal_active to false.
     }
     if defined step and step = "TEAM" {
-        set inputs["mode"] to "TRAJ 2 L/SIT".
+        set inputs["mode"] to "TRAJ 3 L/SIT".
         if defined terminal_route and terminal_route:haskey("phase") and
            (terminal_route["phase"] = "base" or terminal_route["phase"] = "final") {
             set reentry_lsit_terminal_active to true.
@@ -704,8 +704,9 @@ function update_reentry_gui {
         set reentry_lsit_terminal_active to true.
     }
     if reentry_lsit_terminal_active {
-        set inputs["mode"] to "TRAJ 3".
+        set inputs["mode"] to "TRAJ 4 L/SIT".
     }
+    global reentry_display_active_mode is inputs["mode"].
     set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
     if inputs["mode"] = "DATA" {
         set console_time:text to ((timestamp():clock)).
@@ -720,16 +721,28 @@ function update_reentry_gui {
         traj_data:show().
     }
 
-    local lsit_mode is inputs["mode"] = "TRAJ 2 L/SIT" or inputs["mode"] = "TRAJ 3".
+    local lsit_mode is inputs["mode"] = "TRAJ 3 L/SIT" or inputs["mode"] = "TRAJ 4 L/SIT".
     if not lsit_mode {
         set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
         hide_reentry_lsit_path().
     }
 
-    // TRAJ 1 low
-    if inputs["mode"] = "TRAJ 1 low" {
+    // The two V/SIT pages share one physical energy/range profile. Their
+    // independent scales enlarge both the high-energy entry and the final
+    // segment approaching the TEAM interface.
+    if inputs["mode"] = "TRAJ 1 V/SIT" or inputs["mode"] = "TRAJ 2 V/SIT" {
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
+        local page_energy_min is entry_nominal_traj1_energy_min.
+        local page_energy_max is entry_nominal_traj1_energy_max.
+        local page_range_max is entry_nominal_traj1_range_max.
+        if inputs["mode"] = "TRAJ 1 V/SIT" {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
+        } else {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_entry_nominal.png".
+            set page_energy_min to entry_nominal_traj2_energy_min.
+            set page_energy_max to entry_nominal_traj2_energy_max.
+            set page_range_max to entry_nominal_traj2_range_max.
+        }
 
         local energy_height is entry_nominal_energy_height(inputs["alt"], inputs["spd"]).
         local nominal_range is entry_nominal_range_at_energy(energy_height).
@@ -741,196 +754,32 @@ function update_reentry_gui {
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
 
-        local energy_ratio is (energy_height-entry_nominal_energy_min)/
-            (entry_nominal_energy_max-entry_nominal_energy_min).
+        local energy_ratio is (energy_height-page_energy_min)/
+            (page_energy_max-page_energy_min).
         set energy_ratio to max(0, min(1, energy_ratio)).
-        local range_ratio is inputs["range_remaining"]/entry_nominal_range_max.
+        local range_ratio is inputs["range_remaining"]/page_range_max.
         set range_ratio to max(0, min(1, range_ratio)).
         local ssto_margin_v is 140-range_ratio*220.
         set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
         set traj_disp_ssto:STYLE:margin:h to 50+energy_ratio*650.
 
-        local nominal_ratio is nominal_range/entry_nominal_range_max.
+        local nominal_ratio is nominal_range/page_range_max.
         set nominal_ratio to max(0, min(1, nominal_ratio)).
         local nominal_margin_v is 140-nominal_ratio*220.
         set traj_disp_pred:STYLE:padding:top to nominal_margin_v-ssto_margin_v.
         set traj_disp_pred:STYLE:margin:h to 50+energy_ratio*650.
         set traj_disp_pred:visible to true.
-    }
-
-    // TRAJ 1 mid
-    if inputs["mode"] = "TRAJ 1 mid" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
-
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
-
-        local max_alt is 60000.
-        local min_alt is 30000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-
-        local max_spd is 2800.
-        local min_spd is 1400.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 {
-                set ratio to (inputs["guid_alt"] - min_alt) / range_.
-            }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
-    }
-
-    // TRAJ 1 high
-    if inputs["mode"] = "TRAJ 1 high" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
-
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
-
-        local max_alt is 60000.
-        local min_alt is 30000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-
-        local max_spd is 3300.
-        local min_spd is 1500.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 {
-                set ratio to (inputs["guid_alt"] - min_alt) / range_.
-            }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
-    }
-
-    // TRAJ 1 int
-    if inputs["mode"] = "TRAJ 1 int" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg mid.png".
-
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
-
-        local max_alt is 60000.
-        local min_alt is 30000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-
-        local max_spd is 3500.
-        local min_spd is 1700.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 {
-                set ratio to (inputs["guid_alt"] - min_alt) / range_.
-            }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
-    }
-
-    // TRAJ 2 V/SIT: the entry display and early TEAM circuit use the original
-    // velocity/altitude view. The three entry energy variants only change the
-    // horizontal speed scale.
-    if inputs["mode"] = "TRAJ 2" or inputs["mode"] = "TRAJ 2 high" or inputs["mode"] = "TRAJ 2 int" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_bg.png".
-        set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"], 2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"], 2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"], 2)).
-
-        local max_alt is 26000.
-        local min_alt is 10000.
-        local ssto_margin_v is 130 - (inputs["alt"] - min_alt) / (max_alt - min_alt) * 220.
-        set traj_disp_ssto:style:padding:top to ssto_margin_v.
-        local max_spd is 1500.
-        if inputs["mode"] = "TRAJ 2 high" { set max_spd to 1700. }
-        if inputs["mode"] = "TRAJ 2 int" { set max_spd to 2000. }
-        set traj_disp_ssto:style:margin:h to 50 + (inputs["spd"] - 500) / (max_spd - 500) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0) {
-            local ratio is (inputs["guid_alt"] - min_alt) / (max_alt - min_alt).
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-            set traj_disp_pred:style:padding:top to (116 - ratio * 220) - ssto_margin_v.
-            set traj_disp_pred:style:margin:h to 50 + (inputs["guid_spd"] - 500) / (max_spd - 500) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
         hide_reentry_lsit_path().
     }
 
-    // TEAM starts on the wide Traj 2 L/SIT and moves to the tighter Traj 3
+    // TEAM starts on the wide Traj 3 L/SIT and moves to the tighter Traj 4
     // L/SIT after reaching base. Both views use the live terminal route.
-    if inputs["mode"] = "TRAJ 2 L/SIT" or inputs["mode"] = "TRAJ 3" {
+    if inputs["mode"] = "TRAJ 3 L/SIT" or inputs["mode"] = "TRAJ 4 L/SIT" {
         set console_time:text to ((timestamp():clock)).
-        if inputs["mode"] = "TRAJ 2 L/SIT" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_lsit_bg.png".
-        } else {
+        if inputs["mode"] = "TRAJ 3 L/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".
+        } else {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_lsit_bg.png".
         }
         set traj_disp_ssto:image to reentry_lsit_ssto_image(compass_for_prograde()).
         set traj_disp_ssto:style:margin:top to 0.
@@ -945,7 +794,7 @@ function update_reentry_gui {
 
         local max_along_track is 50000.
         local max_cross_track is 20000.
-        if inputs["mode"] = "TRAJ 2 L/SIT" {
+        if inputs["mode"] = "TRAJ 3 L/SIT" {
             set max_along_track to 350000.
             set max_cross_track to 150000.
         }

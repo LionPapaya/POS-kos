@@ -320,18 +320,16 @@ until running = false{
             
 
         }
-        if  step = "reentry_low" {
-            if ship:altitude > 30000 and ship:altitude < 70000{set console_mode to "TRAJ 1 low".}
-            if ship:altitude < 30000 and ship:altitude > 10000{set console_mode to "TRAJ 2".}
-        }else if step = "reentry_mid"{ 
-            if ship:altitude > 30000 and ship:altitude < 70000{set console_mode to "TRAJ 1 mid".}
-            if ship:altitude < 30000 and ship:altitude > 10000{set console_mode to "TRAJ 2".}
-        }else if step =  "reentry_high"{
-            if ship:altitude > 30000 and ship:altitude < 70000{set console_mode to "TRAJ 1 high".}
-            if ship:altitude < 30000 and ship:altitude > 10000{set console_mode to "TRAJ 2 high".}
-        }else if step ="reenrty_int"{
-            if ship:altitude > 30000 and ship:altitude < 70000{set console_mode to "TRAJ 1 int".}
-            if ship:altitude < 30000 and ship:altitude > 10000{set console_mode to "TRAJ 2 int".}
+        // The V/SIT is one energy/range corridor split at 30 km into two
+        // zoomed pages.  All entry-energy cases use the same physical axes;
+        // values outside a page are clamped at its edge until the next page.
+        if step = "reentry_low" or step = "reentry_mid" or
+           step = "reentry_high" or step = "reentry_int" {
+            if ship:altitude >= 30000 and ship:altitude < 70000 {
+                set console_mode to "TRAJ 1 V/SIT".
+            } else if ship:altitude < 30000 {
+                set console_mode to "TRAJ 2 V/SIT".
+            }
         }
         if ship:altitude < AVES["simulation"]["entry_ref_alt"] and ship:altitude > AVES["TEAMAltitude"]{
             set Lastest_status to "reentering".
@@ -840,6 +838,11 @@ until running = false{
     }
     update_readouts().
     update_reentry_gui(e_gui_inputs).
+    flight_log_entry_display_mode(
+        reentry_display_active_mode,
+        entry_nominal_energy_height(ship:altitude,ship:airspeed),
+        entry_display_range_remaining
+    ).
     flight_log_tick("reentry",step,substep).
     wait 0.
 }

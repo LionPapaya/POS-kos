@@ -189,7 +189,7 @@ Each run creates the next unused directory under `0:/POS_logs/`, for example:
 0:/POS_logs/flight_1/events.csv
 ```
 
-The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, terminal-guidance values, and the craft's current celestial body. Entry samples also record the planned and commanded predictive bank, active authority, both candidate banks, their signed range residuals and TEAM-box miss distances, the measured sensitivity, validity, calculation time, and next update time. Vacuum-landing samples additionally record the target coordinates, target distance, lowest-bounds clearance, speed, requested vertical speed, NERV throttle, braking distance, available acceleration, tail-contact state, pitch-down target, PDI solution error, predicted clearance, thrust saturation, node approval, and pitch-over readiness. Same-body rendezvous samples record target distance, relative speed, plane error, phase, and whether the docking handoff gate is satisfied. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. `events.csv` records the decisions that explain state changes, including the flight's starting body, SOI/body transitions, vacuum target, node review and decision, de-orbit plan, braking start, translation start, engine-cutoff pitch-over, gear touchdown, GPWS state transitions, and rendezvous planning/burn/handoff transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
+The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, terminal-guidance values, and the craft's current celestial body. Entry samples also record the planned and commanded predictive bank, active authority, both candidate banks, their signed range residuals and TEAM-box miss distances, the measured sensitivity, validity, calculation time, and next update time. Vacuum-landing samples additionally record the target coordinates, target distance, lowest-bounds clearance, speed, requested vertical speed, NERV throttle, braking distance, available acceleration, tail-contact state, pitch-down target, PDI solution error, predicted clearance, thrust saturation, node approval, and pitch-over readiness. Same-body rendezvous samples record target distance, relative speed, plane error, phase, and whether the docking handoff gate is satisfied. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. `events.csv` records the decisions that explain state changes, including the flight's starting body, SOI/body transitions, vacuum target, node review and decision, de-orbit plan, braking start, translation start, engine-cutoff pitch-over, gear touchdown, GPWS state transitions, entry display-page transitions, and rendezvous planning/burn/handoff transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
 
 If you find an issue, please report it in the [GitHub issue tracker](https://github.com/LionPapaya/POS-kos/issues) and include the matching `flight.csv` and `events.csv` logs. Together, the flight samples and state-transition events make the problem reproducible and diagnosable.
 
@@ -210,13 +210,16 @@ For a same-body orbital rendezvous, choose **Rendezvous** in Orbital Maneuvering
 
 When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. This keeps the abort section easy to extend without documenting work-in-progress behavior.
 
-The `TRAJ 1 low` display uses a fixed energy-height/range corridor generated from successful `reentry_low` flight logs. Rebuild both its KerboScript profile and background image after selecting a new representative set:
+`TRAJ 1 V/SIT` and `TRAJ 2 V/SIT` are zoomed upper and lower views of one fixed energy-height/range corridor generated from successful `reentry_low` flight logs. The generator uses the median remaining range at each energy height, encloses every accepted source flight, and keeps a minimum ±50 km corridor. Rebuild the KerboScript profile and both backgrounds after selecting a new representative set:
 
 ```sh
-python3 support/build_entry_nominal.py /path/to/flight_252 /path/to/flight_253 /path/to/flight_254
+python3 support/build_entry_nominal.py \
+  /path/to/flight_244 /path/to/flight_247 /path/to/flight_248 \
+  /path/to/flight_252 /path/to/flight_253 /path/to/flight_254 \
+  /path/to/flight_256 /path/to/flight_260 /path/to/flight_265
 ```
 
-The generator takes the median remaining range at each energy height and applies a minimum ±25 km corridor, so the display remains useful even when the source flights overlap almost exactly. Validate a regenerated display in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
+Above 30 km the display uses `TRAJ 1 V/SIT`; below 30 km it changes to the enlarged lower segment in `TRAJ 2 V/SIT`. TEAM then uses the wide `TRAJ 3 L/SIT` and the close-in `TRAJ 4 L/SIT`. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
 
 ## Credits
 

@@ -52,6 +52,7 @@ global POS_LOG_LAST_STEP is "".
 global POS_LOG_LAST_SUBSTEP is "".
 global POS_LOG_LAST_DAP_MODE is "".
 global POS_LOG_LAST_STEERING_MODE is "".
+global POS_LOG_LAST_ENTRY_DISPLAY_MODE is "".
 global POS_LOG_LAST_GPWS_STATE is "".
 global POS_LOG_LAST_GPWS_REASON is "".
 global POS_LOG_LAST_PDI_STATE is "".
@@ -336,6 +337,7 @@ function flight_log_begin {
     set POS_LOG_LAST_SUBSTEP to "".
     set POS_LOG_LAST_DAP_MODE to "".
     set POS_LOG_LAST_STEERING_MODE to "".
+    set POS_LOG_LAST_ENTRY_DISPLAY_MODE to "".
     set POS_LOG_LAST_GPWS_STATE to "".
     set POS_LOG_LAST_GPWS_REASON to "".
     set POS_LOG_LAST_PDI_STATE to "".
@@ -406,6 +408,20 @@ function flight_log_entry_solver_result {
     if result["converged"] { set detail to detail + "|bank=" + round(result["bank"],3). }
     if result["error"]:haskey("min_bank") { set detail to detail + "|min_bank=" + round(result["error"]["min_bank"],3). }
     flight_log_event("entry_solver",detail).
+}
+
+// Observe only actual GUI page transitions from the live reentry loop.  Low
+// logging pays one string comparison per tick and one event per transition;
+// medium/high retain their existing sample cadence.  This is never called by
+// the entry trajectory solver or any offline trajectory simulation.
+function flight_log_entry_display_mode {
+    parameter display_mode, energy_height, range_remaining.
+    if POS_LOG_LEVEL < 1 { return. }
+    if display_mode = POS_LOG_LAST_ENTRY_DISPLAY_MODE { return. }
+    flight_log_event("entry_display_mode","value="+display_mode+
+        "|altitude="+round(ship:altitude,1)+"|airspeed="+round(ship:airspeed,1)+
+        "|energy_height="+round(energy_height,1)+"|range_remaining="+round(range_remaining,1)).
+    set POS_LOG_LAST_ENTRY_DISPLAY_MODE to display_mode.
 }
 
 // Record only completed live guidance predictions.  This observer is called
