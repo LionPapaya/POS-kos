@@ -74,6 +74,7 @@ until running = false{
         "guid_alt", 0,
         "guid_pos", 0,
         "guid_pos_valid", false,
+        "range_remaining", calcdistance_m(ship:geoposition, Team_interface["target_latlng"]),
         "pitch", pitch_for(),
         "yaw", compass_for(),
         "roll", roll_for(),

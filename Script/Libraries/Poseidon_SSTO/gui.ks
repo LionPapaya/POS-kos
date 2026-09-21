@@ -2,7 +2,9 @@
 // Purpose: UI and HUD for the Poseidon reentry/landing assistant.
 // - Provides GUI creation/update functions used by `Poseidon_SSTO_Reentry.ks`.
 // - Contains logic for selecting landing location/runway and visual trajectory elements.
-// Notes: only comments added.
+// The low-entry graph uses an offline nominal generated from successful flights.
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_nominal_profile.ks").
+
 function update_readouts{
     runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
@@ -674,6 +676,7 @@ function update_reentry_gui {
         "guid_alt", 0,
         "guid_pos", 0,
         "guid_pos_valid", false,
+        "range_remaining", 0,
         "pitch", pitch_for(),
         "yaw", compass_for(),
         "roll", roll_for(),
@@ -726,44 +729,33 @@ function update_reentry_gui {
     // TRAJ 1 low
     if inputs["mode"] = "TRAJ 1 low" {
         set console_time:text to ((timestamp():clock)).
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_bg.png".
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
 
-        set traj_data_pitch:text to ("P "+round(inputs["pitch"])) .
-        set traj_data_yaw:text to ("Y "+round(inputs["yaw"])) .
-        set traj_data_roll:text to ("R "+round(inputs["roll"])) .
+        local energy_height is entry_nominal_energy_height(inputs["alt"], inputs["spd"]).
+        local nominal_range is entry_nominal_range_at_energy(energy_height).
+        local range_error is inputs["range_remaining"]-nominal_range.
+        set traj_data_pitch:text to ("E "+round(energy_height/1000, 1)+" km").
+        set traj_data_yaw:text to ("RNG "+round(inputs["range_remaining"]/1000, 1)+" km").
+        set traj_data_roll:text to ("dR "+round(range_error/1000, 1)+" km").
         set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
         set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
         set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
 
-        local max_alt is 60000.
-        local min_alt is 30000.
-        local alt_dif is inputs["alt"] - min_alt.
-        local ssto_margin_v is 140 - alt_dif / (max_alt - min_alt) * 220.
+        local energy_ratio is (energy_height-entry_nominal_energy_min)/
+            (entry_nominal_energy_max-entry_nominal_energy_min).
+        set energy_ratio to max(0, min(1, energy_ratio)).
+        local range_ratio is inputs["range_remaining"]/entry_nominal_range_max.
+        set range_ratio to max(0, min(1, range_ratio)).
+        local ssto_margin_v is 140-range_ratio*220.
         set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
+        set traj_disp_ssto:STYLE:margin:h to 50+energy_ratio*650.
 
-        local max_spd is 2500.
-        local min_spd is 1200.
-        local spd_dif is inputs["spd"] - min_spd.
-        set traj_disp_ssto:STYLE:margin:h to 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        if not(inputs["guid_alt"] = 0 or inputs["guid_spd"] = 0){
-            local range_ is max_alt - min_alt.
-            local ratio is 0.
-            if range_ <> 0 {
-                set ratio to (inputs["guid_alt"] - min_alt) / range_.
-            }
-            if ratio < 0 { set ratio to 0. }
-            if ratio > 1 { set ratio to 1. }
-
-            local pred_margin_v is 116 - ratio * 220.
-            local adjusted_pred_margin is pred_margin_v - ssto_margin_v.
-
-            set traj_disp_pred:STYLE:padding:top to adjusted_pred_margin.
-            set traj_disp_pred:STYLE:margin:h to 50 + (inputs["guid_spd"] - min_spd) / (max_spd - min_spd) * 650.
-            set traj_disp_pred:visible to true.
-        } else {
-            set traj_disp_pred:visible to false.
-        }
+        local nominal_ratio is nominal_range/entry_nominal_range_max.
+        set nominal_ratio to max(0, min(1, nominal_ratio)).
+        local nominal_margin_v is 140-nominal_ratio*220.
+        set traj_disp_pred:STYLE:padding:top to nominal_margin_v-ssto_margin_v.
+        set traj_disp_pred:STYLE:margin:h to 50+energy_ratio*650.
+        set traj_disp_pred:visible to true.
     }
 
     // TRAJ 1 mid

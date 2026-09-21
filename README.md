@@ -210,6 +210,14 @@ For a same-body orbital rendezvous, choose **Rendezvous** in Orbital Maneuvering
 
 When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. This keeps the abort section easy to extend without documenting work-in-progress behavior.
 
+The `TRAJ 1 low` display uses a fixed energy-height/range corridor generated from successful `reentry_low` flight logs. Rebuild both its KerboScript profile and background image after selecting a new representative set:
+
+```sh
+python3 support/build_entry_nominal.py /path/to/flight_252 /path/to/flight_253 /path/to/flight_254
+```
+
+The generator takes the median remaining range at each energy height and applies a minimum ±25 km corridor, so the display remains useful even when the source flights overlap almost exactly. Validate a regenerated display in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
+
 ## Credits
 
 - The kOS community libraries and frameworks used for input, navball, and location constants.
