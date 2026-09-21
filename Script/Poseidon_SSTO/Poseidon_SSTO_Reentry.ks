@@ -320,15 +320,26 @@ until running = false{
             
 
         }
-        // The V/SIT is one energy/range corridor split at 30 km into two
-        // zoomed pages.  All entry-energy cases use the same physical axes;
-        // values outside a page are clamped at its edge until the next page.
+        // The V/SIT is one energy/range corridor split into five zoomed energy
+        // bands. Values outside the 100-290 km display span stay clamped on
+        // the nearest edge while the logger records every live transition.
         if step = "reentry_low" or step = "reentry_mid" or
            step = "reentry_high" or step = "reentry_int" {
-            if ship:altitude >= 30000 and ship:altitude < 70000 {
-                set console_mode to "TRAJ 1 V/SIT".
-            } else if ship:altitude < 30000 {
-                set console_mode to "TRAJ 2 V/SIT".
+            if ship:altitude < 70000 {
+                local entry_display_energy_height is entry_nominal_energy_height(
+                    ship:altitude, ship:airspeed
+                ).
+                if entry_display_energy_height >= 260000 {
+                    set console_mode to "TRAJ 1 V/SIT".
+                } else if entry_display_energy_height >= 210000 {
+                    set console_mode to "TRAJ 2 V/SIT".
+                } else if entry_display_energy_height >= 170000 {
+                    set console_mode to "TRAJ 3 V/SIT".
+                } else if entry_display_energy_height >= 140000 {
+                    set console_mode to "TRAJ 4 V/SIT".
+                } else {
+                    set console_mode to "TRAJ 5 V/SIT".
+                }
             }
         }
         if ship:altitude < AVES["simulation"]["entry_ref_alt"] and ship:altitude > AVES["TEAMAltitude"]{

@@ -210,7 +210,7 @@ For a same-body orbital rendezvous, choose **Rendezvous** in Orbital Maneuvering
 
 When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. This keeps the abort section easy to extend without documenting work-in-progress behavior.
 
-`TRAJ 1 V/SIT` and `TRAJ 2 V/SIT` are zoomed upper and lower views of one fixed energy-height/range corridor generated from successful `reentry_low` flight logs. The generator uses the median remaining range at each energy height, encloses every accepted source flight, and keeps a minimum ±50 km corridor. Rebuild the KerboScript profile and both backgrounds after selecting a new representative set:
+`TRAJ 1 V/SIT` through `TRAJ 5 V/SIT` are successively zoomed views of one fixed energy-height/range corridor generated from successful `reentry_low` flight logs. Their energy bands are 260–290, 210–260, 170–210, 140–170, and 100–140 km. Their corresponding RNG ceilings are 1,100, 800, 600, 300, and 200 km, making the vehicle's position inside the corridor readable throughout entry. The generator uses the median remaining range at each energy height, encloses every accepted source flight, and keeps a minimum ±50 km corridor. Rebuild the KerboScript profile and all five backgrounds after selecting a new representative set:
 
 ```sh
 python3 support/build_entry_nominal.py \
@@ -219,7 +219,7 @@ python3 support/build_entry_nominal.py \
   /path/to/flight_256 /path/to/flight_260 /path/to/flight_265
 ```
 
-Above 30 km the display uses `TRAJ 1 V/SIT`; below 30 km it changes to the enlarged lower segment in `TRAJ 2 V/SIT`. TEAM then uses the wide `TRAJ 3 L/SIT` and the close-in `TRAJ 4 L/SIT`. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
+The active page follows energy height and clamps only beyond the complete 100–290 km display span. TEAM then uses the wide `L/SIT 1` and the close-in `L/SIT 2`. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
 
 ## Credits
 

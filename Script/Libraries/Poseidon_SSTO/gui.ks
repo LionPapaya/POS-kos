@@ -5,11 +5,11 @@
 // The low-entry graph uses an offline nominal generated from successful flights.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_nominal_profile.ks").
 
-// Empirical KSP/Unity placement calibration for the two energy-versus-range
+// Empirical KSP/Unity placement calibration for the five energy-versus-range
 // pages.  X/Y offsets are absolute on-screen corrections for each bug; the
 // green bug's Y value is converted to relative vbox padding during update.
 global reentry_traj1_vsit_calibration is lex(
-    "energy_px_per_km", 5.691,
+    "energy_px_per_km", 22.764,
     "range_px_per_km", 0.245,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -8.4,
@@ -17,8 +17,32 @@ global reentry_traj1_vsit_calibration is lex(
     "pred_y_offset", -33.4
 ).
 global reentry_traj2_vsit_calibration is lex(
-    "energy_px_per_km", 9.834,
+    "energy_px_per_km", 13.658,
+    "range_px_per_km", 0.337,
+    "ssto_x_offset", -4.2,
+    "ssto_y_offset", -8.4,
+    "pred_x_offset", -4.2,
+    "pred_y_offset", -33.4
+).
+global reentry_traj3_vsit_calibration is lex(
+    "energy_px_per_km", 17.073,
+    "range_px_per_km", 0.449,
+    "ssto_x_offset", -4.2,
+    "ssto_y_offset", -8.4,
+    "pred_x_offset", -4.2,
+    "pred_y_offset", -33.4
+).
+global reentry_traj4_vsit_calibration is lex(
+    "energy_px_per_km", 22.946,
     "range_px_per_km", 0.858,
+    "ssto_x_offset", -4.2,
+    "ssto_y_offset", -15.3,
+    "pred_x_offset", -4.2,
+    "pred_y_offset", -41.8
+).
+global reentry_traj5_vsit_calibration is lex(
+    "energy_px_per_km", 17.21,
+    "range_px_per_km", 1.287,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -15.3,
     "pred_x_offset", -4.2,
@@ -704,8 +728,8 @@ function update_reentry_gui {
         "aoa", calc_aoa(),
         "l/d", 0
     ).
-    // Entry uses two zoomed energy/range V/SIT pages. TEAM starts on the wide
-    // Traj 3 L/SIT, then moves to the close-in Traj 4 L/SIT at base. Retain
+    // Entry uses five zoomed energy/range V/SIT pages. TEAM starts on the wide
+    // L/SIT 1, then moves to the close-in L/SIT 2 at base. Retain
     // that close-in view through a possible go-around and the landing step.
     if not(defined reentry_lsit_terminal_active) {
         global reentry_lsit_terminal_active is false.
@@ -714,7 +738,7 @@ function update_reentry_gui {
         set reentry_lsit_terminal_active to false.
     }
     if defined step and step = "TEAM" {
-        set inputs["mode"] to "TRAJ 3 L/SIT".
+        set inputs["mode"] to "L/SIT 1".
         if defined terminal_route and terminal_route:haskey("phase") and
            (terminal_route["phase"] = "base" or terminal_route["phase"] = "final") {
             set reentry_lsit_terminal_active to true.
@@ -724,7 +748,7 @@ function update_reentry_gui {
         set reentry_lsit_terminal_active to true.
     }
     if reentry_lsit_terminal_active {
-        set inputs["mode"] to "TRAJ 4 L/SIT".
+        set inputs["mode"] to "L/SIT 2".
     }
     global reentry_display_active_mode is inputs["mode"].
     set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
@@ -741,27 +765,43 @@ function update_reentry_gui {
         traj_data:show().
     }
 
-    local lsit_mode is inputs["mode"] = "TRAJ 3 L/SIT" or inputs["mode"] = "TRAJ 4 L/SIT".
+    local lsit_mode is inputs["mode"] = "L/SIT 1" or inputs["mode"] = "L/SIT 2".
     if not lsit_mode {
         set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
         hide_reentry_lsit_path().
     }
 
-    // The two V/SIT pages share one physical energy/range profile. Their
-    // independent scales enlarge both the high-energy entry and the final
-    // segment approaching the TEAM interface.
-    if inputs["mode"] = "TRAJ 1 V/SIT" or inputs["mode"] = "TRAJ 2 V/SIT" {
+    // Five independently zoomed pages share one physical energy/range profile.
+    // Their narrower energy and RNG axes make position inside the corridor
+    // readable throughout entry without changing the underlying guidance.
+    if inputs["mode"] = "TRAJ 1 V/SIT" or inputs["mode"] = "TRAJ 2 V/SIT" or
+       inputs["mode"] = "TRAJ 3 V/SIT" or inputs["mode"] = "TRAJ 4 V/SIT" or
+       inputs["mode"] = "TRAJ 5 V/SIT" {
         set console_time:text to ((timestamp():clock)).
         local page_energy_min is entry_nominal_traj1_energy_min.
         local page_energy_max is entry_nominal_traj1_energy_max.
         local vsit_calibration is reentry_traj1_vsit_calibration.
-        if inputs["mode"] = "TRAJ 1 V/SIT" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
-        } else {
+        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
+        if inputs["mode"] = "TRAJ 2 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_entry_nominal.png".
             set page_energy_min to entry_nominal_traj2_energy_min.
             set page_energy_max to entry_nominal_traj2_energy_max.
             set vsit_calibration to reentry_traj2_vsit_calibration.
+        } else if inputs["mode"] = "TRAJ 3 V/SIT" {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_entry_nominal.png".
+            set page_energy_min to entry_nominal_traj3_energy_min.
+            set page_energy_max to entry_nominal_traj3_energy_max.
+            set vsit_calibration to reentry_traj3_vsit_calibration.
+        } else if inputs["mode"] = "TRAJ 4 V/SIT" {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_entry_nominal.png".
+            set page_energy_min to entry_nominal_traj4_energy_min.
+            set page_energy_max to entry_nominal_traj4_energy_max.
+            set vsit_calibration to reentry_traj4_vsit_calibration.
+        } else if inputs["mode"] = "TRAJ 5 V/SIT" {
+            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj5_entry_nominal.png".
+            set page_energy_min to entry_nominal_traj5_energy_min.
+            set page_energy_max to entry_nominal_traj5_energy_max.
+            set vsit_calibration to reentry_traj5_vsit_calibration.
         }
 
         local energy_height is entry_nominal_energy_height(inputs["alt"], inputs["spd"]).
@@ -799,11 +839,11 @@ function update_reentry_gui {
         hide_reentry_lsit_path().
     }
 
-    // TEAM starts on the wide Traj 3 L/SIT and moves to the tighter Traj 4
-    // L/SIT after reaching base. Both views use the live terminal route.
-    if inputs["mode"] = "TRAJ 3 L/SIT" or inputs["mode"] = "TRAJ 4 L/SIT" {
+    // TEAM starts on the wide L/SIT 1 and moves to the tighter L/SIT 2 after
+    // reaching base. Both views use the live terminal route.
+    if inputs["mode"] = "L/SIT 1" or inputs["mode"] = "L/SIT 2" {
         set console_time:text to ((timestamp():clock)).
-        if inputs["mode"] = "TRAJ 3 L/SIT" {
+        if inputs["mode"] = "L/SIT 1" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".
         } else {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_lsit_bg.png".
@@ -821,7 +861,7 @@ function update_reentry_gui {
 
         local max_along_track is 50000.
         local max_cross_track is 20000.
-        if inputs["mode"] = "TRAJ 3 L/SIT" {
+        if inputs["mode"] = "L/SIT 1" {
             set max_along_track to 350000.
             set max_cross_track to 150000.
         }
