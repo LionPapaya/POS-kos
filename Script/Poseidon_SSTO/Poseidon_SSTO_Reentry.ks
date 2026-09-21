@@ -789,18 +789,22 @@ until running = false{
         set dap["aerostr"]["turn_roll"] to 0.
         set dap["aerostr"]["turn_heading"] to heading_to_target(runway_end).
 
-        // Use airbrakes and wheel brakes whenever the craft is faster than
-        // the desired touchdown speed.  Keep wheel brakes on at touchdown so
-        // rollout continues to decelerate on short runways.
-        if ship:airspeed > landing_config["target_touchdown_speed"] {
-            brakes on.
-            log_status("Brakes ON, above target touchdown speed").
-        } else if alt_ovr_runway > landing_config["wheel_brake_altitude"] {
-            brakes off.
-        }ELSE{
-            brakes on.
-            log_status("Wheel brakes ON").
+        local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
+            ship:status = "LANDED",alt_ovr_runway,landing_config).
+        local brake_reason is "speed_band".
+        if ship:status = "LANDED" or alt_ovr_runway <= landing_config["wheel_brake_altitude"] {
+            set brake_reason to "wheel_contact_zone".
         }
+        if landing_brake_command <> brakes or terminal_route_debug["brake_mode"] <> "landing" or
+           terminal_route_debug["brake_reason"] <> brake_reason {
+            flight_log_approach_brake("landing",brake_reason,landing_brake_command,
+                AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"],
+                landing_config["brake_on_speed"],landing_config["brake_off_speed"],terminal_route["energy_margin"]).
+        }
+        set terminal_route_debug["brake_mode"] to "landing".
+        set terminal_route_debug["brake_reason"] to brake_reason.
+        set terminal_route_debug["airbrake"] to landing_brake_command.
+        if landing_brake_command { brakes on. } else { brakes off. }
         if ship:status = "LANDED" and ship:airspeed < 5 {
 
             log_status("Landing completed").

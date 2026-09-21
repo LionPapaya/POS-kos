@@ -41,7 +41,17 @@ global terminal_route_debug is lex(
     "handoff_raw_target_bank", 0,
     "energy_margin", 0,
     "target_energy", 0,
+    "energy_capture", 0,
+    "energy_drag_work", 0,
+    "energy_turn_work", 0,
+    "energy_reserve", 0,
+    "energy_clean_loss", 0,
+    "energy_margin_rate", 0,
+    "energy_brake_margin", 0,
+
     "airbrake", false,
+    "brake_mode", "inactive",
+    "brake_reason", "inactive",
     "gear", false,
     "throttle", 0,
     "Pid_log", "none",
@@ -129,6 +139,182 @@ function terminal_route_change_runway {
     }
     flight_log_set_runway(Location,runway_nr,runway_start,runway_end,runway_heading,runway_altitude).
     return lex("success",true,"message","Runway changed to " + Location + " runway " + runway_nr).
+}
+
+// Pure switching laws: keep logging and vessel access in the flight callers.
+function approach_brake_band {
+    parameter prior_brake, measured_speed, engage_speed, release_speed.
+    if measured_speed > engage_speed { return true. }
+    if measured_speed <= release_speed { return false. }
+    return prior_brake.
+}
+
+function terminal_speed_control_active {
+    parameter route_phase, route_distance, speed_config.
+    return route_phase = "final" and route_distance <= speed_config["activation_distance"].
+}
+
+function terminal_brake_decision {
+    parameter prior_brake, route_phase, speed_active, measured_speed, energy_error, config_TR, predicted_margin is 999999999.
+    local brake_mode is "energy".
+    local brake_reason is "energy_band".
+    if predicted_margin = 999999999 { set predicted_margin to energy_error. }
+    local brake_command is predicted_margin > config_TR["brake_energy"].
+    if prior_brake { set brake_command to predicted_margin > config_TR["EnergyPlan"]["brake_release_margin"]. }
+    if speed_active {
+        set brake_mode to "approach_speed".
+        set brake_reason to "speed_band".
+        set brake_command to approach_brake_band(prior_brake,measured_speed,
+            config_TR["ApproachSpeed"]["brake_on_speed"],config_TR["ApproachSpeed"]["brake_off_speed"]).
+    }
+    if predicted_margin <= 0 {
+        set brake_command to false.
+        set brake_reason to "route_reserve".
+    }
+    if energy_error < -config_TR["low_energy_margin"] {
+        set brake_command to false.
+        set brake_reason to "low_energy".
+    }
+    if measured_speed < config_TR["Propulsion"]["throttle_speed"] {
+        set brake_command to false.
+        set brake_reason to "low_speed".
+    }
+    if route_phase = "go_around" {
+        set brake_command to false.
+        set brake_reason to "go_around".
+    }
+    return lex("command",brake_command,"mode",brake_mode,"reason",brake_reason).
+}
+
+function landing_brake_decision {
+    parameter prior_brake, measured_speed, on_ground, runway_height, landing_config.
+    // Preserve wheel braking through low-altitude contact and bounce.
+    if on_ground or runway_height <= landing_config["wheel_brake_altitude"] { return true. }
+    return approach_brake_band(prior_brake,measured_speed,
+        landing_config["brake_on_speed"],landing_config["brake_off_speed"]).
+}
+
+// Energy-height work budget. Clean loss is energy-height loss per horizontal
+// metre (approximately D/(mg) in a shallow glide). Circuit legs pay drag
+// work instead of extending the steep landing slope around the whole route.
+function terminal_energy_budget {
+    parameter route_distance, final_leg_distance, capture_height, reference_speed,
+        gravity_value, clean_loss, turn_allowance, energy_config.
+    local cruise_distance is max(0,route_distance-final_leg_distance).
+    local capture_energy is capture_height + reference_speed^2/(2*gravity_value).
+    local drag_work is cruise_distance*clean_loss.
+    return lex("required",capture_energy+drag_work+turn_allowance,
+        "capture",capture_energy,"drag_work",drag_work,"turn_work",turn_allowance,
+        "reserve",cruise_distance*energy_config["loss_uncertainty"]).
+}
+
+function terminal_energy_turn_work {
+    parameter heading_change, planning_speed, gravity_value, clean_loss, energy_config.
+    local turn_angle is min(180,abs(heading_change)).
+    local radians_value is turn_angle*constant:degtorad.
+    local turn_bank is energy_config["planning_bank"].
+    local turn_radius is planning_speed^2/(gravity_value*tan(turn_bank)).
+    // The waypoint polyline already pays for straight distance through each
+    // corner. Add only bank-induced drag, not another full turn arc: rounded
+    // corners can cut inside that polyline. Turn speed is the planned circuit
+    // speed; entry-speed dissipation is handled by the measured margin trend.
+    return clean_loss*turn_radius*energy_config["induced_drag_fraction"]*
+        tan(turn_bank)^2*radians_value.
+}
+
+function terminal_energy_throttle {
+    parameter energy_margin, measured_speed, config_TR.
+    local propulsion_config is config_TR["Propulsion"].
+    local energy_request is max(0,(-energy_margin-config_TR["low_energy_margin"])/
+        max(propulsion_config["full_assist_energy_deficit"],1)).
+    local speed_request is max(0,(propulsion_config["throttle_speed"]-measured_speed)*propulsion_config["speed_assist_gain"]).
+    return lex("energy",energy_request,"speed",speed_request,
+        "command",min(propulsion_config["maximum_throttle"],max(energy_request,speed_request))).
+}
+
+function terminal_energy_loss_filter {
+    parameter previous_loss, energy_change, travelled_distance, elapsed, eligible, energy_config.
+    if not eligible or travelled_distance <= 0 or elapsed <= 0 { return previous_loss. }
+    local observed_loss is -energy_change/travelled_distance.
+    if observed_loss < energy_config["minimum_loss"] or observed_loss > energy_config["maximum_loss"] {
+        return previous_loss.
+    }
+    local weight is elapsed/(energy_config["learning_time"]+elapsed).
+    return previous_loss+(observed_loss-previous_loss)*weight.
+}
+
+function terminal_energy_brake_margin {
+    parameter energy_margin, reserve_height, margin_rate, energy_config.
+    return energy_margin-reserve_height+min(0,margin_rate)*energy_config["brake_lookahead"].
+}
+
+function terminal_route_energy_plan {
+    parameter route, reference_speed.
+    local config_TR is AVES["TerminalRoute"].
+    local energy_config is config_TR["EnergyPlan"].
+    local gravity_value is ship:body:mu/(ship:body:radius^2).
+    local route_distance is terminal_route_remaining_distance(route).
+    local final_leg_distance is calcdistance_m(route["final_fix"],runway_start).
+    if route["phase"] = "final" { set final_leg_distance to route_distance. }
+    local capture_profile is calculate_glideslope_profile(min(route_distance,final_leg_distance)).
+    local points is list(terminal_route_current_target(route)).
+    if route["phase"] = "intercept" or route["phase"] = "hold" {
+        local point_index is route["hold_index"]+1.
+        until point_index > 4 {
+            points:add(route["hold_points"][mod(point_index,4)]).
+            set point_index to point_index+1.
+        }
+        points:add(route["downwind_fix"]).
+    }
+    if route["phase"] <> "final" {
+        if route["phase"] <> "base" { points:add(route["base_fix"]). }
+        points:add(route["final_fix"]).
+        points:add(runway_start).
+    }
+    local last_point is ship:geoposition.
+    local previous_heading is compass_for_prograde().
+    local turn_work is 0.
+    for next_point in points {
+        if calcdistance_m(last_point,next_point) > 1 {
+            local leg_heading is heading_between(last_point,next_point).
+            local planning_speed is max(reference_speed,min(ship:airspeed,energy_config["circuit_turn_speed"])).
+            set turn_work to turn_work+terminal_energy_turn_work(
+                normalized_heading_error(leg_heading,previous_heading),planning_speed,
+                gravity_value,route["clean_energy_loss"],energy_config).
+            set previous_heading to leg_heading.
+        }
+        set last_point to next_point.
+    }
+    return terminal_energy_budget(route_distance,final_leg_distance,
+        capture_profile["altitude"]-runway_altitude,reference_speed,gravity_value,
+        route["clean_energy_loss"],turn_work,energy_config).
+}
+
+// Learn only from uninterrupted clean, unpowered, nearly straight glides.
+// Braking, powered recovery, gear drag and hard turns must not teach the
+// planner that their extra losses are unavoidable on every remaining leg.
+function terminal_route_measure_energy {
+    parameter route.
+    local energy_config is AVES["TerminalRoute"]["EnergyPlan"].
+    local now_energy is terminal_route_energy_height().
+    local now_time is time:seconds.
+    local elapsed is now_time-route["energy_sample_time"].
+    local clean_sample is not brakes and not gear and ship:thrust < 0.1 and
+        throttle < 0.01 and abs(roll_for()) < 15 and abs(calc_aoa()) < 18 and
+        ship:airspeed >= 120 and ship:airspeed <= energy_config["learning_max_speed"].
+    if not clean_sample {
+        set route["energy_clean_since"] to now_time.
+    }
+    if elapsed >= energy_config["sample_interval"] {
+        local travelled_distance is calcdistance_m(route["energy_sample_position"],ship:geoposition).
+        local eligible is clean_sample and now_time-route["energy_clean_since"] >=
+            elapsed+energy_config["clean_settle_time"] and elapsed <= 5.
+        set route["clean_energy_loss"] to terminal_energy_loss_filter(route["clean_energy_loss"],
+            now_energy-route["energy_sample_height"],travelled_distance,elapsed,eligible,energy_config).
+        set route["energy_sample_time"] to now_time.
+        set route["energy_sample_height"] to now_energy.
+        set route["energy_sample_position"] to ship:geoposition.
+    }
 }
 
 function terminal_route_energy_height {
@@ -334,7 +520,20 @@ function terminal_route_init {
         "pitch_saturated", false,
         "preflare_pullup_active", false,
         "energy_margin", 0,
+        "clean_energy_loss", config_TR["EnergyPlan"]["initial_clean_loss"],
+        "energy_sample_time", time:seconds,
+        "energy_sample_height", terminal_route_energy_height(),
+        "energy_sample_position", ship:geoposition,
+        "energy_clean_since", time:seconds,
+        "margin_sample_time", time:seconds,
+        "margin_sample_value", 0,
+        "margin_sample_phase", "inactive",
+        "margin_rate", 0,
+        "brake_energy_margin", 0,
+        "energy_assist_reason", "idle",
         "airbrake", false,
+        "brake_mode", "inactive",
+        "brake_reason", "inactive",
         "gear", false,
         "landing_ready", false,
         "geometry", arrival_geometry,
@@ -432,13 +631,19 @@ function terminal_route_update {
             abort_set_fuel_dump(abort_state["policy"]["fuel_dump"] and ship:mass > abort_state["policy"]["target_mass"]).
         }
     }
+    terminal_route_measure_energy(route).
+    local energy_phase is route["phase"].
+    local energy_hold_index is route["hold_index"].
     local target is terminal_route_current_target(route).
     local target_distance is calcdistance_m(ship:geoposition, target).
     local remaining_distance is terminal_route_remaining_distance(route).
     local profile is calculate_glideslope_profile(remaining_distance).
     local profile_altitude is profile["altitude"].
-    local body_gravity is ship:body:mu / (ship:body:radius ^ 2).
-    local target_energy is profile_altitude - runway_altitude + (config_TR["target_speed"] ^ 2) / (2 * body_gravity).
+    local speed_active is terminal_speed_control_active(route["phase"],remaining_distance,config_TR["ApproachSpeed"]).
+    local reference_speed is config_TR["target_speed"].
+    if speed_active { set reference_speed to config_TR["ApproachSpeed"]["target_speed"]. }
+    local energy_plan is terminal_route_energy_plan(route,reference_speed).
+    local target_energy is energy_plan["required"].
     local energy_margin is terminal_route_energy_height() - target_energy.
 
     local target_altitude is profile_altitude.
@@ -544,13 +749,57 @@ function terminal_route_update {
     }
     set route["profile_altitude"] to direct_profile["altitude"].
     set route["profile_gradient"] to direct_profile["gradient"].
+    // Phase changes alter the route immediately; do not command brakes or
+    // thrust using the discarded leg's energy budget for one more update.
+    if route["phase"] <> energy_phase or route["hold_index"] <> energy_hold_index {
+        set remaining_distance to terminal_route_remaining_distance(route).
+        set route["remaining_distance"] to remaining_distance.
+        set speed_active to terminal_speed_control_active(route["phase"],remaining_distance,config_TR["ApproachSpeed"]).
+        set reference_speed to config_TR["target_speed"].
+        if speed_active { set reference_speed to config_TR["ApproachSpeed"]["target_speed"]. }
+        set energy_plan to terminal_route_energy_plan(route,reference_speed).
+        set target_energy to energy_plan["required"].
+        set energy_margin to terminal_route_energy_height()-target_energy.
+        set route["energy_margin"] to energy_margin.
+    }
+    local energy_config is config_TR["EnergyPlan"].
+    local margin_elapsed is time:seconds-route["margin_sample_time"].
+    if route["margin_sample_phase"] <> route["phase"] or route["hold_index"] <> energy_hold_index {
+        set route["margin_rate"] to 0.
+        set route["margin_sample_time"] to time:seconds.
+        set route["margin_sample_value"] to energy_margin.
+        set route["margin_sample_phase"] to route["phase"].
+    } else if margin_elapsed >= energy_config["sample_interval"] {
+        set route["margin_rate"] to (energy_margin-route["margin_sample_value"])/max(margin_elapsed,0.01).
+        set route["margin_sample_time"] to time:seconds.
+        set route["margin_sample_value"] to energy_margin.
+    }
+    set route["brake_energy_margin"] to terminal_energy_brake_margin(
+        energy_margin,energy_plan["reserve"],route["margin_rate"],energy_config).
+    set terminal_route_debug["energy_capture"] to energy_plan["capture"].
+    set terminal_route_debug["energy_drag_work"] to energy_plan["drag_work"].
+    set terminal_route_debug["energy_turn_work"] to energy_plan["turn_work"].
+    set terminal_route_debug["energy_reserve"] to energy_plan["reserve"].
+    set terminal_route_debug["energy_clean_loss"] to route["clean_energy_loss"].
+    set terminal_route_debug["energy_margin_rate"] to route["margin_rate"].
+    set terminal_route_debug["energy_brake_margin"] to route["brake_energy_margin"].
     local landing_gate is config_TR["LandingGate"].
-    // Thrust and brakes must represent opposite energy states.  In
-    // particular, do not use airbrakes merely because speed crosses a target:
-    // that previously caused brake/throttle chatter around 140 m/s.
-    local low_energy is energy_margin < -config_TR["low_energy_margin"].
-    local low_speed is ship:airspeed < config_TR["Propulsion"]["throttle_speed"].
-    set route["airbrake"] to route["phase"] <> "go_around" and energy_margin > config_TR["brake_energy"] and not low_energy and not low_speed.
+    // Final/preflare use speed hysteresis; early descent retains energy control.
+    // Use the same activation/reference as this update's energy calculation.
+    // Go-around releases immediately even if the phase changed above.
+    local brake_decision is terminal_brake_decision(route["airbrake"],route["phase"],speed_active,
+        ship:airspeed,energy_margin,config_TR,route["brake_energy_margin"]).
+    if brake_decision["command"] <> route["airbrake"] or brake_decision["mode"] <> route["brake_mode"] or
+       brake_decision["reason"] <> route["brake_reason"] {
+        flight_log_approach_brake(brake_decision["mode"],brake_decision["reason"],brake_decision["command"],
+            reference_speed,config_TR["ApproachSpeed"]["brake_on_speed"],config_TR["ApproachSpeed"]["brake_off_speed"],energy_margin,
+            route["brake_energy_margin"],target_energy).
+    }
+    set route["airbrake"] to brake_decision["command"].
+    set route["brake_mode"] to brake_decision["mode"].
+    set route["brake_reason"] to brake_decision["reason"].
+    set terminal_route_debug["brake_reason"] to route["brake_reason"].
+    set terminal_route_debug["brake_mode"] to route["brake_mode"].
     set route["gear"] to direct_distance < landing_gate["gear_distance"] and geometry["altitude"] < landing_gate["gear_altitude"].
     // Do not start the landing handoff timer until the preflare is complete
     // and the aircraft is established on the three-degree shallow segment.
@@ -754,8 +1003,8 @@ function terminal_route_fly {
         set max_energy_aoa to config_TR["hold_aoa_max"].
     }
 
-    if route["energy_margin"] > config_TR["high_energy_threshold"] {
-        set target_aoa to min(max_energy_aoa, config_TR["nominal_target_aoa"] + route["energy_margin"] / config_TR["energy_aoa_gain_denominator"]).
+    if route["brake_energy_margin"] > config_TR["high_energy_threshold"] {
+        set target_aoa to min(max_energy_aoa, config_TR["nominal_target_aoa"] + route["brake_energy_margin"] / config_TR["energy_aoa_gain_denominator"]).
     }
     if route["energy_margin"] < -config_TR["low_energy_margin"] {
         set target_aoa to descent_min_aoa.
@@ -763,18 +1012,20 @@ function terminal_route_fly {
 
     // Glide whenever possible.  Use engine power only to protect the 120 m/s
     // speed floor or recover a genuine low-energy state; that makes it
-    // mutually exclusive with the high-energy airbrake state.
-    local propulsion_config is config_TR["Propulsion"].
-    local energy_throttle is 0.
-    local speed_throttle is 0.
-    if route["energy_margin"] < -config_TR["low_energy_margin"] {
-        local energy_deficit is -route["energy_margin"] - config_TR["low_energy_margin"].
-        set energy_throttle to energy_deficit / max(propulsion_config["full_assist_energy_deficit"],1).
+    // mutually exclusive with both energy and approach-speed brake commands.
+    local assist is terminal_energy_throttle(route["energy_margin"],ship:airspeed,config_TR).
+    local energy_throttle is assist["energy"].
+    local speed_throttle is assist["speed"].
+    set dapthrottle to assist["command"].
+    local assist_reason is "idle".
+    if energy_throttle > 0 { set assist_reason to "route_deficit". }
+    if speed_throttle > energy_throttle { set assist_reason to "speed_floor". }
+    if assist_reason <> route["energy_assist_reason"] {
+        flight_log_event("terminal_energy_assist","from="+route["energy_assist_reason"]+"|to="+assist_reason+
+            "|margin="+round(route["energy_margin"],1)+"|energy_request="+round(energy_throttle,3)+
+            "|speed_request="+round(speed_throttle,3)+"|throttle="+round(dapthrottle,3)).
+        set route["energy_assist_reason"] to assist_reason.
     }
-    if ship:airspeed < propulsion_config["throttle_speed"] {
-        set speed_throttle to (propulsion_config["throttle_speed"] - ship:airspeed) * propulsion_config["speed_assist_gain"].
-    }
-    set dapthrottle to min(propulsion_config["maximum_throttle"],max(energy_throttle,speed_throttle)).
     if dapthrottle > 0 {
         rapierson().
         togglerapiermode("air").

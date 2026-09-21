@@ -468,7 +468,8 @@ Poseidon_SSTO:add("Landing",lex(
     "pitch_gain",2.9,
     "minimum_turn_pitch",-2,
     "maximum_turn_pitch",25,
-    "target_touchdown_speed",120,
+    "brake_on_speed",100,
+    "brake_off_speed",97,
     "wheel_brake_altitude",10
 )).
 Poseidon_SSTO:add("StationaryThrottle",300).
@@ -538,6 +539,20 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "downwind_extension",8000,
     "hold_radius",2500,
     "target_speed",132,
+    "ApproachSpeed",lex(
+        "activation_distance",10000,"target_speed",125,
+        "brake_on_speed",130,"brake_off_speed",125
+    ),
+    // Clean loss is energy-height metres lost per horizontal metre flown.
+    // Flights 252-254 clean straight segments span roughly 0.20-0.27;
+    // bounded online learning adapts this fallback, never from brake drag.
+    "EnergyPlan",lex(
+        "initial_clean_loss",0.22,"minimum_loss",0.08,"maximum_loss",0.45,
+        "loss_uncertainty",0.03,"learning_time",30,"sample_interval",1,
+        "clean_settle_time",3,"learning_max_speed",350,
+        "planning_bank",35,"circuit_turn_speed",180,"induced_drag_fraction",0.5,
+        "brake_lookahead",6,"brake_release_margin",50
+    ),
     "minimum_speed",112,
     "low_energy_margin",220,
     "brake_energy",150,
