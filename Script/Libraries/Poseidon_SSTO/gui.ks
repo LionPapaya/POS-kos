@@ -12,33 +12,33 @@ global reentry_traj1_vsit_calibration is lex(
     "energy_px_per_km", 22.764,
     "range_px_per_km", 0.503,
     "ssto_x_offset", -4.2,
-    "ssto_y_offset", 279.1,
+    "ssto_y_offset", -22.7,
     "pred_x_offset", -4.2,
-    "pred_y_offset", 260.9
+    "pred_y_offset", -40.9
 ).
 global reentry_traj2_vsit_calibration is lex(
     "energy_px_per_km", 13.658,
     "range_px_per_km", 0.706,
     "ssto_x_offset", -4.2,
-    "ssto_y_offset", 300,
+    "ssto_y_offset", -17.7,
     "pred_x_offset", -4.2,
-    "pred_y_offset", 271.8
+    "pred_y_offset", -45.9
 ).
 global reentry_traj3_vsit_calibration is lex(
     "energy_px_per_km", 17.073,
     "range_px_per_km", 0.578,
     "ssto_x_offset", -4.2,
-    "ssto_y_offset", 71,
+    "ssto_y_offset", -15.7,
     "pred_x_offset", -4.2,
-    "pred_y_offset", 46
+    "pred_y_offset", -40.7
 ).
 global reentry_traj4_vsit_calibration is lex(
     "energy_px_per_km", 22.946,
     "range_px_per_km", 1.061,
     "ssto_x_offset", -4.2,
-    "ssto_y_offset", 43.2,
+    "ssto_y_offset", -9.9,
     "pred_x_offset", -4.2,
-    "pred_y_offset", 16.7
+    "pred_y_offset", -36.4
 ).
 global reentry_traj5_vsit_calibration is lex(
     "energy_px_per_km", 17.21,
