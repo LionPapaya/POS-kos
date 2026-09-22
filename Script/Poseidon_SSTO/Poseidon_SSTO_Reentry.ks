@@ -667,6 +667,22 @@ until running = false{
                 set dap["aoa"]["target_bank"] to team_handoff_start_bank.
                 set dap["str_mode"] to "aoa".
             }
+        } else if ship:altitude < runway_altitude - 1000 {
+            set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
+            set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
+            set team_handoff_transition_start to time:seconds.
+            set team_handoff_transition_active to true.
+            flight_log_event("team_handoff","reason=below_runway_altitude_without_interface"+
+                "|altitude="+round(ship:altitude,1)+"|runway_altitude="+round(runway_altitude,1)+
+                "|start_aoa="+round(team_handoff_start_aoa,2)+"|start_bank="+round(team_handoff_start_bank,2)).
+            reset_sys().
+            set step to "TEAM".
+            set Lastest_status to "TEAM".
+            rcs on.
+            clearVecDraws().
+            set dap["aoa"]["target_aoa"] to team_handoff_start_aoa.
+            set dap["aoa"]["target_bank"] to team_handoff_start_bank.
+            set dap["str_mode"] to "aoa".
         }
     }
     if step = "TEAM"{
