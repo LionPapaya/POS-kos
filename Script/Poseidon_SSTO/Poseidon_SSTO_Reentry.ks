@@ -667,7 +667,7 @@ until running = false{
                 set dap["aoa"]["target_bank"] to team_handoff_start_bank.
                 set dap["str_mode"] to "aoa".
             }
-        } else if ship:altitude < runway_altitude - 1000 {
+        } else if ship:altitude < runway_altitude + AVES["TEAMAltitude"] - 1000 {
             set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
             set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
             set team_handoff_transition_start to time:seconds.
