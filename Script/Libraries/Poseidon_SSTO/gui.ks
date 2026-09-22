@@ -49,6 +49,32 @@ global reentry_traj5_vsit_calibration is lex(
     "pred_y_offset", -41.8
 ).
 
+// KSP/Unity placement calibration for the two runway-relative L/SIT pages.
+// The rotated shuttle artwork has a different visible footprint at each
+// angle, so both it and the following prediction widget need independent
+// offsets for every rotation. Values were captured as paired shuttle/pred
+// rows with Script/Tests/POS_M2L_LSIT_GUI_Calibrate.ks.
+global reentry_lsit1_bug_calibration is lex(
+    "0", lex("ssto_x",4.6,"ssto_y",2,"pred_x",18.5,"pred_y",-27),
+    "45", lex("ssto_x",4.6,"ssto_y",-12,"pred_x",18.5,"pred_y",-45.5),
+    "90", lex("ssto_x",11,"ssto_y",-13,"pred_x",18.5,"pred_y",-40.9),
+    "135", lex("ssto_x",13.9,"ssto_y",-9.2,"pred_x",18.5,"pred_y",-45.5),
+    "180", lex("ssto_x",16,"ssto_y",2,"pred_x",18.5,"pred_y",-27),
+    "225", lex("ssto_x",14,"ssto_y",-4,"pred_x",18.5,"pred_y",-45.5),
+    "270", lex("ssto_x",11,"ssto_y",2,"pred_x",18.5,"pred_y",-40),
+    "315", lex("ssto_x",9.2,"ssto_y",-5,"pred_x",18.5,"pred_y",-46)
+).
+global reentry_lsit2_bug_calibration is lex(
+    "0", lex("ssto_x",-277.3,"ssto_y",12,"pred_x",-268.1,"pred_y",-17),
+    "45", lex("ssto_x",-277.3,"ssto_y",0,"pred_x",-268.1,"pred_y",-37),
+    "90", lex("ssto_x",-275,"ssto_y",0,"pred_x",-268.1,"pred_y",-29),
+    "135", lex("ssto_x",-271,"ssto_y",0,"pred_x",-268.1,"pred_y",-35),
+    "180", lex("ssto_x",-272.7,"ssto_y",13,"pred_x",-268.1,"pred_y",-16),
+    "225", lex("ssto_x",-272.7,"ssto_y",5,"pred_x",-268.1,"pred_y",-35),
+    "270", lex("ssto_x",-275,"ssto_y",12,"pred_x",-268.1,"pred_y",-30),
+    "315", lex("ssto_x",-276,"ssto_y",5,"pred_x",-268.1,"pred_y",-35)
+).
+
 function update_readouts{
     runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
@@ -621,14 +647,19 @@ function reentry_lsit_screen_position {
 // the live surface track into that screen frame, then select the closest one
 // of the eight pre-rotated images. This keeps the icon pointing along the
 // ground track even though the L/SIT map is runway-relative.
-function reentry_lsit_ssto_image {
+function reentry_lsit_ssto_rotation {
     parameter course_heading.
     local outward_heading is runway_heading + 180.
     local relative_heading is normalized_heading_error(course_heading, outward_heading).
     local screen_rotation is 180 - relative_heading.
     until screen_rotation >= 0 { set screen_rotation to screen_rotation + 360. }
     until screen_rotation < 360 { set screen_rotation to screen_rotation - 360. }
-    local rotation_degrees is mod(round(screen_rotation / 45), 8) * 45.
+    return mod(round(screen_rotation / 45), 8) * 45.
+}
+
+function reentry_lsit_ssto_image {
+    parameter course_heading.
+    local rotation_degrees is reentry_lsit_ssto_rotation(course_heading).
     return "Libraries/gui_images/ssto_lsit_" + rotation_degrees + ".png".
 }
 
@@ -854,7 +885,15 @@ function update_reentry_gui {
         } else {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_lsit_bg.png".
         }
-        set traj_disp_ssto:image to reentry_lsit_ssto_image(compass_for_prograde()).
+        local ssto_rotation is reentry_lsit_ssto_rotation(compass_for_prograde()).
+        local lsit_bug_calibration is
+            reentry_lsit2_bug_calibration[ssto_rotation:tostring].
+        if inputs["mode"] = "L/SIT 1" {
+            set lsit_bug_calibration to
+                reentry_lsit1_bug_calibration[ssto_rotation:tostring].
+        }
+        set traj_disp_ssto:image to
+            "Libraries/gui_images/ssto_lsit_" + ssto_rotation + ".png".
         set traj_disp_ssto:style:margin:top to 0.
 
         local current_geometry is reentry_lsit_geometry(ship:geoposition).
@@ -874,18 +913,27 @@ function update_reentry_gui {
         local shuttle_position is reentry_lsit_screen_position(
             ship:geoposition, max_along_track, max_cross_track
         ).
-        set traj_disp_ssto:style:padding:top to shuttle_position["y"].
-        set traj_disp_ssto:style:margin:h to shuttle_position["x"].
+        local shuttle_final_x is
+            shuttle_position["x"] + lsit_bug_calibration["ssto_x"].
+        local shuttle_final_y is
+            shuttle_position["y"] + lsit_bug_calibration["ssto_y"].
+        set traj_disp_ssto:style:padding:top to shuttle_final_y.
+        set traj_disp_ssto:style:margin:h to shuttle_final_x.
 
-        local previous_absolute_y is shuttle_position["y"].
+        local previous_absolute_y is shuttle_final_y.
         if defined terminal_route {
             local target_position is reentry_lsit_screen_position(
                 terminal_route_current_target(terminal_route), max_along_track, max_cross_track
             ).
-            set traj_disp_pred:style:padding:top to target_position["y"] - shuttle_position["y"].
-            set traj_disp_pred:style:margin:h to target_position["x"].
+            local target_final_x is
+                target_position["x"] + lsit_bug_calibration["pred_x"].
+            local target_final_y is
+                target_position["y"] + lsit_bug_calibration["pred_y"].
+            set traj_disp_pred:style:padding:top to
+                target_final_y - shuttle_final_y.
+            set traj_disp_pred:style:margin:h to target_final_x.
             set traj_disp_pred:visible to true.
-            set previous_absolute_y to target_position["y"].
+            set previous_absolute_y to target_final_y.
             update_reentry_lsit_path(
                 reentry_lsit_terminal_path(), max_along_track, max_cross_track, previous_absolute_y
             ).
