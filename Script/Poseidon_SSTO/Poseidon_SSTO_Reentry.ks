@@ -646,12 +646,14 @@ until running = false{
                 Team_interface["target_altitude"],ship:airspeed,ship:verticalspeed,
                 team_gate_elapsed,handoff_config
             ).
-            if team_handoff_reason <> "" {
+            if team_handoff_reason <> "" or ship:altitude < Team_interface["target_altitude"] + runway_altitude - 1000 {
                 set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
                 set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
                 set team_handoff_transition_start to time:seconds.
                 set team_handoff_transition_active to true.
-                flight_log_event("team_handoff","reason="+team_handoff_reason+
+                local handoff_reason is team_handoff_reason.
+                if handoff_reason = "" { set handoff_reason to "below_runway_altitude_gate". }
+                flight_log_event("team_handoff","reason="+handoff_reason+
                     "|distance="+round(team_target_distance,1)+"|closest_distance="+round(entry_team_closest_distance,1)+
                     "|altitude="+round(ship:altitude,1)+"|target_altitude="+round(Team_interface["target_altitude"],1)+
                     "|airspeed="+round(ship:airspeed,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
