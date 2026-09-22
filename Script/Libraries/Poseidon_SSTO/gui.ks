@@ -630,6 +630,8 @@ function reentry_lsit_geometry {
 
 // Map runway-relative metres into the same GUI offset range used by TRAJ 1.
 // The runway remains fixed on the right while the approach extends left.
+// Mirror cross-track about the ERCL: zero keeps its calibrated Y, while
+// positive cross-track appears above it and negative cross-track below it.
 function reentry_lsit_screen_position {
     parameter position, max_along_track, max_cross_track.
     local geometry is reentry_lsit_geometry(position).
@@ -639,7 +641,7 @@ function reentry_lsit_screen_position {
     set cross_ratio to max(-1, min(1, cross_ratio)).
     return lex(
         "x", 680 - along_ratio * 620,
-        "y", 6 + cross_ratio * 110
+        "y", 6 - cross_ratio * 110
     ).
 }
 
@@ -651,7 +653,9 @@ function reentry_lsit_ssto_rotation {
     parameter course_heading.
     local outward_heading is runway_heading + 180.
     local relative_heading is normalized_heading_error(course_heading, outward_heading).
-    local screen_rotation is 180 - relative_heading.
+    // Mirroring the map vertically also reverses the on-screen turn angle.
+    // Keep selecting the calibration belonging to the displayed artwork.
+    local screen_rotation is 180 + relative_heading.
     until screen_rotation >= 0 { set screen_rotation to screen_rotation + 360. }
     until screen_rotation < 360 { set screen_rotation to screen_rotation - 360. }
     return mod(round(screen_rotation / 45), 8) * 45.
