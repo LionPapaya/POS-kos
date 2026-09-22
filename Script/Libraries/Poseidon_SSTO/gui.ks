@@ -10,7 +10,7 @@ RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_nominal_profile.ks").
 // green bug's Y value is converted to relative vbox padding during update.
 global reentry_traj1_vsit_calibration is lex(
     "energy_px_per_km", 22.764,
-    "range_px_per_km", 0.245,
+    "range_px_per_km", 0.539,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -8.4,
     "pred_x_offset", -4.2,
@@ -18,7 +18,7 @@ global reentry_traj1_vsit_calibration is lex(
 ).
 global reentry_traj2_vsit_calibration is lex(
     "energy_px_per_km", 13.658,
-    "range_px_per_km", 0.337,
+    "range_px_per_km", 0.77,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -8.4,
     "pred_x_offset", -4.2,
@@ -26,7 +26,7 @@ global reentry_traj2_vsit_calibration is lex(
 ).
 global reentry_traj3_vsit_calibration is lex(
     "energy_px_per_km", 17.073,
-    "range_px_per_km", 0.449,
+    "range_px_per_km", 0.599,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -8.4,
     "pred_x_offset", -4.2,
@@ -34,7 +34,7 @@ global reentry_traj3_vsit_calibration is lex(
 ).
 global reentry_traj4_vsit_calibration is lex(
     "energy_px_per_km", 22.946,
-    "range_px_per_km", 0.858,
+    "range_px_per_km", 1.03,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -15.3,
     "pred_x_offset", -4.2,
@@ -42,7 +42,7 @@ global reentry_traj4_vsit_calibration is lex(
 ).
 global reentry_traj5_vsit_calibration is lex(
     "energy_px_per_km", 17.21,
-    "range_px_per_km", 1.287,
+    "range_px_per_km", 1.43,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -15.3,
     "pred_x_offset", -4.2,
@@ -780,27 +780,32 @@ function update_reentry_gui {
         set console_time:text to ((timestamp():clock)).
         local page_energy_min is entry_nominal_traj1_energy_min.
         local page_energy_max is entry_nominal_traj1_energy_max.
+        local page_range_min is entry_nominal_traj1_range_min.
         local vsit_calibration is reentry_traj1_vsit_calibration.
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
         if inputs["mode"] = "TRAJ 2 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_entry_nominal.png".
             set page_energy_min to entry_nominal_traj2_energy_min.
             set page_energy_max to entry_nominal_traj2_energy_max.
+            set page_range_min to entry_nominal_traj2_range_min.
             set vsit_calibration to reentry_traj2_vsit_calibration.
         } else if inputs["mode"] = "TRAJ 3 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_entry_nominal.png".
             set page_energy_min to entry_nominal_traj3_energy_min.
             set page_energy_max to entry_nominal_traj3_energy_max.
+            set page_range_min to entry_nominal_traj3_range_min.
             set vsit_calibration to reentry_traj3_vsit_calibration.
         } else if inputs["mode"] = "TRAJ 4 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_entry_nominal.png".
             set page_energy_min to entry_nominal_traj4_energy_min.
             set page_energy_max to entry_nominal_traj4_energy_max.
+            set page_range_min to entry_nominal_traj4_range_min.
             set vsit_calibration to reentry_traj4_vsit_calibration.
         } else if inputs["mode"] = "TRAJ 5 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj5_entry_nominal.png".
             set page_energy_min to entry_nominal_traj5_energy_min.
             set page_energy_max to entry_nominal_traj5_energy_max.
+            set page_range_min to entry_nominal_traj5_range_min.
             set vsit_calibration to reentry_traj5_vsit_calibration.
         }
 
@@ -822,13 +827,14 @@ function update_reentry_gui {
         local ssto_margin_h is 50 + energy_from_left_km *
             vsit_calibration["energy_px_per_km"] +
             vsit_calibration["ssto_x_offset"].
-        local ssto_margin_v is 140 - inputs["range_remaining"]/1000 *
+        local ssto_margin_v is 140 -
+            (inputs["range_remaining"]-page_range_min)/1000 *
             vsit_calibration["range_px_per_km"] +
             vsit_calibration["ssto_y_offset"].
         set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
         set traj_disp_ssto:STYLE:margin:h to ssto_margin_h.
 
-        local nominal_margin_v is 140 - nominal_range/1000 *
+        local nominal_margin_v is 140 - (nominal_range-page_range_min)/1000 *
             vsit_calibration["range_px_per_km"] +
             vsit_calibration["pred_y_offset"].
         set traj_disp_pred:STYLE:padding:top to nominal_margin_v-ssto_margin_v.
