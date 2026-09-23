@@ -646,7 +646,7 @@ until running = false{
                 Team_interface["target_altitude"],ship:airspeed,ship:verticalspeed,
                 team_gate_elapsed,handoff_config
             ).
-            if team_handoff_reason <> "" or ship:altitude < Team_interface["target_altitude"] + runway_altitude - 1000 {
+            if team_handoff_reason <> ""{
                 set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
                 set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
                 set team_handoff_transition_start to time:seconds.
