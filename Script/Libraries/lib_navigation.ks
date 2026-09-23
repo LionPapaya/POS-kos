@@ -335,6 +335,22 @@ function calc_hacstate{
 
     return state.
 }
+// Signed offset from the runway centerline: positive is to the right of the
+// landing heading. A straight-in bearing needs no offset; a crossing arrival
+// gets more room to turn before it reaches the centerline.
+function team_interface_lateral_offset {
+    parameter approach_bearing, rnw_heading.
+    local heading_error is approach_bearing - rnw_heading.
+    until abs(heading_error) <= 180 {
+        if heading_error > 180 { set heading_error to heading_error - 360. }
+        if heading_error < -180 { set heading_error to heading_error + 360. }
+    }
+    local blend is max(0,min(1,(abs(heading_error)-20)/80)).
+    local offset is 70000 * (3*blend^2 - 2*blend^3).
+    if heading_error > 0 { return -offset. }
+    return offset.
+}
+
 function define_TEAM_interface {
     parameter rnw_start.
     parameter rnw_heading.
@@ -346,13 +362,16 @@ function define_TEAM_interface {
     // every runway, including low-elevation runways.
     set target_altitude to rnw_altitude + AVES["TEAMAltitude"].
 
-    // Put the interface on the extended runway centerline at the distance
-    // corresponding to TEAMAltitude on the glideslope. Then move 10 km from
-    // that point toward the vessel to define the entry target location.
+    // Keep the glideslope station fixed. Use the bearing from the current
+    // vessel position to this unshifted point to place the box laterally on
+    // the incoming side, without running another entry simulation.
     local ercl_distance is calculate_distance_from_alt(target_altitude,rnw_altitude).
     local ercl_target is get_geoposition_along_heading(rnw_start,rnw_heading+180,ercl_distance).
-    local target_heading is heading_between(ercl_target,ship:geoposition).
-    local target_latlng is get_geoposition_along_heading(ercl_target,target_heading,10000).
+    local approach_bearing is heading_between(ship:geoposition,ercl_target).
+    local lateral_offset is team_interface_lateral_offset(approach_bearing,rnw_heading).
+    local lateral_heading is rnw_heading+90.
+    if lateral_offset < 0 { set lateral_heading to rnw_heading-90. }
+    local target_latlng is get_geoposition_along_heading(ercl_target,lateral_heading,abs(lateral_offset)).
 
     // Define the TEAM interface box
     local team_interface_box is lexicon(
@@ -365,6 +384,10 @@ function define_TEAM_interface {
     return lexicon(
         "target_altitude", target_altitude,
         "target_latlng", target_latlng,
+        "ercl_target", ercl_target,
+        "ercl_distance", ercl_distance,
+        "approach_bearing", approach_bearing,
+        "lateral_offset", lateral_offset,
         "team_interface_box", team_interface_box
     ).
 }

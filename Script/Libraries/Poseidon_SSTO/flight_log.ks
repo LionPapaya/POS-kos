@@ -374,7 +374,15 @@ function flight_log_set_entry_target {
     set POS_LOG_TARGET["lat"] to team_interface["target_latlng"]:lat.
     set POS_LOG_TARGET["lng"] to team_interface["target_latlng"]:lng.
     set POS_LOG_TARGET["altitude"] to team_interface["target_altitude"].
-    flight_log_event("entry_target","latitude=" + round(POS_LOG_TARGET["lat"],6) + "|longitude=" + round(POS_LOG_TARGET["lng"],6) + "|altitude=" + round(POS_LOG_TARGET["altitude"],1)).
+    flight_log_event("entry_target","latitude=" + round(POS_LOG_TARGET["lat"],6) +
+        "|longitude=" + round(POS_LOG_TARGET["lng"],6) +
+        "|altitude=" + round(POS_LOG_TARGET["altitude"],1) +
+        "|ercl_latitude=" + round(team_interface["ercl_target"]:lat,6) +
+        "|ercl_longitude=" + round(team_interface["ercl_target"]:lng,6) +
+        "|ercl_distance=" + round(team_interface["ercl_distance"],1) +
+        "|approach_bearing=" + round(team_interface["approach_bearing"],2) +
+        "|lateral_offset=" + round(team_interface["lateral_offset"],1) +
+        "|box_tolerance=" + round(team_interface["team_interface_box"]["dist_tolerance"],1)).
 }
 
 function flight_log_set_vacuum_target {
