@@ -42,7 +42,8 @@ global POS_LOG_EVENT_FILE is "".
 // Version 18 adds prediction-freeze and post-handoff TEAM blend telemetry.
 // Version 19 adds high-energy TEAM final guidance telemetry.
 // Version 20 adds terminal route work, clean-loss learning and brake forecast.
-global POS_LOG_SCHEMA_VERSION is 20.
+// Version 21 adds current-turn extra distance and brake-protected energy.
+global POS_LOG_SCHEMA_VERSION is 21.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -127,17 +128,19 @@ function flight_log_rendezvous_columns {
 // consumes this observer and trajectories do not call the logger.
 function flight_log_terminal_energy_header {
     return ",terminal_energy_capture,terminal_energy_drag_work,terminal_energy_turn_work,"+
-        "terminal_energy_reserve,terminal_energy_clean_loss,terminal_energy_margin_rate,terminal_energy_brake_margin".
+        "terminal_energy_reserve,terminal_energy_clean_loss,terminal_energy_margin_rate,terminal_energy_brake_margin,"+
+        "terminal_energy_turn_extra_distance,terminal_energy_turn_reserve".
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0".
+        return ",0,0,0,0,0,0,0,0,0".
     }
     return ","+terminal_route_debug["energy_capture"]+","+terminal_route_debug["energy_drag_work"]+","+
         terminal_route_debug["energy_turn_work"]+","+terminal_route_debug["energy_reserve"]+","+
         terminal_route_debug["energy_clean_loss"]+","+terminal_route_debug["energy_margin_rate"]+","+
-        terminal_route_debug["energy_brake_margin"].
+        terminal_route_debug["energy_brake_margin"]+","+
+        terminal_route_debug["energy_turn_extra_distance"]+","+terminal_route_debug["energy_turn_reserve"].
 }
 
 function flight_log_entry_predictive_header {
@@ -280,13 +283,15 @@ function flight_log_choose_files {
 // provide the medium/high-rate trace without changing the sample schema.
 function flight_log_approach_brake {
     parameter control_mode, change_reason, brake_command, speed_reference,
-        engage_speed, release_speed, energy_error, brake_margin is 0, required_energy is 0.
+        engage_speed, release_speed, energy_error, brake_margin is 0,
+        required_energy is 0, turn_extra_distance is 0, turn_reserve is 0.
     if POS_LOG_LEVEL < 1 { return. }
     flight_log_event("approach_brake","mode="+control_mode+"|reason="+change_reason+
         "|command="+brake_command+"|airspeed="+round(ship:airspeed,2)+
         "|reference_speed="+speed_reference+"|engage_speed="+engage_speed+
         "|release_speed="+release_speed+"|energy_margin="+round(energy_error,2)+
         "|brake_margin="+round(brake_margin,2)+"|required_energy="+round(required_energy,2)+
+        "|turn_extra_distance="+round(turn_extra_distance,2)+"|turn_reserve="+round(turn_reserve,2)+
         "|vertical_speed="+round(ship:verticalspeed,2)+"|vessel_status="+ship:status).
 }
 

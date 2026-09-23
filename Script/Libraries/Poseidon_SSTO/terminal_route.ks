@@ -45,6 +45,8 @@ global terminal_route_debug is lex(
     "energy_drag_work", 0,
     "energy_turn_work", 0,
     "energy_reserve", 0,
+    "energy_turn_extra_distance", 0,
+    "energy_turn_reserve", 0,
     "energy_clean_loss", 0,
     "energy_margin_rate", 0,
     "energy_brake_margin", 0,
@@ -220,6 +222,33 @@ function terminal_energy_turn_work {
     // speed; entry-speed dissipation is handled by the measured margin trend.
     return clean_loss*turn_radius*energy_config["induced_drag_fraction"]*
         tan(turn_bank)^2*radians_value.
+}
+
+// The remaining-route polyline assumes immediate progress toward the next
+// waypoint. During a wide turn the aircraft can fly a long arc while that
+// distance barely closes. Reserve only the extra arc length beyond the direct
+// waypoint distance; planned bank drag is already in turn_work. This reserve
+// protects the brake decision, not the nominal engine-assist threshold.
+function terminal_energy_current_turn {
+    parameter target_distance, heading_error, measured_speed, measured_bank,
+        gravity_value, clean_loss, energy_config.
+    local turn_angle is min(120,abs(heading_error)).
+    if target_distance <= 0 or turn_angle <= energy_config["turn_reserve_deadband"] {
+        return lex("extra_distance",0,"reserve",0).
+    }
+    local bank_angle is max(energy_config["planning_bank"],abs(measured_bank)).
+    set bank_angle to min(60,bank_angle).
+    local radius is measured_speed^2/(gravity_value*tan(bank_angle)).
+    local radians_value is turn_angle*constant:degtorad.
+    // Rotate the local frame toward the target. Target is initially at
+    // (distance*sin(angle), distance*cos(angle)); the arc ends at
+    // (radius*(1-cos(angle)), radius*sin(angle)).
+    local remaining_x is target_distance*sin(turn_angle)-radius*(1-cos(turn_angle)).
+    local remaining_y is target_distance*cos(turn_angle)-radius*sin(turn_angle).
+    local arc_distance is radius*radians_value.
+    local extra_distance is max(0,arc_distance+sqrt(remaining_x^2+remaining_y^2)-target_distance).
+    set extra_distance to min(extra_distance,energy_config["turn_reserve_max_distance"]).
+    return lex("extra_distance",extra_distance,"reserve",extra_distance*clean_loss).
 }
 
 function terminal_energy_throttle {
@@ -752,6 +781,8 @@ function terminal_route_update {
     // Phase changes alter the route immediately; do not command brakes or
     // thrust using the discarded leg's energy budget for one more update.
     if route["phase"] <> energy_phase or route["hold_index"] <> energy_hold_index {
+        set target to terminal_route_current_target(route).
+        set target_distance to calcdistance_m(ship:geoposition,target).
         set remaining_distance to terminal_route_remaining_distance(route).
         set route["remaining_distance"] to remaining_distance.
         set speed_active to terminal_speed_control_active(route["phase"],remaining_distance,config_TR["ApproachSpeed"]).
@@ -776,10 +807,20 @@ function terminal_route_update {
     }
     set route["brake_energy_margin"] to terminal_energy_brake_margin(
         energy_margin,energy_plan["reserve"],route["margin_rate"],energy_config).
+    local current_turn is lex("extra_distance",0,"reserve",0).
+    if route["phase"] <> "final" and route["phase"] <> "go_around" {
+        set current_turn to terminal_energy_current_turn(target_distance,
+            normalized_heading_error(heading_between(ship:geoposition,target),compass_for_prograde()),
+            ship:airspeed,roll_for(),ship:body:mu/(ship:body:radius^2),
+            route["clean_energy_loss"],energy_config).
+        set route["brake_energy_margin"] to route["brake_energy_margin"]-current_turn["reserve"].
+    }
     set terminal_route_debug["energy_capture"] to energy_plan["capture"].
     set terminal_route_debug["energy_drag_work"] to energy_plan["drag_work"].
     set terminal_route_debug["energy_turn_work"] to energy_plan["turn_work"].
     set terminal_route_debug["energy_reserve"] to energy_plan["reserve"].
+    set terminal_route_debug["energy_turn_extra_distance"] to current_turn["extra_distance"].
+    set terminal_route_debug["energy_turn_reserve"] to current_turn["reserve"].
     set terminal_route_debug["energy_clean_loss"] to route["clean_energy_loss"].
     set terminal_route_debug["energy_margin_rate"] to route["margin_rate"].
     set terminal_route_debug["energy_brake_margin"] to route["brake_energy_margin"].
@@ -793,7 +834,7 @@ function terminal_route_update {
        brake_decision["reason"] <> route["brake_reason"] {
         flight_log_approach_brake(brake_decision["mode"],brake_decision["reason"],brake_decision["command"],
             reference_speed,config_TR["ApproachSpeed"]["brake_on_speed"],config_TR["ApproachSpeed"]["brake_off_speed"],energy_margin,
-            route["brake_energy_margin"],target_energy).
+            route["brake_energy_margin"],target_energy,current_turn["extra_distance"],current_turn["reserve"]).
     }
     set route["airbrake"] to brake_decision["command"].
     set route["brake_mode"] to brake_decision["mode"].

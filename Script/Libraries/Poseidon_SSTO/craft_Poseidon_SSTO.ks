@@ -551,6 +551,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "loss_uncertainty",0.03,"learning_time",30,"sample_interval",1,
         "clean_settle_time",3,"learning_max_speed",350,
         "planning_bank",35,"circuit_turn_speed",180,"induced_drag_fraction",0.5,
+        "turn_reserve_deadband",12,"turn_reserve_max_distance",20000,
         "brake_lookahead",6,"brake_release_margin",50
     ),
     "minimum_speed",112,
