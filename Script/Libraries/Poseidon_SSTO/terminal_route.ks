@@ -29,6 +29,16 @@ global terminal_route_debug is lex(
     "landing_flare_fraction", 0,
     "desired_vertical_speed", 0,
     "pitch_bias", 0,
+    "turn_pitch_limit_active", false,
+    "turn_pitch_raw_bias", 0,
+    "turn_pitch_gs_altitude", 0,
+    "turn_pitch_bank", 0,
+    "fast_turn_active", false,
+    "turn_model_mode", -1,
+    "turn_model_rate", 0,
+    "turn_model_radius", 0,
+    "turn_model_loss", 0,
+    "turn_model_required_radius", 0,
     "target_aoa", 0,
     "high_energy_final_active", false,
     "high_energy_desired_vs", 0,
@@ -224,6 +234,117 @@ function terminal_energy_turn_work {
         tan(turn_bank)^2*radians_value.
 }
 
+// The FAR grid is reduced offline to rate and drag per tonne. Only altitude
+// and speed are interpolated in flight; AoA/bank are nine discrete choices.
+function terminal_turn_environment {
+    parameter altitude, speed.
+    local altitude_index is 0.
+    until altitude_index >= TEAM_TURN_ALTITUDES:length-2 or
+          altitude <= TEAM_TURN_ALTITUDES[altitude_index+1] {
+        set altitude_index to altitude_index+1.
+    }
+    local speed_index is 0.
+    until speed_index >= TEAM_TURN_SPEEDS:length-2 or
+          speed <= TEAM_TURN_SPEEDS[speed_index+1] {
+        set speed_index to speed_index+1.
+    }
+    local altitude_fraction is max(0,min(1,
+        (altitude-TEAM_TURN_ALTITUDES[altitude_index])/
+        (TEAM_TURN_ALTITUDES[altitude_index+1]-TEAM_TURN_ALTITUDES[altitude_index]))).
+    local speed_fraction is max(0,min(1,
+        (speed-TEAM_TURN_SPEEDS[speed_index])/
+        (TEAM_TURN_SPEEDS[speed_index+1]-TEAM_TURN_SPEEDS[speed_index]))).
+    return lex("altitude_index",altitude_index,"speed_index",speed_index,
+        "altitude_fraction",altitude_fraction,"speed_fraction",speed_fraction).
+}
+
+function terminal_turn_sample {
+    parameter environment, mode, mass, speed.
+    local row_width is TEAM_TURN_SPEEDS:length.
+    local index is environment["altitude_index"]*row_width+environment["speed_index"].
+    local altitude_fraction is environment["altitude_fraction"].
+    local speed_fraction is environment["speed_fraction"].
+    local rates is TEAM_TURN_RATE_MASS[mode].
+    local losses is TEAM_TURN_LOSS_MASS[mode].
+    local lower_rate is rates[index]+(rates[index+1]-rates[index])*speed_fraction.
+    local upper_rate is rates[index+row_width]+
+        (rates[index+row_width+1]-rates[index+row_width])*speed_fraction.
+    local lower_loss is losses[index]+(losses[index+1]-losses[index])*speed_fraction.
+    local upper_loss is losses[index+row_width]+
+        (losses[index+row_width+1]-losses[index+row_width])*speed_fraction.
+    local rate is max(0,(lower_rate+(upper_rate-lower_rate)*altitude_fraction)/max(mass,1)).
+    local loss is max(0,(lower_loss+(upper_loss-lower_loss)*altitude_fraction)/max(mass,1)).
+    local radius is min(999999999,max(speed,1)*constant:radTOdeg/max(rate,0.0001)).
+    return lex("rate",rate,"radius",radius,"loss",loss).
+}
+
+// A constant-radius turn reaches a target at range d and bearing error e
+// when r is roughly d/(2 sin e). Use a conservative fraction because actual
+// bank and AoA take time to settle. Pick the lowest-drag feasible mode; if
+// none can turn tightly enough, use the mode with the smallest radius.
+function terminal_turn_choice {
+    parameter environment, speed, mass, target_distance, heading_error,
+        prior_mode, energy_config.
+    local angle is min(90,max(1,abs(heading_error))).
+    local required_radius is target_distance/(2*sin(angle)) *
+        energy_config["turn_radius_safety_fraction"].
+    local best_mode is -1.
+    local best_cost is 999999999.
+    local best_radius is 999999999.
+    local best_feasible is false.
+    local prior_result is lex("rate",0,"radius",999999999,"loss",999999999).
+    local mode is 0.
+    until mode >= TEAM_TURN_RATE_MASS:length {
+        local result is terminal_turn_sample(environment,mode,mass,speed).
+        if mode = prior_mode { set prior_result to result. }
+        if result["rate"] > 0.01 {
+            local feasible is result["radius"] <= required_radius.
+            local cost is result["loss"]+
+                0.03*max(0,1-result["radius"]/max(required_radius,1)).
+            if feasible and (not best_feasible or cost < best_cost) {
+                set best_mode to mode.
+                set best_cost to cost.
+                set best_radius to result["radius"].
+                set best_feasible to true.
+            } else if not best_feasible and result["radius"] < best_radius {
+                set best_mode to mode.
+                set best_cost to cost.
+                set best_radius to result["radius"].
+            }
+        }
+        set mode to mode+1.
+    }
+    // Avoid switching between adjacent AoA/bank modes on small sample noise.
+    if prior_mode >= 0 and prior_result["rate"] > 0.01 {
+        if best_feasible and prior_result["radius"] <= required_radius and
+           prior_result["loss"] <= best_cost*1.08 {
+            set best_mode to prior_mode.
+        } else if not best_feasible and prior_result["radius"] <= best_radius*1.05 {
+            set best_mode to prior_mode.
+        }
+    }
+    if best_mode < 0 {
+        return lex("valid",false,"mode",-1,"aoa",0,"bank",0,
+            "rate",0,"radius",999999999,"loss",0,"required_radius",required_radius).
+    }
+    local chosen is terminal_turn_sample(environment,best_mode,mass,speed).
+    return lex("valid",true,"mode",best_mode,
+        "aoa",TEAM_TURN_AOAS[floor(best_mode/TEAM_TURN_BANKS:length)],
+        "bank",TEAM_TURN_BANKS[mod(best_mode,TEAM_TURN_BANKS:length)],
+        "rate",chosen["rate"],"radius",chosen["radius"],
+        "loss",chosen["loss"],"required_radius",required_radius).
+}
+
+function terminal_aero_turn_work {
+    parameter heading_change, speed, turn_rate, turn_loss, clean_loss,
+        energy_config.
+    if turn_rate <= 0 { return 0. }
+    local arc_distance is min(energy_config["turn_model_max_arc_distance"],
+        speed*min(180,abs(heading_change))/turn_rate).
+    return min(energy_config["turn_model_max_work"],
+        max(0,turn_loss-clean_loss)*arc_distance).
+}
+
 // The remaining-route polyline assumes immediate progress toward the next
 // waypoint. During a wide turn the aircraft can fly a long arc while that
 // distance barely closes. Reserve only the extra arc length beyond the direct
@@ -231,7 +352,7 @@ function terminal_energy_turn_work {
 // protects the brake decision, not the nominal engine-assist threshold.
 function terminal_energy_current_turn {
     parameter target_distance, heading_error, measured_speed, measured_bank,
-        gravity_value, clean_loss, energy_config.
+        gravity_value, clean_loss, energy_config, calibrated_radius is -1.
     local turn_angle is min(120,abs(heading_error)).
     if target_distance <= 0 or turn_angle <= energy_config["turn_reserve_deadband"] {
         return lex("extra_distance",0,"reserve",0).
@@ -239,6 +360,7 @@ function terminal_energy_current_turn {
     local bank_angle is max(energy_config["planning_bank"],abs(measured_bank)).
     set bank_angle to min(60,bank_angle).
     local radius is measured_speed^2/(gravity_value*tan(bank_angle)).
+    if calibrated_radius > 0 { set radius to calibrated_radius. }
     local radians_value is turn_angle*constant:degtorad.
     // Rotate the local frame toward the target. Target is initially at
     // (distance*sin(angle), distance*cos(angle)); the arc ends at
@@ -249,6 +371,39 @@ function terminal_energy_current_turn {
     local extra_distance is max(0,arc_distance+sqrt(remaining_x^2+remaining_y^2)-target_distance).
     set extra_distance to min(extra_distance,energy_config["turn_reserve_max_distance"]).
     return lex("extra_distance",extra_distance,"reserve",extra_distance*clean_loss).
+}
+
+// Keep a large bank turn flyable when the glide slope at the current waypoint
+// is above the aircraft. This applies to the ordinary circuit pitch law;
+// final and go-around retain their dedicated vertical controllers.
+function terminal_turn_pitch_limit {
+    parameter raw_bias, commanded_bank, actual_bank, glideslope_altitude,
+        actual_altitude, config_TR.
+    local turning is max(abs(commanded_bank),abs(actual_bank)) >=
+        config_TR["turn_pitch_bank_threshold"].
+    local active is turning and glideslope_altitude > actual_altitude.
+    local command is raw_bias.
+    if active {
+        local limit is config_TR["turn_pitch_bias_limit"].
+        set command to max(-limit,min(limit,raw_bias)).
+    }
+    return lex("command",command,"active",active).
+}
+
+function terminal_fast_turn_command {
+    parameter nominal_bank, measured_speed, glideslope_altitude,
+        actual_altitude, config_TR.
+    local active is abs(nominal_bank) >= config_TR["fast_turn_min_bank"] and
+        measured_speed >= config_TR["fast_turn_min_speed"] and
+        glideslope_altitude > actual_altitude.
+    local command is nominal_bank.
+    if active {
+        set command to nominal_bank*config_TR["fast_turn_bank_max"]/
+            max(config_TR["bank_max"],1).
+        set command to max(-config_TR["fast_turn_bank_max"],
+            min(config_TR["fast_turn_bank_max"],command)).
+    }
+    return lex("command",command,"active",active).
 }
 
 function terminal_energy_throttle {
@@ -303,14 +458,23 @@ function terminal_route_energy_plan {
     local last_point is ship:geoposition.
     local previous_heading is compass_for_prograde().
     local turn_work is 0.
+    local first_turn is true.
     for next_point in points {
         if calcdistance_m(last_point,next_point) > 1 {
             local leg_heading is heading_between(last_point,next_point).
             local planning_speed is max(reference_speed,min(ship:airspeed,energy_config["circuit_turn_speed"])).
-            set turn_work to turn_work+terminal_energy_turn_work(
-                normalized_heading_error(leg_heading,previous_heading),planning_speed,
-                gravity_value,route["clean_energy_loss"],energy_config).
+            local heading_change is normalized_heading_error(leg_heading,previous_heading).
+            if first_turn and route["turn_model_valid"] {
+                set turn_work to turn_work+terminal_aero_turn_work(
+                    heading_change,ship:airspeed,route["turn_model_rate"],
+                    route["turn_model_loss"],route["clean_energy_loss"],energy_config).
+            } else {
+                set turn_work to turn_work+terminal_energy_turn_work(
+                    heading_change,planning_speed,gravity_value,
+                    route["clean_energy_loss"],energy_config).
+            }
             set previous_heading to leg_heading.
+            set first_turn to false.
         }
         set last_point to next_point.
     }
@@ -547,6 +711,16 @@ function terminal_route_init {
         "profile_altitude", 0,
         "profile_gradient", 0,
         "pitch_saturated", false,
+        "turn_pitch_limit_active", false,
+        "fast_turn_active", false,
+        "turn_model_valid", false,
+        "turn_model_mode", -1,
+        "turn_model_aoa", 0,
+        "turn_model_bank", 0,
+        "turn_model_rate", 0,
+        "turn_model_radius", 0,
+        "turn_model_loss", 0,
+        "turn_model_required_radius", 0,
         "preflare_pullup_active", false,
         "energy_margin", 0,
         "clean_energy_loss", config_TR["EnergyPlan"]["initial_clean_loss"],
@@ -622,6 +796,53 @@ function terminal_route_current_target {
     return get_geoposition_along_heading(runway_start, runway_heading + 180, lead_distance).
 }
 
+function terminal_route_choose_turn {
+    parameter route, target, target_distance.
+    local prior_mode is route["turn_model_mode"].
+    set route["turn_model_valid"] to false.
+    set route["turn_model_mode"] to -1.
+    set route["turn_model_aoa"] to 0.
+    set route["turn_model_bank"] to 0.
+    set route["turn_model_rate"] to 0.
+    set route["turn_model_radius"] to 0.
+    set route["turn_model_loss"] to 0.
+    set route["turn_model_required_radius"] to 0.
+    if route["phase"] = "final" or route["phase"] = "go_around" or
+       ship:altitude < 7000 or ship:altitude >= 70000 or
+       ship:airspeed < 100 or ship:airspeed > 1500 or
+       ship:body:name <> "Kerbin" {
+        if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=outside_envelope"). }
+        return.
+    }
+    local heading_error is normalized_heading_error(
+        heading_between(ship:geoposition,target),compass_for_prograde()).
+    local nominal_bank is terminal_route_bank_command(heading_to_target(target),AVES["TerminalRoute"]).
+    if abs(nominal_bank) < AVES["TerminalRoute"]["EnergyPlan"]["turn_model_min_bank"] {
+        if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=small_turn"). }
+        return.
+    }
+    local environment is terminal_turn_environment(ship:altitude,ship:airspeed).
+    local choice is terminal_turn_choice(environment,ship:airspeed,ship:mass,
+        target_distance,heading_error,prior_mode,AVES["TerminalRoute"]["EnergyPlan"]).
+    if choice["valid"] {
+        set route["turn_model_valid"] to true.
+        set route["turn_model_mode"] to choice["mode"].
+        set route["turn_model_aoa"] to choice["aoa"].
+        set route["turn_model_bank"] to choice["bank"].
+        set route["turn_model_rate"] to choice["rate"].
+        set route["turn_model_radius"] to choice["radius"].
+        set route["turn_model_loss"] to choice["loss"].
+        set route["turn_model_required_radius"] to choice["required_radius"].
+    }
+    if route["turn_model_mode"] <> prior_mode {
+        flight_log_event("terminal_turn_model","phase="+route["phase"]+
+            "|mode="+route["turn_model_mode"]+"|aoa="+route["turn_model_aoa"]+
+            "|bank="+route["turn_model_bank"]+"|rate="+round(route["turn_model_rate"],3)+
+            "|radius="+round(route["turn_model_radius"],1)+
+            "|distance="+round(target_distance,1)).
+    }
+}
+
 function terminal_route_remaining_distance {
     parameter route.
     local target is terminal_route_current_target(route).
@@ -665,6 +886,7 @@ function terminal_route_update {
     local energy_hold_index is route["hold_index"].
     local target is terminal_route_current_target(route).
     local target_distance is calcdistance_m(ship:geoposition, target).
+    terminal_route_choose_turn(route,target,target_distance).
     local remaining_distance is terminal_route_remaining_distance(route).
     local profile is calculate_glideslope_profile(remaining_distance).
     local profile_altitude is profile["altitude"].
@@ -783,6 +1005,7 @@ function terminal_route_update {
     if route["phase"] <> energy_phase or route["hold_index"] <> energy_hold_index {
         set target to terminal_route_current_target(route).
         set target_distance to calcdistance_m(ship:geoposition,target).
+        terminal_route_choose_turn(route,target,target_distance).
         set remaining_distance to terminal_route_remaining_distance(route).
         set route["remaining_distance"] to remaining_distance.
         set speed_active to terminal_speed_control_active(route["phase"],remaining_distance,config_TR["ApproachSpeed"]).
@@ -809,10 +1032,12 @@ function terminal_route_update {
         energy_margin,energy_plan["reserve"],route["margin_rate"],energy_config).
     local current_turn is lex("extra_distance",0,"reserve",0).
     if route["phase"] <> "final" and route["phase"] <> "go_around" {
+        local calibrated_radius is -1.
+        if route["turn_model_valid"] { set calibrated_radius to route["turn_model_radius"]. }
         set current_turn to terminal_energy_current_turn(target_distance,
             normalized_heading_error(heading_between(ship:geoposition,target),compass_for_prograde()),
             ship:airspeed,roll_for(),ship:body:mu/(ship:body:radius^2),
-            route["clean_energy_loss"],energy_config).
+            route["clean_energy_loss"],energy_config,calibrated_radius).
         set route["brake_energy_margin"] to route["brake_energy_margin"]-current_turn["reserve"].
     }
     set terminal_route_debug["energy_capture"] to energy_plan["capture"].
@@ -824,6 +1049,11 @@ function terminal_route_update {
     set terminal_route_debug["energy_clean_loss"] to route["clean_energy_loss"].
     set terminal_route_debug["energy_margin_rate"] to route["margin_rate"].
     set terminal_route_debug["energy_brake_margin"] to route["brake_energy_margin"].
+    set terminal_route_debug["turn_model_mode"] to route["turn_model_mode"].
+    set terminal_route_debug["turn_model_rate"] to route["turn_model_rate"].
+    set terminal_route_debug["turn_model_radius"] to route["turn_model_radius"].
+    set terminal_route_debug["turn_model_loss"] to route["turn_model_loss"].
+    set terminal_route_debug["turn_model_required_radius"] to route["turn_model_required_radius"].
     local landing_gate is config_TR["LandingGate"].
     // Final/preflare use speed hysteresis; early descent retains energy control.
     // Use the same activation/reference as this update's energy calculation.
@@ -895,6 +1125,24 @@ function terminal_route_fly {
     parameter route.
     local config_TR is AVES["TerminalRoute"].
     local target is terminal_route_current_target(route).
+    local target_distance is calcdistance_m(ship:geoposition,target).
+    local turn_bank_command is terminal_route_bank_command(heading_to_target(target),config_TR).
+    local turn_pitch_gs_altitude is 0.
+    local fast_turn_active is false.
+    if route["phase"] <> "final" and route["phase"] <> "go_around" {
+        set turn_pitch_gs_altitude to calculate_glideslope_alt(target_distance).
+        if route["turn_model_valid"] {
+            if turn_bank_command > 0 { set turn_bank_command to route["turn_model_bank"]. }
+            if turn_bank_command < 0 { set turn_bank_command to -route["turn_model_bank"]. }
+            set fast_turn_active to true.
+        } else {
+            local fast_turn_solution is terminal_fast_turn_command(
+                turn_bank_command,ship:airspeed,turn_pitch_gs_altitude,
+                ship:altitude,config_TR).
+            set turn_bank_command to fast_turn_solution["command"].
+            set fast_turn_active to fast_turn_solution["active"].
+        }
+    }
     local distance is route["remaining_distance"].
     local time_to_go is max(distance / max(ship:airspeed, config_TR["time_to_go_min_speed"]), config_TR["time_to_go_min"]).
     local desired_vertical_speed is 0.
@@ -981,6 +1229,8 @@ function terminal_route_fly {
     local preflare_pullup_active is false.
     local preflare_pullup_fraction is 0.
     local high_energy_pid_output is 0.
+    local turn_pitch_raw_bias is 0.
+    local turn_pitch_limit_active is false.
     if route["phase"] = "final" and route["high_energy_final_active"] {
         set route["high_energy_pitch_pid"]:setpoint to desired_vertical_speed.
         set high_energy_pid_output to route["high_energy_pitch_pid"]:update(time:seconds,ship:verticalspeed).
@@ -1025,12 +1275,29 @@ function terminal_route_fly {
         set route["pitch_saturated"] to pitch_saturated.
     } else {
         set pitch_bias to max(config_TR["pitch_bias_min"], min(config_TR["pitch_bias_max"], (desired_vertical_speed - ship:verticalspeed) * config_TR["pitch_bias_gain"])).
+        set turn_pitch_raw_bias to pitch_bias.
+        if route["phase"] <> "go_around" {
+            local turn_pitch_solution is terminal_turn_pitch_limit(
+                pitch_bias,turn_bank_command,roll_for(),turn_pitch_gs_altitude,
+                ship:altitude,config_TR).
+            set pitch_bias to turn_pitch_solution["command"].
+            set turn_pitch_limit_active to turn_pitch_solution["active"].
+        }
         set route["pitch_saturated"] to false.
         if route["preflare_pullup_active"] {
             flight_log_event("terminal_preflare_pullup","active=False|reason=left_final").
         }
         set route["preflare_pullup_active"] to false.
     }
+    if turn_pitch_limit_active <> route["turn_pitch_limit_active"] {
+        flight_log_event("terminal_turn_pitch_limit","active="+turn_pitch_limit_active+
+            "|phase="+route["phase"]+"|target_distance="+round(target_distance,1)+
+            "|glideslope_altitude="+round(turn_pitch_gs_altitude,1)+
+            "|altitude="+round(ship:altitude,1)+"|turn_bank="+round(turn_bank_command,1)+
+            "|actual_bank="+round(roll_for(),1)+"|raw_bias="+round(turn_pitch_raw_bias,2)+
+            "|command="+round(pitch_bias,2)).
+    }
+    set route["turn_pitch_limit_active"] to turn_pitch_limit_active.
     local target_aoa is config_TR["nominal_target_aoa"].
     local max_energy_aoa is config_TR["max_energy_aoa"].
     local descent_min_aoa is config_TR["descent_min_aoa"].
@@ -1086,6 +1353,20 @@ function terminal_route_fly {
             set target_aoa to max(descent_min_aoa, target_aoa + descent_error * config_TR["descent_aoa_gain"]).
         }
     }
+    if route["turn_model_valid"] {
+        set target_aoa to route["turn_model_aoa"].
+    } else if fast_turn_active {
+        set target_aoa to max(target_aoa,config_TR["fast_turn_target_aoa"]).
+    }
+    if fast_turn_active <> route["fast_turn_active"] {
+        flight_log_event("terminal_fast_turn","active="+fast_turn_active+
+            "|phase="+route["phase"]+"|target_distance="+round(target_distance,1)+
+            "|airspeed="+round(ship:airspeed,1)+"|glideslope_altitude="+
+            round(turn_pitch_gs_altitude,1)+"|altitude="+round(ship:altitude,1)+
+            "|bank="+round(turn_bank_command,1)+"|aoa="+round(target_aoa,1)+
+            "|energy_margin="+round(route["energy_margin"],1)).
+    }
+    set route["fast_turn_active"] to fast_turn_active.
     // Restore the original final handoff: aerostr takes over once the bearing
     // to the threshold matches the runway heading.  Do not add a cross-track
     // or actual-prograde gate here; aerostr is responsible for the small
@@ -1104,7 +1385,7 @@ function terminal_route_fly {
         set dap["str_mode"] to "aoa".
         
         set dap["aoa"]["target_aoa"] to target_aoa.
-        set dap["aoa"]["target_bank"] to terminal_route_bank_command(heading_to_target(target), config_TR).
+        set dap["aoa"]["target_bank"] to turn_bank_command.
 
     }else{
         set dap["str_mode"] to "aerostr".
@@ -1143,6 +1424,11 @@ function terminal_route_fly {
     set terminal_route_debug["preflare_pullup_active"] to preflare_pullup_active.
     set terminal_route_debug["preflare_pullup_fraction"] to preflare_pullup_fraction.
     set terminal_route_debug["pitch_bias"] to pitch_bias.
+    set terminal_route_debug["turn_pitch_limit_active"] to turn_pitch_limit_active.
+    set terminal_route_debug["turn_pitch_raw_bias"] to turn_pitch_raw_bias.
+    set terminal_route_debug["turn_pitch_gs_altitude"] to turn_pitch_gs_altitude.
+    set terminal_route_debug["turn_pitch_bank"] to turn_bank_command.
+    set terminal_route_debug["fast_turn_active"] to fast_turn_active.
     set terminal_route_debug["target_aoa"] to target_aoa.
     set terminal_route_debug["high_energy_final_active"] to route["high_energy_final_active"].
     set terminal_route_debug["high_energy_desired_vs"] to high_energy_solution["desired_vertical_speed"].

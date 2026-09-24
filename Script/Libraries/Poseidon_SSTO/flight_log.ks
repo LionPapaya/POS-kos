@@ -43,7 +43,8 @@ global POS_LOG_EVENT_FILE is "".
 // Version 19 adds high-energy TEAM final guidance telemetry.
 // Version 20 adds terminal route work, clean-loss learning and brake forecast.
 // Version 21 adds current-turn extra distance and brake-protected energy.
-global POS_LOG_SCHEMA_VERSION is 21.
+// Version 22 adds below-glide-slope turn pitch and fast-turn diagnostics.
+global POS_LOG_SCHEMA_VERSION is 23.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -129,18 +130,31 @@ function flight_log_rendezvous_columns {
 function flight_log_terminal_energy_header {
     return ",terminal_energy_capture,terminal_energy_drag_work,terminal_energy_turn_work,"+
         "terminal_energy_reserve,terminal_energy_clean_loss,terminal_energy_margin_rate,terminal_energy_brake_margin,"+
-        "terminal_energy_turn_extra_distance,terminal_energy_turn_reserve".
+        "terminal_energy_turn_extra_distance,terminal_energy_turn_reserve,"+
+        "terminal_turn_pitch_limit_active,terminal_turn_pitch_raw_bias,"+
+        "terminal_turn_pitch_gs_altitude,terminal_turn_pitch_bank,terminal_fast_turn_active,"+
+        "terminal_turn_model_mode,terminal_turn_model_rate,terminal_turn_model_radius,"+
+        "terminal_turn_model_loss,terminal_turn_model_required_radius".
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0,0,0".
+        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0".
     }
+    local turn_pitch_active is 0.
+    if terminal_route_debug["turn_pitch_limit_active"] { set turn_pitch_active to 1. }
+    local fast_turn_active is 0.
+    if terminal_route_debug["fast_turn_active"] { set fast_turn_active to 1. }
     return ","+terminal_route_debug["energy_capture"]+","+terminal_route_debug["energy_drag_work"]+","+
         terminal_route_debug["energy_turn_work"]+","+terminal_route_debug["energy_reserve"]+","+
         terminal_route_debug["energy_clean_loss"]+","+terminal_route_debug["energy_margin_rate"]+","+
         terminal_route_debug["energy_brake_margin"]+","+
-        terminal_route_debug["energy_turn_extra_distance"]+","+terminal_route_debug["energy_turn_reserve"].
+        terminal_route_debug["energy_turn_extra_distance"]+","+terminal_route_debug["energy_turn_reserve"]+","+
+        turn_pitch_active+","+terminal_route_debug["turn_pitch_raw_bias"]+","+
+        terminal_route_debug["turn_pitch_gs_altitude"]+","+terminal_route_debug["turn_pitch_bank"]+","+
+        fast_turn_active+","+terminal_route_debug["turn_model_mode"]+","+
+        terminal_route_debug["turn_model_rate"]+","+terminal_route_debug["turn_model_radius"]+","+
+        terminal_route_debug["turn_model_loss"]+","+terminal_route_debug["turn_model_required_radius"].
 }
 
 function flight_log_entry_predictive_header {
