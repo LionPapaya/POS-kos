@@ -237,10 +237,10 @@ function terminal_energy_turn_work {
 // The FAR grid is reduced offline to rate and drag per tonne. Only altitude
 // and speed are interpolated in flight; AoA/bank are nine discrete choices.
 function terminal_turn_environment {
-    parameter altitude, speed.
+    parameter altitude_, speed.
     local altitude_index is 0.
     until altitude_index >= TEAM_TURN_ALTITUDES:length-2 or
-          altitude <= TEAM_TURN_ALTITUDES[altitude_index+1] {
+          altitude_ <= TEAM_TURN_ALTITUDES[altitude_index+1] {
         set altitude_index to altitude_index+1.
     }
     local speed_index is 0.
@@ -249,7 +249,7 @@ function terminal_turn_environment {
         set speed_index to speed_index+1.
     }
     local altitude_fraction is max(0,min(1,
-        (altitude-TEAM_TURN_ALTITUDES[altitude_index])/
+        (altitude_-TEAM_TURN_ALTITUDES[altitude_index])/
         (TEAM_TURN_ALTITUDES[altitude_index+1]-TEAM_TURN_ALTITUDES[altitude_index]))).
     local speed_fraction is max(0,min(1,
         (speed-TEAM_TURN_SPEEDS[speed_index])/
