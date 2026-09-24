@@ -44,7 +44,7 @@ global POS_LOG_EVENT_FILE is "".
 // Version 20 adds terminal route work, clean-loss learning and brake forecast.
 // Version 21 adds current-turn extra distance and brake-protected energy.
 // Version 22 adds below-glide-slope turn pitch and fast-turn diagnostics.
-global POS_LOG_SCHEMA_VERSION is 23.
+global POS_LOG_SCHEMA_VERSION is 24.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -134,12 +134,14 @@ function flight_log_terminal_energy_header {
         "terminal_turn_pitch_limit_active,terminal_turn_pitch_raw_bias,"+
         "terminal_turn_pitch_gs_altitude,terminal_turn_pitch_bank,terminal_fast_turn_active,"+
         "terminal_turn_model_mode,terminal_turn_model_rate,terminal_turn_model_radius,"+
-        "terminal_turn_model_loss,terminal_turn_model_required_radius".
+        "terminal_turn_model_loss,terminal_turn_model_required_radius,"+
+        "terminal_turn_sample_age,terminal_turn_sample_altitude,"+
+        "terminal_turn_sample_speed,terminal_turn_sample_pending".
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0".
+        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1".
     }
     local turn_pitch_active is 0.
     if terminal_route_debug["turn_pitch_limit_active"] { set turn_pitch_active to 1. }
@@ -154,7 +156,9 @@ function flight_log_terminal_energy_columns {
         terminal_route_debug["turn_pitch_gs_altitude"]+","+terminal_route_debug["turn_pitch_bank"]+","+
         fast_turn_active+","+terminal_route_debug["turn_model_mode"]+","+
         terminal_route_debug["turn_model_rate"]+","+terminal_route_debug["turn_model_radius"]+","+
-        terminal_route_debug["turn_model_loss"]+","+terminal_route_debug["turn_model_required_radius"].
+        terminal_route_debug["turn_model_loss"]+","+terminal_route_debug["turn_model_required_radius"]+","+
+        terminal_route_debug["turn_sample_age"]+","+terminal_route_debug["turn_sample_altitude"]+","+
+        terminal_route_debug["turn_sample_speed"]+","+terminal_route_debug["turn_sample_pending"].
 }
 
 function flight_log_entry_predictive_header {

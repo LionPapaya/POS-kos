@@ -16,7 +16,6 @@ RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
 RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
-RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_turn_table.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_route.ks").
 
 parameter force_tgt is lex("force",false,"Location","","Runway","").

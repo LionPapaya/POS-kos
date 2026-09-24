@@ -39,6 +39,10 @@ global terminal_route_debug is lex(
     "turn_model_radius", 0,
     "turn_model_loss", 0,
     "turn_model_required_radius", 0,
+    "turn_sample_age", -1,
+    "turn_sample_altitude", 0,
+    "turn_sample_speed", 0,
+    "turn_sample_pending", 0,
     "target_aoa", 0,
     "high_energy_final_active", false,
     "high_energy_desired_vs", 0,
@@ -234,46 +238,26 @@ function terminal_energy_turn_work {
         tan(turn_bank)^2*radians_value.
 }
 
-// The FAR grid is reduced offline to rate and drag per tonne. Only altitude
-// and speed are interpolated in flight; AoA/bank are nine discrete choices.
-function terminal_turn_environment {
-    parameter turn_altitude, turn_speed.
-    local altitude_index is 0.
-    until altitude_index >= TEAM_TURN_ALTITUDES:length-2 or
-          turn_altitude <= TEAM_TURN_ALTITUDES[altitude_index+1] {
-        set altitude_index to altitude_index+1.
-    }
-    local speed_index is 0.
-    until speed_index >= TEAM_TURN_SPEEDS:length-2 or
-          turn_speed <= TEAM_TURN_SPEEDS[speed_index+1] {
-        set speed_index to speed_index+1.
-    }
-    local altitude_fraction is max(0,min(1,
-        (turn_altitude-TEAM_TURN_ALTITUDES[altitude_index])/
-        (TEAM_TURN_ALTITUDES[altitude_index+1]-TEAM_TURN_ALTITUDES[altitude_index]))).
-    local speed_fraction is max(0,min(1,
-        (turn_speed-TEAM_TURN_SPEEDS[speed_index])/
-        (TEAM_TURN_SPEEDS[speed_index+1]-TEAM_TURN_SPEEDS[speed_index]))).
-    return lex("altitude_index",altitude_index,"speed_index",speed_index,
-        "altitude_fraction",altitude_fraction,"speed_fraction",speed_fraction).
+// FAR evaluates the current craft at a synthetic relative-wind vector.
+// Match POS_Calibrate's left-handed basis and bank convention exactly.
+// Each result is stored per tonne so changing fuel mass needs no FAR refresh.
+function terminal_turn_force_metrics {
+    parameter far_force, vessel_right, vessel_top, vessel_forward,
+        sample_aoa, sample_bank, sample_speed, gravity_value.
+    local force_right is vdot(vessel_right,far_force).
+    local force_top is vdot(vessel_top,far_force).
+    local force_forward is vdot(vessel_forward,far_force).
+    local lateral_force is -(force_right*cos(sample_bank)+force_top*sin(sample_bank)).
+    local drag_force is -(force_forward*cos(sample_aoa)+
+        (-force_top*cos(sample_bank)+force_right*sin(sample_bank))*sin(sample_aoa)).
+    return lex("rate_mass",max(0,lateral_force)*constant:radTOdeg/max(sample_speed,1),
+        "loss_mass",max(0,drag_force)/gravity_value).
 }
 
 function terminal_turn_sample {
-    parameter environment, turn_mode_index, turn_mass, turn_speed.
-    local row_width is TEAM_TURN_SPEEDS:length.
-    local cell_index is environment["altitude_index"]*row_width+environment["speed_index"].
-    local altitude_fraction is environment["altitude_fraction"].
-    local speed_fraction is environment["speed_fraction"].
-    local rates is TEAM_TURN_RATE_MASS[turn_mode_index].
-    local losses is TEAM_TURN_LOSS_MASS[turn_mode_index].
-    local lower_rate is rates[cell_index]+(rates[cell_index+1]-rates[cell_index])*speed_fraction.
-    local upper_rate is rates[cell_index+row_width]+
-        (rates[cell_index+row_width+1]-rates[cell_index+row_width])*speed_fraction.
-    local lower_loss is losses[cell_index]+(losses[cell_index+1]-losses[cell_index])*speed_fraction.
-    local upper_loss is losses[cell_index+row_width]+
-        (losses[cell_index+row_width+1]-losses[cell_index+row_width])*speed_fraction.
-    local turn_rate_value is max(0,(lower_rate+(upper_rate-lower_rate)*altitude_fraction)/max(turn_mass,1)).
-    local turn_loss_value is max(0,(lower_loss+(upper_loss-lower_loss)*altitude_fraction)/max(turn_mass,1)).
+    parameter rate_masses, loss_masses, turn_mode_index, turn_mass, turn_speed.
+    local turn_rate_value is max(0,rate_masses[turn_mode_index]/max(turn_mass,1)).
+    local turn_loss_value is max(0,loss_masses[turn_mode_index]/max(turn_mass,1)).
     local turn_radius_value is min(999999999,max(turn_speed,1)*constant:radTOdeg/max(turn_rate_value,0.0001)).
     return lex("rate",turn_rate_value,"radius",turn_radius_value,"loss",turn_loss_value).
 }
@@ -283,7 +267,7 @@ function terminal_turn_sample {
 // bank and AoA take time to settle. Pick the lowest-drag feasible mode; if
 // none can turn tightly enough, use the mode with the smallest radius.
 function terminal_turn_choice {
-    parameter environment, turn_speed, turn_mass, target_distance, heading_error,
+    parameter rate_masses, loss_masses, turn_speed, turn_mass, target_distance, heading_error,
         prior_mode, energy_config.
     local angle is min(90,max(1,abs(heading_error))).
     local required_radius is target_distance/(2*sin(angle)) *
@@ -294,8 +278,8 @@ function terminal_turn_choice {
     local best_feasible is false.
     local prior_result is lex("rate",0,"radius",999999999,"loss",999999999).
     local turn_mode_index is 0.
-    until turn_mode_index >= TEAM_TURN_RATE_MASS:length {
-        local result is terminal_turn_sample(environment,turn_mode_index,turn_mass,turn_speed).
+    until turn_mode_index >= rate_masses:length {
+        local result is terminal_turn_sample(rate_masses,loss_masses,turn_mode_index,turn_mass,turn_speed).
         if turn_mode_index = prior_mode { set prior_result to result. }
         if result["rate"] > 0.01 {
             local feasible is result["radius"] <= required_radius.
@@ -327,10 +311,10 @@ function terminal_turn_choice {
         return lex("valid",false,"mode",-1,"aoa",0,"bank",0,
             "rate",0,"radius",999999999,"loss",0,"required_radius",required_radius).
     }
-    local chosen is terminal_turn_sample(environment,best_mode,turn_mass,turn_speed).
+    local chosen is terminal_turn_sample(rate_masses,loss_masses,best_mode,turn_mass,turn_speed).
     return lex("valid",true,"mode",best_mode,
-        "aoa",TEAM_TURN_AOAS[floor(best_mode/TEAM_TURN_BANKS:length)],
-        "bank",TEAM_TURN_BANKS[mod(best_mode,TEAM_TURN_BANKS:length)],
+        "aoa",12+4*floor(best_mode/3),
+        "bank",30+15*mod(best_mode,3),
         "rate",chosen["rate"],"radius",chosen["radius"],
         "loss",chosen["loss"],"required_radius",required_radius).
 }
@@ -721,6 +705,27 @@ function terminal_route_init {
         "turn_model_radius", 0,
         "turn_model_loss", 0,
         "turn_model_required_radius", 0,
+        "turn_choice_time", -100,
+        "turn_choice_distance", 0,
+        "turn_choice_heading_error", 0,
+        "turn_choice_sample_time", -100,
+        "turn_force_rates", list(),
+        "turn_force_losses", list(),
+        "turn_force_valid", false,
+        "turn_force_time", -100,
+        "turn_force_altitude", 0,
+        "turn_force_speed", 0,
+        "turn_force_brakes", brakes,
+        "turn_force_gear", gear,
+        "turn_force_config_change_time", -100,
+        "turn_force_pending_rates", list(),
+        "turn_force_pending_losses", list(),
+        "turn_force_pending_index", -1,
+        "turn_force_pending_time", -100,
+        "turn_force_pending_altitude", 0,
+        "turn_force_pending_speed", 0,
+        "turn_force_calls_time", -1,
+        "turn_force_calls_count", 0,
         "preflare_pullup_active", false,
         "energy_margin", 0,
         "clean_energy_loss", config_TR["EnergyPlan"]["initial_clean_loss"],
@@ -796,9 +801,104 @@ function terminal_route_current_target {
     return get_geoposition_along_heading(runway_start, runway_heading + 180, lead_distance).
 }
 
-function terminal_route_choose_turn {
-    parameter route, turn_target, target_distance.
-    local prior_mode is route["turn_model_mode"].
+// Refresh three of the nine candidates per guidance update. A complete set
+// uses one altitude/speed/configuration; the previous set remains available
+// during routine refreshes. No trajectory integration is involved.
+function terminal_route_refresh_turn_forces {
+    parameter route, energy_config.
+    if not addons:available("FAR") {
+        set route["turn_force_valid"] to false.
+        set route["turn_force_pending_index"] to -1.
+        return.
+    }
+    if not addons:far:hassuffix("AEROFORCEAT") {
+        set route["turn_force_valid"] to false.
+        set route["turn_force_pending_index"] to -1.
+        return.
+    }
+    if brakes <> route["turn_force_brakes"] or gear <> route["turn_force_gear"] {
+        set route["turn_force_brakes"] to brakes.
+        set route["turn_force_gear"] to gear.
+        set route["turn_force_config_change_time"] to time:seconds.
+        set route["turn_force_pending_index"] to -1.
+        set route["turn_force_valid"] to false.
+    }
+    // Let FAR settle after an airbrake or gear animation starts.
+    if time:seconds-route["turn_force_config_change_time"] <
+       energy_config["turn_model_config_settle_time"] { return. }
+    local altitude_drift is abs(ship:altitude-route["turn_force_altitude"]).
+    local speed_drift is abs(ship:airspeed-route["turn_force_speed"]).
+    if route["turn_force_pending_index"] >= 0 and (
+       time:seconds-route["turn_force_pending_time"] > 1 or
+       abs(ship:altitude-route["turn_force_pending_altitude"]) >
+           energy_config["turn_model_refresh_altitude"] or
+       abs(ship:airspeed-route["turn_force_pending_speed"]) >
+           energy_config["turn_model_refresh_speed"]) {
+        set route["turn_force_pending_index"] to -1.
+    }
+    if route["turn_force_valid"] and (
+       altitude_drift > 2*energy_config["turn_model_refresh_altitude"] or
+       speed_drift > 2*energy_config["turn_model_refresh_speed"] or
+       time:seconds-route["turn_force_time"] > 2*energy_config["turn_model_refresh_time"]) {
+        set route["turn_force_valid"] to false.
+    }
+    if route["turn_force_pending_index"] < 0 and (
+       not route["turn_force_valid"] or
+       altitude_drift > energy_config["turn_model_refresh_altitude"] or
+       speed_drift > energy_config["turn_model_refresh_speed"] or
+       time:seconds-route["turn_force_time"] >= energy_config["turn_model_refresh_time"]) {
+        set route["turn_force_pending_index"] to 0.
+        set route["turn_force_pending_time"] to time:seconds.
+        set route["turn_force_pending_rates"] to list().
+        set route["turn_force_pending_losses"] to list().
+        set route["turn_force_pending_altitude"] to ship:altitude.
+        set route["turn_force_pending_speed"] to ship:airspeed.
+    }
+    if route["turn_force_pending_index"] < 0 { return. }
+    if route["turn_force_calls_time"] <> time:seconds {
+        set route["turn_force_calls_time"] to time:seconds.
+        set route["turn_force_calls_count"] to 0.
+    }
+    local vessel_forward is ship:facing:forevector:normalized.
+    local vessel_top is ship:facing:topvector:normalized.
+    local vessel_right is vcrs(vessel_top,vessel_forward):normalized.
+    local pitch_axis is vcrs(vessel_right,vessel_forward):normalized.
+    local gravity_value is ship:body:mu/(ship:body:radius^2).
+    until route["turn_force_calls_count"] >= energy_config["turn_model_far_calls_per_update"] or
+          route["turn_force_pending_index"] >= 9 {
+        local mode_index is route["turn_force_pending_index"].
+        local sample_aoa is 12+4*floor(mode_index/3).
+        local sample_bank is 30+15*mod(mode_index,3).
+        local bank_axis is pitch_axis*cos(sample_bank)+vessel_right*sin(sample_bank).
+        local sample_velocity is route["turn_force_pending_speed"]*(
+            vessel_forward*cos(sample_aoa)+bank_axis*sin(sample_aoa)).
+        local far_force is addons:far:aeroforceat(route["turn_force_pending_altitude"],sample_velocity).
+        local metrics is terminal_turn_force_metrics(far_force,vessel_right,vessel_top,
+            vessel_forward,sample_aoa,sample_bank,route["turn_force_pending_speed"],gravity_value).
+        route["turn_force_pending_rates"]:add(metrics["rate_mass"]).
+        route["turn_force_pending_losses"]:add(metrics["loss_mass"]).
+        set route["turn_force_pending_index"] to mode_index+1.
+        set route["turn_force_calls_count"] to route["turn_force_calls_count"]+1.
+    }
+    if route["turn_force_pending_index"] >= 9 {
+        local first_valid is not route["turn_force_valid"].
+        set route["turn_force_rates"] to route["turn_force_pending_rates"].
+        set route["turn_force_losses"] to route["turn_force_pending_losses"].
+        set route["turn_force_altitude"] to route["turn_force_pending_altitude"].
+        set route["turn_force_speed"] to route["turn_force_pending_speed"].
+        set route["turn_force_valid"] to true.
+        set route["turn_force_time"] to time:seconds.
+        set route["turn_force_pending_index"] to -1.
+        if first_valid {
+            flight_log_event("terminal_turn_far_sample","valid=true|altitude="+
+                round(route["turn_force_altitude"],1)+"|airspeed="+
+                round(route["turn_force_speed"],1)).
+        }
+    }
+}
+
+function terminal_route_clear_turn_model {
+    parameter route.
     set route["turn_model_valid"] to false.
     set route["turn_model_mode"] to -1.
     set route["turn_model_aoa"] to 0.
@@ -807,10 +907,16 @@ function terminal_route_choose_turn {
     set route["turn_model_radius"] to 0.
     set route["turn_model_loss"] to 0.
     set route["turn_model_required_radius"] to 0.
+}
+
+function terminal_route_choose_turn {
+    parameter route, turn_target, target_distance.
+    local prior_mode is route["turn_model_mode"].
     if route["phase"] = "final" or route["phase"] = "go_around" or
-       ship:altitude < 7000 or ship:altitude >= 70000 or
-       ship:airspeed < 100 or ship:airspeed > 1500 or
-       ship:body:name <> "Kerbin" {
+       ship:altitude < 7000 or not ship:body:atm:exists or
+       ship:altitude >= ship:body:atm:height or
+       ship:airspeed < 100 {
+        terminal_route_clear_turn_model(route).
         if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=outside_envelope"). }
         return.
     }
@@ -818,12 +924,38 @@ function terminal_route_choose_turn {
         heading_between(ship:geoposition,turn_target),compass_for_prograde()).
     local nominal_bank is terminal_route_bank_command(heading_to_target(turn_target),AVES["TerminalRoute"]).
     if abs(nominal_bank) < AVES["TerminalRoute"]["EnergyPlan"]["turn_model_min_bank"] {
+        terminal_route_clear_turn_model(route).
         if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=small_turn"). }
         return.
     }
-    local environment is terminal_turn_environment(ship:altitude,ship:airspeed).
-    local choice is terminal_turn_choice(environment,ship:airspeed,ship:mass,
+    terminal_route_refresh_turn_forces(route,AVES["TerminalRoute"]["EnergyPlan"]).
+    if not route["turn_force_valid"] {
+        terminal_route_clear_turn_model(route).
+        if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=far_sample_pending"). }
+        return.
+    }
+    if route["turn_model_valid"] and route["turn_force_time"] = route["turn_choice_sample_time"] and
+       time:seconds-route["turn_choice_time"] < 0.5 and
+       abs(target_distance-route["turn_choice_distance"]) < 250 and
+       abs(heading_error-route["turn_choice_heading_error"]) < 3 {
+        local cached is terminal_turn_sample(route["turn_force_rates"],route["turn_force_losses"],
+            prior_mode,ship:mass,ship:airspeed).
+        set route["turn_model_rate"] to cached["rate"].
+        set route["turn_model_radius"] to cached["radius"].
+        set route["turn_model_loss"] to cached["loss"].
+        set route["turn_model_required_radius"] to target_distance/
+            (2*sin(min(90,max(1,abs(heading_error))))) *
+            AVES["TerminalRoute"]["EnergyPlan"]["turn_radius_safety_fraction"].
+        return.
+    }
+    local choice is terminal_turn_choice(route["turn_force_rates"],route["turn_force_losses"],
+        ship:airspeed,ship:mass,
         target_distance,heading_error,prior_mode,AVES["TerminalRoute"]["EnergyPlan"]).
+    terminal_route_clear_turn_model(route).
+    set route["turn_choice_time"] to time:seconds.
+    set route["turn_choice_distance"] to target_distance.
+    set route["turn_choice_heading_error"] to heading_error.
+    set route["turn_choice_sample_time"] to route["turn_force_time"].
     if choice["valid"] {
         set route["turn_model_valid"] to true.
         set route["turn_model_mode"] to choice["mode"].
@@ -1054,6 +1186,13 @@ function terminal_route_update {
     set terminal_route_debug["turn_model_radius"] to route["turn_model_radius"].
     set terminal_route_debug["turn_model_loss"] to route["turn_model_loss"].
     set terminal_route_debug["turn_model_required_radius"] to route["turn_model_required_radius"].
+    set terminal_route_debug["turn_sample_age"] to -1.
+    if route["turn_force_valid"] {
+        set terminal_route_debug["turn_sample_age"] to time:seconds-route["turn_force_time"].
+    }
+    set terminal_route_debug["turn_sample_altitude"] to route["turn_force_altitude"].
+    set terminal_route_debug["turn_sample_speed"] to route["turn_force_speed"].
+    set terminal_route_debug["turn_sample_pending"] to route["turn_force_pending_index"].
     local landing_gate is config_TR["LandingGate"].
     // Final/preflare use speed hysteresis; early descent retains energy control.
     // Use the same activation/reference as this update's energy calculation.

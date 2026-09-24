@@ -554,6 +554,9 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "turn_reserve_deadband",12,"turn_reserve_max_distance",20000,
         "turn_model_min_bank",30,"turn_radius_safety_fraction",0.6,
         "turn_model_max_arc_distance",100000,"turn_model_max_work",4000,
+        "turn_model_refresh_time",2,"turn_model_refresh_altitude",500,
+        "turn_model_refresh_speed",50,"turn_model_far_calls_per_update",3,
+        "turn_model_config_settle_time",2,
         "brake_lookahead",6,"brake_release_margin",50
     ),
     "minimum_speed",112,
