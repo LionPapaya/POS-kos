@@ -237,45 +237,45 @@ function terminal_energy_turn_work {
 // The FAR grid is reduced offline to rate and drag per tonne. Only altitude
 // and speed are interpolated in flight; AoA/bank are nine discrete choices.
 function terminal_turn_environment {
-    parameter altitude_, speed.
+    parameter turn_altitude, turn_speed.
     local altitude_index is 0.
     until altitude_index >= TEAM_TURN_ALTITUDES:length-2 or
-          altitude_ <= TEAM_TURN_ALTITUDES[altitude_index+1] {
+          turn_altitude <= TEAM_TURN_ALTITUDES[altitude_index+1] {
         set altitude_index to altitude_index+1.
     }
     local speed_index is 0.
     until speed_index >= TEAM_TURN_SPEEDS:length-2 or
-          speed <= TEAM_TURN_SPEEDS[speed_index+1] {
+          turn_speed <= TEAM_TURN_SPEEDS[speed_index+1] {
         set speed_index to speed_index+1.
     }
     local altitude_fraction is max(0,min(1,
-        (altitude_-TEAM_TURN_ALTITUDES[altitude_index])/
+        (turn_altitude-TEAM_TURN_ALTITUDES[altitude_index])/
         (TEAM_TURN_ALTITUDES[altitude_index+1]-TEAM_TURN_ALTITUDES[altitude_index]))).
     local speed_fraction is max(0,min(1,
-        (speed-TEAM_TURN_SPEEDS[speed_index])/
+        (turn_speed-TEAM_TURN_SPEEDS[speed_index])/
         (TEAM_TURN_SPEEDS[speed_index+1]-TEAM_TURN_SPEEDS[speed_index]))).
     return lex("altitude_index",altitude_index,"speed_index",speed_index,
         "altitude_fraction",altitude_fraction,"speed_fraction",speed_fraction).
 }
 
 function terminal_turn_sample {
-    parameter environment, mode, mass, speed.
+    parameter environment, turn_mode_index, turn_mass, turn_speed.
     local row_width is TEAM_TURN_SPEEDS:length.
-    local index is environment["altitude_index"]*row_width+environment["speed_index"].
+    local cell_index is environment["altitude_index"]*row_width+environment["speed_index"].
     local altitude_fraction is environment["altitude_fraction"].
     local speed_fraction is environment["speed_fraction"].
-    local rates is TEAM_TURN_RATE_MASS[mode].
-    local losses is TEAM_TURN_LOSS_MASS[mode].
-    local lower_rate is rates[index]+(rates[index+1]-rates[index])*speed_fraction.
-    local upper_rate is rates[index+row_width]+
-        (rates[index+row_width+1]-rates[index+row_width])*speed_fraction.
-    local lower_loss is losses[index]+(losses[index+1]-losses[index])*speed_fraction.
-    local upper_loss is losses[index+row_width]+
-        (losses[index+row_width+1]-losses[index+row_width])*speed_fraction.
-    local rate is max(0,(lower_rate+(upper_rate-lower_rate)*altitude_fraction)/max(mass,1)).
-    local loss is max(0,(lower_loss+(upper_loss-lower_loss)*altitude_fraction)/max(mass,1)).
-    local radius is min(999999999,max(speed,1)*constant:radTOdeg/max(rate,0.0001)).
-    return lex("rate",rate,"radius",radius,"loss",loss).
+    local rates is TEAM_TURN_RATE_MASS[turn_mode_index].
+    local losses is TEAM_TURN_LOSS_MASS[turn_mode_index].
+    local lower_rate is rates[cell_index]+(rates[cell_index+1]-rates[cell_index])*speed_fraction.
+    local upper_rate is rates[cell_index+row_width]+
+        (rates[cell_index+row_width+1]-rates[cell_index+row_width])*speed_fraction.
+    local lower_loss is losses[cell_index]+(losses[cell_index+1]-losses[cell_index])*speed_fraction.
+    local upper_loss is losses[cell_index+row_width]+
+        (losses[cell_index+row_width+1]-losses[cell_index+row_width])*speed_fraction.
+    local turn_rate_value is max(0,(lower_rate+(upper_rate-lower_rate)*altitude_fraction)/max(turn_mass,1)).
+    local turn_loss_value is max(0,(lower_loss+(upper_loss-lower_loss)*altitude_fraction)/max(turn_mass,1)).
+    local turn_radius_value is min(999999999,max(turn_speed,1)*constant:radTOdeg/max(turn_rate_value,0.0001)).
+    return lex("rate",turn_rate_value,"radius",turn_radius_value,"loss",turn_loss_value).
 }
 
 // A constant-radius turn reaches a target at range d and bearing error e
@@ -283,7 +283,7 @@ function terminal_turn_sample {
 // bank and AoA take time to settle. Pick the lowest-drag feasible mode; if
 // none can turn tightly enough, use the mode with the smallest radius.
 function terminal_turn_choice {
-    parameter environment, speed, mass, target_distance, heading_error,
+    parameter environment, turn_speed, turn_mass, target_distance, heading_error,
         prior_mode, energy_config.
     local angle is min(90,max(1,abs(heading_error))).
     local required_radius is target_distance/(2*sin(angle)) *
@@ -293,26 +293,26 @@ function terminal_turn_choice {
     local best_radius is 999999999.
     local best_feasible is false.
     local prior_result is lex("rate",0,"radius",999999999,"loss",999999999).
-    local mode is 0.
-    until mode >= TEAM_TURN_RATE_MASS:length {
-        local result is terminal_turn_sample(environment,mode,mass,speed).
-        if mode = prior_mode { set prior_result to result. }
+    local turn_mode_index is 0.
+    until turn_mode_index >= TEAM_TURN_RATE_MASS:length {
+        local result is terminal_turn_sample(environment,turn_mode_index,turn_mass,turn_speed).
+        if turn_mode_index = prior_mode { set prior_result to result. }
         if result["rate"] > 0.01 {
             local feasible is result["radius"] <= required_radius.
             local cost is result["loss"]+
                 0.03*max(0,1-result["radius"]/max(required_radius,1)).
             if feasible and (not best_feasible or cost < best_cost) {
-                set best_mode to mode.
+                set best_mode to turn_mode_index.
                 set best_cost to cost.
                 set best_radius to result["radius"].
                 set best_feasible to true.
             } else if not best_feasible and result["radius"] < best_radius {
-                set best_mode to mode.
+                set best_mode to turn_mode_index.
                 set best_cost to cost.
                 set best_radius to result["radius"].
             }
         }
-        set mode to mode+1.
+        set turn_mode_index to turn_mode_index+1.
     }
     // Avoid switching between adjacent AoA/bank modes on small sample noise.
     if prior_mode >= 0 and prior_result["rate"] > 0.01 {
@@ -327,7 +327,7 @@ function terminal_turn_choice {
         return lex("valid",false,"mode",-1,"aoa",0,"bank",0,
             "rate",0,"radius",999999999,"loss",0,"required_radius",required_radius).
     }
-    local chosen is terminal_turn_sample(environment,best_mode,mass,speed).
+    local chosen is terminal_turn_sample(environment,best_mode,turn_mass,turn_speed).
     return lex("valid",true,"mode",best_mode,
         "aoa",TEAM_TURN_AOAS[floor(best_mode/TEAM_TURN_BANKS:length)],
         "bank",TEAM_TURN_BANKS[mod(best_mode,TEAM_TURN_BANKS:length)],
@@ -336,11 +336,11 @@ function terminal_turn_choice {
 }
 
 function terminal_aero_turn_work {
-    parameter heading_change, speed, turn_rate, turn_loss, clean_loss,
+    parameter heading_change, turn_speed, turn_rate, turn_loss, clean_loss,
         energy_config.
     if turn_rate <= 0 { return 0. }
     local arc_distance is min(energy_config["turn_model_max_arc_distance"],
-        speed*min(180,abs(heading_change))/turn_rate).
+        turn_speed*min(180,abs(heading_change))/turn_rate).
     return min(energy_config["turn_model_max_work"],
         max(0,turn_loss-clean_loss)*arc_distance).
 }
@@ -359,15 +359,15 @@ function terminal_energy_current_turn {
     }
     local bank_angle is max(energy_config["planning_bank"],abs(measured_bank)).
     set bank_angle to min(60,bank_angle).
-    local radius is measured_speed^2/(gravity_value*tan(bank_angle)).
-    if calibrated_radius > 0 { set radius to calibrated_radius. }
+    local turn_radius_value is measured_speed^2/(gravity_value*tan(bank_angle)).
+    if calibrated_radius > 0 { set turn_radius_value to calibrated_radius. }
     local radians_value is turn_angle*constant:degtorad.
     // Rotate the local frame toward the target. Target is initially at
     // (distance*sin(angle), distance*cos(angle)); the arc ends at
     // (radius*(1-cos(angle)), radius*sin(angle)).
-    local remaining_x is target_distance*sin(turn_angle)-radius*(1-cos(turn_angle)).
-    local remaining_y is target_distance*cos(turn_angle)-radius*sin(turn_angle).
-    local arc_distance is radius*radians_value.
+    local remaining_x is target_distance*sin(turn_angle)-turn_radius_value*(1-cos(turn_angle)).
+    local remaining_y is target_distance*cos(turn_angle)-turn_radius_value*sin(turn_angle).
+    local arc_distance is turn_radius_value*radians_value.
     local extra_distance is max(0,arc_distance+sqrt(remaining_x^2+remaining_y^2)-target_distance).
     set extra_distance to min(extra_distance,energy_config["turn_reserve_max_distance"]).
     return lex("extra_distance",extra_distance,"reserve",extra_distance*clean_loss).
@@ -797,7 +797,7 @@ function terminal_route_current_target {
 }
 
 function terminal_route_choose_turn {
-    parameter route, target, target_distance.
+    parameter route, turn_target, target_distance.
     local prior_mode is route["turn_model_mode"].
     set route["turn_model_valid"] to false.
     set route["turn_model_mode"] to -1.
@@ -815,8 +815,8 @@ function terminal_route_choose_turn {
         return.
     }
     local heading_error is normalized_heading_error(
-        heading_between(ship:geoposition,target),compass_for_prograde()).
-    local nominal_bank is terminal_route_bank_command(heading_to_target(target),AVES["TerminalRoute"]).
+        heading_between(ship:geoposition,turn_target),compass_for_prograde()).
+    local nominal_bank is terminal_route_bank_command(heading_to_target(turn_target),AVES["TerminalRoute"]).
     if abs(nominal_bank) < AVES["TerminalRoute"]["EnergyPlan"]["turn_model_min_bank"] {
         if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=small_turn"). }
         return.
@@ -845,8 +845,8 @@ function terminal_route_choose_turn {
 
 function terminal_route_remaining_distance {
     parameter route.
-    local target is terminal_route_current_target(route).
-    local distance is calcdistance_m(ship:geoposition, target).
+    local route_target is terminal_route_current_target(route).
+    local distance is calcdistance_m(ship:geoposition, route_target).
     local final_distance is calcdistance_m(route["final_fix"], runway_start).
     local base_distance is calcdistance_m(route["base_fix"], route["final_fix"]).
     local downwind_distance is calcdistance_m(route["downwind_fix"], route["base_fix"]).
@@ -884,9 +884,9 @@ function terminal_route_update {
     terminal_route_measure_energy(route).
     local energy_phase is route["phase"].
     local energy_hold_index is route["hold_index"].
-    local target is terminal_route_current_target(route).
-    local target_distance is calcdistance_m(ship:geoposition, target).
-    terminal_route_choose_turn(route,target,target_distance).
+    local route_target is terminal_route_current_target(route).
+    local target_distance is calcdistance_m(ship:geoposition, route_target).
+    terminal_route_choose_turn(route,route_target,target_distance).
     local remaining_distance is terminal_route_remaining_distance(route).
     local profile is calculate_glideslope_profile(remaining_distance).
     local profile_altitude is profile["altitude"].
@@ -1003,9 +1003,9 @@ function terminal_route_update {
     // Phase changes alter the route immediately; do not command brakes or
     // thrust using the discarded leg's energy budget for one more update.
     if route["phase"] <> energy_phase or route["hold_index"] <> energy_hold_index {
-        set target to terminal_route_current_target(route).
-        set target_distance to calcdistance_m(ship:geoposition,target).
-        terminal_route_choose_turn(route,target,target_distance).
+        set route_target to terminal_route_current_target(route).
+        set target_distance to calcdistance_m(ship:geoposition,route_target).
+        terminal_route_choose_turn(route,route_target,target_distance).
         set remaining_distance to terminal_route_remaining_distance(route).
         set route["remaining_distance"] to remaining_distance.
         set speed_active to terminal_speed_control_active(route["phase"],remaining_distance,config_TR["ApproachSpeed"]).
@@ -1035,7 +1035,7 @@ function terminal_route_update {
         local calibrated_radius is -1.
         if route["turn_model_valid"] { set calibrated_radius to route["turn_model_radius"]. }
         set current_turn to terminal_energy_current_turn(target_distance,
-            normalized_heading_error(heading_between(ship:geoposition,target),compass_for_prograde()),
+            normalized_heading_error(heading_between(ship:geoposition,route_target),compass_for_prograde()),
             ship:airspeed,roll_for(),ship:body:mu/(ship:body:radius^2),
             route["clean_energy_loss"],energy_config,calibrated_radius).
         set route["brake_energy_margin"] to route["brake_energy_margin"]-current_turn["reserve"].
@@ -1124,9 +1124,9 @@ function terminal_route_update {
 function terminal_route_fly {
     parameter route.
     local config_TR is AVES["TerminalRoute"].
-    local target is terminal_route_current_target(route).
-    local target_distance is calcdistance_m(ship:geoposition,target).
-    local turn_bank_command is terminal_route_bank_command(heading_to_target(target),config_TR).
+    local route_target is terminal_route_current_target(route).
+    local target_distance is calcdistance_m(ship:geoposition,route_target).
+    local turn_bank_command is terminal_route_bank_command(heading_to_target(route_target),config_TR).
     local turn_pitch_gs_altitude is 0.
     local fast_turn_active is false.
     if route["phase"] <> "final" and route["phase"] <> "go_around" {
@@ -1389,7 +1389,7 @@ function terminal_route_fly {
 
     }else{
         set dap["str_mode"] to "aerostr".
-        local desired_heading is heading_to_target(target).
+        local desired_heading is heading_to_target(route_target).
         local hed_error is normalized_heading_error(desired_heading,compass_for_prograde()).
         set dap["aerostr"]["turn_heading"] to desired_heading + hed_error * config_TR["final_heading_correction"].
         //if dap["aerostr"]["turn_heading"] > compass_for_prograde() + 2{
@@ -1442,7 +1442,7 @@ function terminal_route_fly {
     // before each redraw guarantees one current marker at the target altitude.
     if terminal_route_target_arrow_enabled {
         clearVecDraws().
-        pos_arrow(target,"TR " + route["phase"],route["target_altitude"],0.1).
+        pos_arrow(route_target,"TR " + route["phase"],route["target_altitude"],0.1).
         set terminal_route_target_arrow_active to true.
     } else if terminal_route_target_arrow_active {
         clearVecDraws().
