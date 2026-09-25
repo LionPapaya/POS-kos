@@ -250,8 +250,29 @@ function terminal_turn_force_metrics {
     local lateral_force is -(force_right*cos(sample_bank)+force_top*sin(sample_bank)).
     local drag_force is -(force_forward*cos(sample_aoa)+
         (-force_top*cos(sample_bank)+force_right*sin(sample_bank))*sin(sample_aoa)).
-    return lex("rate_mass",max(0,lateral_force)*constant:radTOdeg/max(sample_speed,1),
+    local signed_rate_mass is lateral_force*constant:radTOdeg/max(sample_speed,1).
+    return lex("signed_rate_mass",signed_rate_mass,
+        "rate_mass",max(0,signed_rate_mass),
         "loss_mass",max(0,drag_force)/gravity_value).
+}
+
+// This string is assembled only for an event, never for the turn planner.
+// Mode order is AoA 12/16/20 degrees, with bank 30/45/60 in each group.
+function terminal_turn_sample_detail {
+    parameter route.
+    local signed_rates is "".
+    local loss_masses is "".
+    local mode_index is 0.
+    until mode_index >= route["turn_force_signed_rates"]:length {
+        if mode_index > 0 {
+            set signed_rates to signed_rates+"/".
+            set loss_masses to loss_masses+"/".
+        }
+        set signed_rates to signed_rates+round(route["turn_force_signed_rates"][mode_index],2).
+        set loss_masses to loss_masses+round(route["turn_force_losses"][mode_index],2).
+        set mode_index to mode_index+1.
+    }
+    return "signed_rate_mass="+signed_rates+"|loss_mass="+loss_masses.
 }
 
 function terminal_turn_sample {
@@ -710,6 +731,7 @@ function terminal_route_init {
         "turn_choice_heading_error", 0,
         "turn_choice_sample_time", -100,
         "turn_force_rates", list(),
+        "turn_force_signed_rates", list(),
         "turn_force_losses", list(),
         "turn_force_valid", false,
         "turn_force_time", -100,
@@ -719,6 +741,7 @@ function terminal_route_init {
         "turn_force_gear", gear,
         "turn_force_config_change_time", -100,
         "turn_force_pending_rates", list(),
+        "turn_force_pending_signed_rates", list(),
         "turn_force_pending_losses", list(),
         "turn_force_pending_index", -1,
         "turn_force_pending_time", -100,
@@ -726,6 +749,8 @@ function terminal_route_init {
         "turn_force_pending_speed", 0,
         "turn_force_calls_time", -1,
         "turn_force_calls_count", 0,
+        "turn_diagnostic_reason", "",
+        "turn_diagnostic_time", -100,
         "preflare_pullup_active", false,
         "energy_margin", 0,
         "clean_energy_loss", config_TR["EnergyPlan"]["initial_clean_loss"],
@@ -850,6 +875,7 @@ function terminal_route_refresh_turn_forces {
         set route["turn_force_pending_index"] to 0.
         set route["turn_force_pending_time"] to time:seconds.
         set route["turn_force_pending_rates"] to list().
+        set route["turn_force_pending_signed_rates"] to list().
         set route["turn_force_pending_losses"] to list().
         set route["turn_force_pending_altitude"] to ship:altitude.
         set route["turn_force_pending_speed"] to ship:airspeed.
@@ -876,6 +902,7 @@ function terminal_route_refresh_turn_forces {
         local metrics is terminal_turn_force_metrics(far_force,vessel_right,vessel_top,
             vessel_forward,sample_aoa,sample_bank,route["turn_force_pending_speed"],gravity_value).
         route["turn_force_pending_rates"]:add(metrics["rate_mass"]).
+        route["turn_force_pending_signed_rates"]:add(metrics["signed_rate_mass"]).
         route["turn_force_pending_losses"]:add(metrics["loss_mass"]).
         set route["turn_force_pending_index"] to mode_index+1.
         set route["turn_force_calls_count"] to route["turn_force_calls_count"]+1.
@@ -883,6 +910,7 @@ function terminal_route_refresh_turn_forces {
     if route["turn_force_pending_index"] >= 9 {
         local first_valid is not route["turn_force_valid"].
         set route["turn_force_rates"] to route["turn_force_pending_rates"].
+        set route["turn_force_signed_rates"] to route["turn_force_pending_signed_rates"].
         set route["turn_force_losses"] to route["turn_force_pending_losses"].
         set route["turn_force_altitude"] to route["turn_force_pending_altitude"].
         set route["turn_force_speed"] to route["turn_force_pending_speed"].
@@ -892,7 +920,8 @@ function terminal_route_refresh_turn_forces {
         if first_valid {
             flight_log_event("terminal_turn_far_sample","valid=true|altitude="+
                 round(route["turn_force_altitude"],1)+"|airspeed="+
-                round(route["turn_force_speed"],1)).
+                round(route["turn_force_speed"],1)+"|brakes="+brakes+
+                "|gear="+gear+"|"+terminal_turn_sample_detail(route)).
         }
     }
 }
@@ -907,6 +936,31 @@ function terminal_route_clear_turn_model {
     set route["turn_model_radius"] to 0.
     set route["turn_model_loss"] to 0.
     set route["turn_model_required_radius"] to 0.
+}
+
+// Report the first rejection and then at most once every 15 seconds while
+// the same reason persists. The full signed sample is included only when
+// a completed FAR set still produces no usable turn mode.
+function terminal_route_log_turn_rejection {
+    parameter route, reason, nominal_bank, heading_error, target_distance.
+    if reason = route["turn_diagnostic_reason"] and
+       time:seconds-route["turn_diagnostic_time"] < 15 { return. }
+    set route["turn_diagnostic_reason"] to reason.
+    set route["turn_diagnostic_time"] to time:seconds.
+    local detail is "reason="+reason+"|phase="+route["phase"]+
+        "|altitude="+round(ship:altitude,1)+"|airspeed="+round(ship:airspeed,1)+
+        "|mass="+round(ship:mass,2)+"|distance="+round(target_distance,1)+
+        "|heading_error="+round(heading_error,1)+"|nominal_bank="+round(nominal_bank,1)+
+        "|sample_valid="+route["turn_force_valid"]+
+        "|sample_age="+round(time:seconds-route["turn_force_time"],1)+
+        "|pending="+route["turn_force_pending_index"]+
+        "|brakes="+brakes+"|gear="+gear.
+    if reason = "no_usable_rate" {
+        set detail to detail+"|sample_altitude="+round(route["turn_force_altitude"],1)+
+            "|sample_speed="+round(route["turn_force_speed"],1)+
+            "|"+terminal_turn_sample_detail(route).
+    }
+    flight_log_event("terminal_turn_reject",detail).
 }
 
 function terminal_route_choose_turn {
@@ -924,12 +978,14 @@ function terminal_route_choose_turn {
         heading_between(ship:geoposition,turn_target),compass_for_prograde()).
     local nominal_bank is terminal_route_bank_command(heading_to_target(turn_target),AVES["TerminalRoute"]).
     if abs(nominal_bank) < AVES["TerminalRoute"]["EnergyPlan"]["turn_model_min_bank"] {
+        terminal_route_log_turn_rejection(route,"small_turn",nominal_bank,heading_error,target_distance).
         terminal_route_clear_turn_model(route).
         if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=small_turn"). }
         return.
     }
     terminal_route_refresh_turn_forces(route,AVES["TerminalRoute"]["EnergyPlan"]).
     if not route["turn_force_valid"] {
+        terminal_route_log_turn_rejection(route,"far_sample_pending",nominal_bank,heading_error,target_distance).
         terminal_route_clear_turn_model(route).
         if prior_mode >= 0 { flight_log_event("terminal_turn_model","mode=-1|reason=far_sample_pending"). }
         return.
@@ -957,6 +1013,7 @@ function terminal_route_choose_turn {
     set route["turn_choice_heading_error"] to heading_error.
     set route["turn_choice_sample_time"] to route["turn_force_time"].
     if choice["valid"] {
+        set route["turn_diagnostic_reason"] to "".
         set route["turn_model_valid"] to true.
         set route["turn_model_mode"] to choice["mode"].
         set route["turn_model_aoa"] to choice["aoa"].
@@ -965,6 +1022,8 @@ function terminal_route_choose_turn {
         set route["turn_model_radius"] to choice["radius"].
         set route["turn_model_loss"] to choice["loss"].
         set route["turn_model_required_radius"] to choice["required_radius"].
+    } else {
+        terminal_route_log_turn_rejection(route,"no_usable_rate",nominal_bank,heading_error,target_distance).
     }
     if route["turn_model_mode"] <> prior_mode {
         flight_log_event("terminal_turn_model","phase="+route["phase"]+
