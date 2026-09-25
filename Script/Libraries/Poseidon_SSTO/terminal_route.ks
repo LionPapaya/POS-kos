@@ -743,6 +743,7 @@ function terminal_route_init {
         "turn_force_brakes", brakes,
         "turn_force_gear", gear,
         "turn_force_config_change_time", -100,
+        "turn_force_config_refresh", false,
         "turn_force_pending_rates", list(),
         "turn_force_pending_signed_rates", list(),
         "turn_force_pending_losses", list(),
@@ -845,17 +846,31 @@ function terminal_route_refresh_turn_forces {
         return.
     }
     if brakes <> route["turn_force_brakes"] or gear <> route["turn_force_gear"] {
+        local previous_age is -1.
+        if route["turn_force_valid"] {
+            set previous_age to round(time:seconds-route["turn_force_time"],1).
+        }
+        flight_log_event("terminal_turn_far_refresh","reason=configuration_change|from_brakes="+
+            route["turn_force_brakes"]+"|to_brakes="+brakes+
+            "|from_gear="+route["turn_force_gear"]+"|to_gear="+gear+
+            "|retained_prediction="+route["turn_force_valid"]+
+            "|previous_age="+previous_age).
         set route["turn_force_brakes"] to brakes.
         set route["turn_force_gear"] to gear.
         set route["turn_force_config_change_time"] to time:seconds.
+        set route["turn_force_config_refresh"] to true.
         set route["turn_force_pending_index"] to -1.
-        set route["turn_force_valid"] to false.
     }
-    // Let FAR settle after an airbrake or gear animation starts.
-    if time:seconds-route["turn_force_config_change_time"] <
-       energy_config["turn_model_config_settle_time"] { return. }
+    // Keep the last completed prediction while FAR's new configuration
+    // settles, subject to a bounded age and flight-state drift.
     local altitude_drift is abs(ship:altitude-route["turn_force_altitude"]).
     local speed_drift is abs(ship:airspeed-route["turn_force_speed"]).
+    local stale_multiplier is 2.
+    local stale_time_multiplier is 2.
+    if route["turn_force_config_refresh"] {
+        set stale_multiplier to 3.
+        set stale_time_multiplier to 4.
+    }
     if route["turn_force_pending_index"] >= 0 and (
        time:seconds-route["turn_force_pending_time"] > 1 or
        abs(ship:altitude-route["turn_force_pending_altitude"]) >
@@ -865,13 +880,17 @@ function terminal_route_refresh_turn_forces {
         set route["turn_force_pending_index"] to -1.
     }
     if route["turn_force_valid"] and (
-       altitude_drift > 2*energy_config["turn_model_refresh_altitude"] or
-       speed_drift > 2*energy_config["turn_model_refresh_speed"] or
-       time:seconds-route["turn_force_time"] > 2*energy_config["turn_model_refresh_time"]) {
+       altitude_drift > stale_multiplier*energy_config["turn_model_refresh_altitude"] or
+       speed_drift > stale_multiplier*energy_config["turn_model_refresh_speed"] or
+       time:seconds-route["turn_force_time"] >
+           stale_time_multiplier*energy_config["turn_model_refresh_time"]) {
         set route["turn_force_valid"] to false.
     }
+    // Start a new set after FAR's brake or gear animation has settled.
+    if time:seconds-route["turn_force_config_change_time"] <
+       energy_config["turn_model_config_settle_time"] { return. }
     if route["turn_force_pending_index"] < 0 and (
-       not route["turn_force_valid"] or
+       route["turn_force_config_refresh"] or not route["turn_force_valid"] or
        altitude_drift > energy_config["turn_model_refresh_altitude"] or
        speed_drift > energy_config["turn_model_refresh_speed"] or
        time:seconds-route["turn_force_time"] >= energy_config["turn_model_refresh_time"]) {
@@ -911,13 +930,15 @@ function terminal_route_refresh_turn_forces {
         set route["turn_force_calls_count"] to route["turn_force_calls_count"]+1.
     }
     if route["turn_force_pending_index"] >= 9 {
-        local first_valid is not route["turn_force_valid"].
+        local first_valid is not route["turn_force_valid"] or
+            route["turn_force_config_refresh"].
         set route["turn_force_rates"] to route["turn_force_pending_rates"].
         set route["turn_force_signed_rates"] to route["turn_force_pending_signed_rates"].
         set route["turn_force_losses"] to route["turn_force_pending_losses"].
         set route["turn_force_altitude"] to route["turn_force_pending_altitude"].
         set route["turn_force_speed"] to route["turn_force_pending_speed"].
         set route["turn_force_valid"] to true.
+        set route["turn_force_config_refresh"] to false.
         set route["turn_force_time"] to time:seconds.
         set route["turn_force_pending_index"] to -1.
         if first_valid {
