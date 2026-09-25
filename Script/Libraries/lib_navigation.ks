@@ -346,7 +346,7 @@ function team_interface_lateral_offset {
         if heading_error < -180 { set heading_error to heading_error + 360. }
     }
     local blend is max(0,min(1,(abs(heading_error)-20)/80)).
-    local offset is 70000 * (3*blend^2 - 2*blend^3).
+    local offset is 100000 * (3*blend^2 - 2*blend^3).
     if heading_error > 0 { return -offset. }
     return offset.
 }
