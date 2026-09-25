@@ -251,8 +251,11 @@ function terminal_turn_force_metrics {
     local drag_force is -(force_forward*cos(sample_aoa)+
         (-force_top*cos(sample_bank)+force_right*sin(sample_bank))*sin(sample_aoa)).
     local signed_rate_mass is lateral_force*constant:radTOdeg/max(sample_speed,1).
+    // FAR samples have produced both signs for this projection. The route
+    // supplies turn direction separately through nominal_bank; candidate
+    // feasibility needs the magnitude of turn authority.
     return lex("signed_rate_mass",signed_rate_mass,
-        "rate_mass",max(0,signed_rate_mass),
+        "rate_mass",abs(signed_rate_mass),
         "loss_mass",max(0,drag_force)/gravity_value).
 }
 
@@ -1026,9 +1029,14 @@ function terminal_route_choose_turn {
         terminal_route_log_turn_rejection(route,"no_usable_rate",nominal_bank,heading_error,target_distance).
     }
     if route["turn_model_mode"] <> prior_mode {
+        local signed_rate_mass is 0.
+        if route["turn_model_mode"] >= 0 {
+            set signed_rate_mass to route["turn_force_signed_rates"][route["turn_model_mode"]].
+        }
         flight_log_event("terminal_turn_model","phase="+route["phase"]+
             "|mode="+route["turn_model_mode"]+"|aoa="+route["turn_model_aoa"]+
             "|bank="+route["turn_model_bank"]+"|rate="+round(route["turn_model_rate"],3)+
+            "|signed_rate_mass="+round(signed_rate_mass,2)+
             "|radius="+round(route["turn_model_radius"],1)+
             "|distance="+round(target_distance,1)).
     }
