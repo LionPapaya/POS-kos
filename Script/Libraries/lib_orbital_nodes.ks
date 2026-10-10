@@ -2840,7 +2840,7 @@ function lambert_solver {
             return (sqrtz - sin(constant:radtodeg * sqrtz)) / (z)^1.5.
         }
         if z < 0 {
-            local sqrtmz is sqrtmz.
+            local sqrtmz is sqrt(-z).
             return (sinh(sqrtmz) - sqrtmz) / (-z)^1.5.
         }
         else {

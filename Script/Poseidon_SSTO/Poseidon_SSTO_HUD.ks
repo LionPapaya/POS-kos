@@ -127,13 +127,13 @@ if defined ship and defined step and ship:altitude < 70000 and step = "TEAM"{
     Print("|==============================================================================|") at(0,7).
     Print("|                                 VEHICLE DATA                                 |") at(0,8).
     Print("|                                                                              |") at(0,9).
-    if defined ship{ Print("| SURFACE SPEED ="+ round(ship:groundspeed)+ "") at(0,10). }else{ Print("| SURFACE SPEED =") at(0,10). }
+    if defined ship{ Print("| SURFACE SPEED ="+ round(ship:groundspeed)+ "  ") at(0,10). }else{ Print("| SURFACE SPEED =") at(0,10). }
     Print ("|") at(40,10).
     if defined ship{ print ("VERTICAL SPEED ="+round(ship:verticalSpeed)+"   ") at(42,10). }else{ print ("VERTICAL SPEED =") at(42,10). }
     Print ("|") at(79,10). 
-    if defined ship{ Print("| AIR SPEED ="+ round(ship:airspeed)+ "") at(0,11). }else{ Print("| AIR SPEED =") at(0,11). }
+    if defined ship{ Print("| AIR SPEED ="+ round(ship:airspeed)+ "   ") at(0,11). }else{ Print("| AIR SPEED =") at(0,11). }
     Print ("|") at(40,11).
-    if defined ship{ print ("ALTITUDE ="+round(ship:altitude)+"") at(42,11). }else{ print ("ALTITUDE =") at(42,11). }
+    if defined ship{ print ("ALTITUDE ="+round(ship:altitude)+"    ") at(42,11). }else{ print ("ALTITUDE =") at(42,11). }
     Print ("|") at(79,11). 
     Print("|") at(0,12).
     if defined terminal_route_debug and terminal_route_debug:haskey("phase"){ Print("ROUTE PHASE =" +terminal_route_debug["phase"]+ "  ")at(3,12). }else{ Print("ROUTE PHASE =") at(3,12). }
@@ -153,15 +153,15 @@ if defined ship and ship:altitude > 70000{
     Print("|                                                                              |") at(0,9).
     if defined ship{ Print("| BODY ="+ ship:body+ "") at(0,10). }else{ Print("| BODY =") at(0,10). }
     Print ("|") at(40,10).
-    if defined ship{ print ("DELTA-V ="+round(ship:Deltav:current)+"") at(42,10). }else{ print ("DELTA-V =") at(42,10). }
+    if defined ship{ print ("DELTA-V ="+round(ship:Deltav:current)+"   ") at(42,10). }else{ print ("DELTA-V =") at(42,10). }
     Print ("|") at(79,10). 
-    if defined ship{ Print("| AIR SPEED ="+ round(ship:airspeed)+ "") at(0,11). }else{ Print("| AIR SPEED =") at(0,11). }
+    if defined ship{ Print("| AIR SPEED ="+ round(ship:airspeed)+ "   ") at(0,11). }else{ Print("| AIR SPEED =") at(0,11). }
     Print ("|") at(40,11).
-    if defined ship{ print ("ALTITUDE ="+round(ship:altitude)+"") at(42,11). }else{ print ("ALTITUDE =") at(42,11). }
+    if defined ship{ print ("ALTITUDE ="+round(ship:altitude)+"   ") at(42,11). }else{ print ("ALTITUDE =") at(42,11). }
     Print ("|") at(79,11). 
     if defined ship{ Print("| STATUS ="+ ship:status+ "   ") at(0,12). }else{ Print("| STATUS =") at(0,12). }
     Print ("|") at(40,12).
-    if defined ship{ print ("MASS ="+round(ship:mass)+"") at(42,12). }else{ print ("MASS =") at(42,12). }
+    if defined ship{ print ("MASS ="+round(ship:mass)+"  ") at(42,12). }else{ print ("MASS =") at(42,12). }
     Print ("|") at(79,12). 
     if defined step{ Print("| STEP ="+ step+ "   ") at(0,13). }else{ Print("| STEP =") at(0,13). }
     Print ("|") at(40,13).

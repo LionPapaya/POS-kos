@@ -49,9 +49,11 @@ if not SHIP:BODY:atm:exists {
     aerobrake_gui:show().
 
     set dapthrottle to 0.
+    dap:setup().
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aoa".
     set dap["aoa"]["base_pitch"] to 0.
+    flight_log_event("aerobrake_control_ready","mode=auto|steering=aoa|bank=0").
     brakes off.
 
     until not aerobrake_running {

@@ -5,6 +5,7 @@
 set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/contingency.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_guid.ks").
@@ -40,6 +41,13 @@ if not(force_tgt["force"]){
     setup_reentry_script(force_tgt["Location"],force_tgt["Runway"]).
 }
 //}
+// Discard plans retained by a previous run; every entry starts from live state.
+if defined entry_traj { unset entry_traj. }
+if defined Team_interface { unset Team_interface. }
+if defined reentry_target { unset reentry_target. }
+global basice_reentry_guidance is false.
+global entry_attitude_initialized is false.
+global entry_rejected_runways is lexicon().
 set deorbit_periapsis_set_flag to false.
 set landing_flare_started to false.
 global entry_reference_time is -1.
@@ -55,17 +63,53 @@ global entry_predictive_upper_range_error is 0.
 global entry_predictive_sensitivity is 0.
 global entry_predictive_valid is false.
 global entry_predictive_frozen is false.
+global entry_display_prediction_path is entry_display_empty_path("not_ready").
 global entry_team_closest_distance is 999999999.
 global entry_team_gate_since is -1.
+global entry_solver_next_retry_time is -1.
+global entry_basic_next_update is -1.
+global entry_turnside is "".
+global entry_last_turnside_log is "".
+global val_tgt is false.
 global team_handoff_transition_active is false.
 global team_handoff_transition_start is 0.
 global team_handoff_start_aoa is 0.
 global team_handoff_start_bank is 0.
 dap:setup().
+if reentry_tr_target_pending {
+    local target_wait_reason is "impact_pending".
+    if not ADDONS:TR:available { set target_wait_reason to "addon_unavailable". }
+    flight_log_event("trajectories_target_deferred","reason="+target_wait_reason+
+        "|runway="+Location+"_"+runway_nr).
+}
+reentry_start_control_heartbeat().
 set console_mode to "DATA".
 until running = false{
+    // An RTLS/ATR can lose additional engines after its recovery handoff.
+    if defined abort_state and abort_state["active"] {
+        set abort_state to abort_refresh_state(abort_state).
+        if abort_state["mode"] = "contingency_abort" {
+            set step to "contingency_abort".
+            contingency_update(abort_state).
+            set Lastest_status to "Contingency: "+abort_state["phase"].
+            if not abort_state["active"] {
+                set recovery_result to lex("complete",true,"success",abort_state["result"]["success"],
+                    "reason",abort_state["result"]["reason"]).
+                set step to "end".
+            }
+        }
+    }
     update_readouts().
-    dap:update().
+    if entry_attitude_initialized and (step = "reentry_low" or step = "reentry_mid" or
+        step = "reentry_high" or step = "reentry_int") {
+        reentry_live_control_update().
+    } else if step <> "end" { dap:update(). }
+    if reentry_tr_target_pending and ADDONS:TR:available and ADDONS:TR:hasimpact {
+        ADDONS:TR:SETTARGET(runway_start).
+        set reentry_tr_target_pending to false.
+        flight_log_event("trajectories_target_armed","runway="+Location+"_"+runway_nr+
+            "|altitude="+round(ship:altitude,1)).
+    }
     // The TEAM interface is created only after the entry target is planned.
     // Keep the display input harmless during earlier deorbit/setup ticks.
     local entry_display_range_remaining is 0.
@@ -84,6 +128,9 @@ until running = false{
         "guid_alt", 0,
         "guid_pos", 0,
         "guid_pos_valid", false,
+        "prediction_path", entry_display_prediction_path["points"],
+        "prediction_path_valid", entry_display_prediction_path["valid"] and
+            not basice_reentry_guidance,
         "range_remaining", entry_display_range_remaining,
         "pitch", pitch_for(),
         "yaw", compass_for(),
@@ -118,16 +165,23 @@ until running = false{
                 set step to "end".
                 set Lastest_status to "not in reentry condition".
             }
-            if not Addons:TR:Available{ 
+            if step = "Deorbit" and not Addons:TR:Available{
                 set step to "end".
-                set Lastest_status to "TR Addon not installed".
-
+                set Lastest_status to "Trajectories addon unavailable".
+                set recovery_result to lex("complete",true,"success",false,"reason","trajectories_unavailable").
+                flight_log_event("trajectories_unavailable","phase=find_step|reason=addon_unavailable").
             }
             set substep to "deorbit_manuver".
             
         }
         set console_mode to "DATA".
-        if substep = "deorbit_manuver"{   
+        if substep = "deorbit_manuver" and step = "Deorbit" and not ADDONS:TR:available {
+            set step to "end".
+            set Lastest_status to "Trajectories addon unavailable during deorbit planning".
+            set recovery_result to lex("complete",true,"success",false,"reason","trajectories_unavailable").
+            flight_log_event("trajectories_unavailable","phase=deorbit_manuver|reason=addon_lost").
+        }
+        if substep = "deorbit_manuver" and step = "Deorbit" and ADDONS:TR:available {
         if ship:periapsis > 70000{
             if deorbit_periapsis_set_flag = false{
                 if ship:apoapsis < 100000{
@@ -239,6 +293,17 @@ until running = false{
         }
     if step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int"{
        
+        if not entry_attitude_initialized and ship:altitude <= 75000 {
+            reset_sys().
+            nervsoff().
+            rapierson().
+            set dap["str_mode"] to "aoa".
+            set dap["aoa"]["target_aoa"] to AVES["EGAOA"](ship:altitude).
+            set dap["aoa"]["target_bank"] to 0.
+            set entry_attitude_initialized to true.
+            set entry_control_next_update to -1.
+            reentry_live_control_update().
+        }
         if ship:altitude > 75000{
             if not (defined entry_square_display){ 
                 print("hey").
@@ -260,16 +325,6 @@ until running = false{
         }
         if ship:altitude < 75000 and ship:altitude > 65000{
             
-            reset_sys().
-            nervsoff().
-            rapierson().
-            set dap["str_mode"] to "aoa". 
-            set dap["aoa"]["target_aoa"]  to AVES["EGAOA"](ship:altitude).
-            set dap["aoa"]["target_bank"] to 0.
-            set ecrl_2hac to get_geoposition_along_heading(runway_start,runway_heading+180,Aves["HacDistance"]*2).
-            if calcdistance(ship:geoposition,runway_start) > calcdistance(ship:geoposition,ecrl_2hac){
-                set reentry_target to runway_start.
-            }else{set reentry_target to ecrl_2hac.}
             update_readouts().
             if not(defined entry_traj){
                
@@ -294,13 +349,15 @@ until running = false{
                     //   the heading-to-target and prograde directions.
                     set Lastest_status to "Guidance Converged in "+entry_traj["iterations"]+" iterations".
                     update_readouts().
-                    wait 3.
                     set Lastest_status to "bank is "+entry_traj["bank"].
                     set basice_reentry_guidance to false.
+                    set val_tgt to true.
                     set entry_predictive_plan_bank to entry_traj["bank"].
                     set entry_predictive_bank to entry_traj["bank"].
                     set entry_predictive_next_update to time:seconds+10.
-                    local heading_error is heading_to_target(Team_interface["target_latlng"]) - compass_for_prograde().
+                    flight_log_event("entry_guidance_mode","from=planning|to=predictive|bank="+
+                        round(entry_predictive_bank,2)).
+                    local heading_error is normalized_heading_error(heading_to_target(Team_interface["target_latlng"]),compass_for_prograde()).
                     if heading_error > 0{
                         set entry_turnside to "right".
                     }else{
@@ -310,10 +367,13 @@ until running = false{
                 }else{
                     set Lastest_status to "Guidance algorithm failed to converge.".
                     update_readouts().
-                    wait 5.
                     set Lastest_status to "Switching to basic reentry guidance protocol".
                     update_readouts().
                     set basice_reentry_guidance to true.
+                    set entry_display_prediction_path to entry_display_empty_path("basic_guidance").
+                    set entry_rejected_runways[Location+"_"+runway_nr] to true.
+                    set entry_solver_next_retry_time to time:seconds.
+                    flight_log_event("entry_guidance_mode","from=planning|to=basic|reason=initial_solver_failed").
                 }
             }
             
@@ -342,125 +402,18 @@ until running = false{
                 }
             }
         }
-        if ship:altitude < AVES["simulation"]["entry_ref_alt"] and ship:altitude > AVES["TEAMAltitude"]{
+        if ship:altitude < AVES["simulation"]["entry_ref_alt"] or basice_reentry_guidance or
+           (not(defined entry_traj) and ship:altitude < 75000) {
             set Lastest_status to "reentering".
             set dap["str_mode"] to "aoa".   
             if not (defined basice_reentry_guidance) {
                 global basice_reentry_guidance is false.
             }
             
-            // --- Fallback runway search / coarse entry plan ---------------------------------
-            // This block runs when either:
-            //  * the simplified/basic reentry guidance is enabled (`basice_reentry_guidance`),
-            //  * or we do not currently have a computed `entry_traj` plan from the solver.
-            //
-            // Purpose:
-            // 1) Produce a small set of forward-simulated endpoints (eg_pos_zone) that indicate the
-            //    approximate reachability envelope for a set of common bank angles.
-            // 2) Scan the `Location_constants` runway entries and find any runway whose start/end
-            //    points lie inside that envelope (i.e. likely reachable without the full solver).
-            // 3) If a candidate runway is found, set runway_start/runway_end/runway_altitude and
-            //    assemble the `Team_interface` lexicon so later logic can attempt to compute a
-            //    refined `entry_traj` or fall back to simpler guidance.
-            //
-            // Notes:
-            // - This is intentionally conservative and coarse — it's a fallback when the solver
-            //   isn't available or hasn't converged yet. The more accurate solver (`calc_entry_traj`)
-            //   is still preferred when available.
-            if basice_reentry_guidance or not(defined entry_traj){
-                if not(defined val_tgt){
-                    // Build a coarse reachability envelope by simulating a few bank endpoints.
-                    // `eg_pos_zone` is a list of simulated final-state lexicons (one per test bank angle)
-                    // produced by `entry_possible_square(current_simstate(), ...)`. Each element holds a
-                    // `latlng` key that we test against runway points below.
-                    global eg_pos_zone is entry_possible_square(current_simstate(),AVES["simulation"]["timestep"]).
-
-                    // Create a mapping of location -> list(runway_numbers) by inspecting the
-                    // keys in Location_constants["kerbin"]. Keys we care about end with "_start".
-                    // Example key format: "location_runway_1_start". We split the key by '_' and
-                    // use the first element as the location identifier and the third as the runway id.
-                    local location_to_runways is lexicon().
-                    local kerbin_runways is Location_constants["kerbin"].
-                    for key in kerbin_runways:keys {
-                    if key:endswith("_start") {                    
-                        // Split the key to extract a location name and runway number.
-                        local split_key is key:split("_").                   
-                        if split_key:length >= 3 {              
-                            local location_name is split_key[0].  
-                            local runway_number is split_key[2].                  
-                            if not location_to_runways:haskey(location_name) {
-                                location_to_runways:add(location_name, list()).
-                            }
-                            location_to_runways[location_name]:add(runway_number).                
-                        } else {                
-                            // Preserve malformed-data diagnostics in the event CSV.
-                            flight_log_event("runway_key_invalid","key=" + key).
-                        }
-                    }
-                }  
-                local val_tgt_found is false.
-                for loc in location_to_runways:keys {
-                for runway in location_to_runways[loc] {
-                    local runway_start_key is loc + "_runway_" + runway + "_start".
-                    local runway_end_key is loc + "_runway_" + runway + "_end".
-                    local runway_start_pos is Location_constants["kerbin"][runway_start_key].
-                    local runway_end_pos is Location_constants["kerbin"][runway_end_key].
-                    if check_target_in_square(runway_start_pos,eg_pos_zone[0]["latlng"],eg_pos_zone[1]["latlng"],eg_pos_zone[2]["latlng"],eg_pos_zone[3]["latlng"]){
-                        // We found a runway candidate whose start/end falls inside the reachability envelope.
-                        // The code below extracts the runway metadata (altitude and start/end positions) from
-                        // the `Location_constants` and `KerbinRunwayalt` tables.
-                        local a is Loc+"_runway". set runway_altitude to KerbinRunwayalt[a].
-                        local b is Loc+"_runway_"+runway+"_start".
-                        local c is Loc+"_runway_"+runway+"_end".
-                        if Location_constants:HASKEY("kerbin") {
-                            local kerbin_runways is Location_constants["kerbin"].
-                            if kerbin_runways:HASKEY(b) {
-                                set runway_start to kerbin_runways[b].
-                            } else {
-                                flight_log_event("runway_lookup_failed","key=" + b).
-                            }
-                            if kerbin_runways:HASKEY(c) {
-                                set runway_end to kerbin_runways[c].
-                            } else {
-                                flight_log_event("runway_lookup_failed","key=" + c).
-                            }
-                        } else {
-                            flight_log_event("runway_lookup_failed","key=kerbin").
-                        }
-                        set val_tgt_found to true.
-                        break.
-                    }
-                    
-                }
-                set dap["str_mode"] to "aoa". 
-                set dap["aoa"]["target_aoa"]  to AVES["EGAOA"](ship:altitude).
-                set dap["aoa"]["target_bank"] to 0.
-                dap:update().
-                }
-                if defined Team_interface{
-                    set Team_interface to define_TEAM_interface(runway_start,runway_heading,runway_altitude).
-                }else{
-                    GLOBAL Team_interface to define_TEAM_interface(runway_start,runway_heading,runway_altitude).
-                }
-                flight_log_set_entry_target(Team_interface).
-                if defined entry_traj{
-                    if time_to_alt(ship:altitude,ship:verticalspeed,AVES["simulation"]["entry_ref_alt"]) < 10{
-                        set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"],"time",10).   
-                    }else{
-                        set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"]).   
-                    }
-                }else{
-                    if time_to_alt(ship:altitude,ship:verticalspeed,AVES["simulation"]["entry_ref_alt"]) < 10{
-                        global entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"],"time",10).
-                    }else{
-                        GLOBAL entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],Team_interface["target_latlng"],Team_interface["team_interface_box"]).   
-                    }          
-                }
-                flight_log_entry_solver_result(entry_traj).
-                set entry_reference_time to -1.
-                    
-
-                }
+            // Retry and basic-control clocks are independent. Failed candidates
+            // are reconsidered after alternatives, never latched as valid targets.
+            if basice_reentry_guidance or not(defined entry_traj) {
+                reentry_recovery_update().
             }else{
                 local reference_segment is find_entry_reference_segment(entry_traj["converged_sim"]["controll_inputs"],ship:geoposition,entry_reference_time).
                 if not reference_segment["valid"] {
@@ -510,7 +463,8 @@ until running = false{
                 //set d_dot to aeroforce_ld(s_step["position"],s_step["surfvel"],list(AVES["EGAOA"],ba))["drag"].
                 //set alpha_md_pid:setpoint to d_dot.
 
-                local heading_error is heading_to_target(Team_interface["target_latlng"]) - compass_for_prograde().
+                local heading_error is normalized_heading_error(
+                    heading_to_target(Team_interface["target_latlng"]),compass_for_prograde()).
                 if heading_error > AVES["EG_rev°"]{
                     set entry_turnside to "right".
                 }else if heading_error < -AVES["EG_rev°"]{
@@ -593,6 +547,34 @@ until running = false{
                         entry_predictive_sensitivity,entry_predictive_valid,entry_predictive_frozen,time:seconds-prediction_start_time,
                         entry_predictive_next_update
                     ).
+                    local display_path_result is entry_display_empty_path("invalid_prediction").
+                    // Low bank sensitivity freezes the guidance command, but
+                    // the latest simulations still describe the remaining
+                    // descent. Refresh the display using those two traces and
+                    // the held bank, independently of command validity.
+                    if entry_predictive_valid or entry_predictive_frozen {
+                        local display_low_samples is entry_display_prediction_samples(
+                            prediction_low,Team_interface["target_latlng"]
+                        ).
+                        local display_high_samples is entry_display_prediction_samples(
+                            prediction_high,Team_interface["target_latlng"]
+                        ).
+                        set display_path_result to entry_display_blend_path(
+                            display_low_samples,display_high_samples,
+                            entry_predictive_lower_bank,entry_predictive_upper_bank,
+                            entry_predictive_bank,16
+                        ).
+                        if entry_predictive_frozen and display_path_result["valid"] {
+                            // The existing display-path logger records this
+                            // reason alongside the guidance freeze event.
+                            set display_path_result["reason"] to "ok_held_bank".
+                        }
+                    }
+                    set entry_display_prediction_path to display_path_result.
+                    flight_log_entry_display_path(
+                        display_path_result,entry_predictive_lower_bank,
+                        entry_predictive_upper_bank,entry_predictive_bank
+                    ).
                 }
                 local bank_out is entry_predictive_bank.
                 local d_t_a is time_to_alt(ship:altitude,ship:verticalspeed,Team_interface["target_altitude"]).
@@ -658,6 +640,7 @@ until running = false{
                     "|altitude="+round(ship:altitude,1)+"|target_altitude="+round(Team_interface["target_altitude"],1)+
                     "|airspeed="+round(ship:airspeed,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
                     "|start_aoa="+round(team_handoff_start_aoa,2)+"|start_bank="+round(team_handoff_start_bank,2)).
+                set entry_display_prediction_path to entry_display_empty_path("team_handoff").
                 reset_sys().
                 set step to "TEAM".
                 set Lastest_status to "TEAM".
@@ -675,6 +658,7 @@ until running = false{
             flight_log_event("team_handoff","reason=below_runway_altitude_without_interface"+
                 "|altitude="+round(ship:altitude,1)+"|runway_altitude="+round(runway_altitude,1)+
                 "|start_aoa="+round(team_handoff_start_aoa,2)+"|start_bank="+round(team_handoff_start_bank,2)).
+            set entry_display_prediction_path to entry_display_empty_path("team_handoff").
             reset_sys().
             set step to "TEAM".
             set Lastest_status to "TEAM".
@@ -683,6 +667,20 @@ until running = false{
             set dap["aoa"]["target_aoa"] to team_handoff_start_aoa.
             set dap["aoa"]["target_bank"] to team_handoff_start_bank.
             set dap["str_mode"] to "aoa".
+        }
+        if entry_turnside <> entry_last_turnside_log {
+            local entry_turn_mode is "predictive".
+            if basice_reentry_guidance { set entry_turn_mode to "basic". }
+            local turn_log_target is runway_start.
+            if defined reentry_target { set turn_log_target to reentry_target. }
+            if not basice_reentry_guidance and defined Team_interface {
+                set turn_log_target to Team_interface["target_latlng"].
+            }
+            flight_log_event("entry_turn_side","from="+entry_last_turnside_log+
+                "|to="+entry_turnside+"|mode="+entry_turn_mode+
+                "|heading_error="+round(normalized_heading_error(
+                    heading_to_target(turn_log_target),compass_for_prograde()),2)).
+            set entry_last_turnside_log to entry_turnside.
         }
     }
     if step = "TEAM"{
@@ -859,13 +857,18 @@ until running = false{
             set recovery_result to lex("complete",true,"success",false,"reason","recovery_ended_before_landing").
         }
         set running to false.
-        reset_sys().
+        if not(defined abort_state) or not abort_state:haskey("mode") or abort_state["mode"] <> "contingency_abort" {
+            reset_sys().
+        }
         set warp to 0.
         update_readouts().
-        log_status("Script ended, system reset").
+        log_status("Recovery script ended").
         clearGuis().
     }
     update_readouts().
+    set e_gui_inputs["prediction_path"] to entry_display_prediction_path["points"].
+    set e_gui_inputs["prediction_path_valid"] to entry_display_prediction_path["valid"] and
+        not basice_reentry_guidance.
     update_reentry_gui(e_gui_inputs).
     flight_log_entry_display_mode(
         reentry_display_active_mode,

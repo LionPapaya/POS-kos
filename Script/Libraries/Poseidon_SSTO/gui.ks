@@ -6,47 +6,53 @@
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_nominal_profile.ks").
 
 // Empirical KSP/Unity placement calibration for the five energy-versus-range
-// pages.  X/Y offsets are absolute on-screen corrections for each bug; the
-// green bug's Y value is converted to relative vbox padding during update.
+// pages. Shuttle offsets retain their console calibration. Prediction offsets
+// refer to the fixed chart background. Their independent range scales match
+// the calibration tool defaults between each page's numeric axis bounds.
 global reentry_traj1_vsit_calibration is lex(
     "energy_px_per_km", 22.764,
     "range_px_per_km", 0.503,
+    "pred_range_px_per_km", (220*539/457)/500,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -22.7,
-    "pred_x_offset", -4.2,
-    "pred_y_offset", -40.9
+    "pred_x_offset", 2.8,
+    "pred_y_offset", 0
 ).
 global reentry_traj2_vsit_calibration is lex(
     "energy_px_per_km", 13.658,
     "range_px_per_km", 0.706,
+    "pred_range_px_per_km", (220*539/457)/350,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -17.7,
-    "pred_x_offset", -4.2,
-    "pred_y_offset", -45.9
+    "pred_x_offset", 2.8,
+    "pred_y_offset", 0
 ).
 global reentry_traj3_vsit_calibration is lex(
     "energy_px_per_km", 17.073,
     "range_px_per_km", 0.578,
+    "pred_range_px_per_km", (220*539/457)/450,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -15.7,
-    "pred_x_offset", -4.2,
-    "pred_y_offset", -40.7
+    "pred_x_offset", 2.8,
+    "pred_y_offset", 0
 ).
 global reentry_traj4_vsit_calibration is lex(
     "energy_px_per_km", 22.946,
     "range_px_per_km", 1.061,
+    "pred_range_px_per_km", (220*539/457)/250,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -9.9,
-    "pred_x_offset", -4.2,
-    "pred_y_offset", -36.4
+    "pred_x_offset", 2.8,
+    "pred_y_offset", 0
 ).
 global reentry_traj5_vsit_calibration is lex(
     "energy_px_per_km", 17.21,
     "range_px_per_km", 1.434,
+    "pred_range_px_per_km", (220*539/457)/180,
     "ssto_x_offset", -4.2,
     "ssto_y_offset", -15.3,
-    "pred_x_offset", -4.2,
-    "pred_y_offset", -41.8
+    "pred_x_offset", 2.8,
+    "pred_y_offset", 0
 ).
 
 // KSP/Unity placement calibration for the two runway-relative L/SIT pages.
@@ -206,6 +212,45 @@ function update_terminal_route_gui {
         set terminal_route_runway_change_label:text to ("Runway: " + runway_nr + " selected — CHANGE LOCKED").
     }
 }
+// Fast startup selection requires no impact prediction or trajectory solve.
+// Prefer the nearest site; within 5 km choose the better landing direction.
+function entry_initial_runway {
+    parameter reference_position, arrival_heading.
+    local best is lex("selected",false,"distance",9999999999,"heading_error",180).
+    local nearest_distance is 9999999999.
+    local candidates is list().
+    local runway_table is Location_constants["kerbin"].
+    for key in runway_table:keys {
+        if key:endswith("_start") {
+            local parts is key:split("_").
+            if parts:length = 4 {
+                local site_name is parts[0].
+                local runway_id is parts[2].
+                local end_key is site_name+"_runway_"+runway_id+"_end".
+                if runway_table:haskey(end_key) and KerbinRunwayalt:haskey(site_name+"_runway") {
+                    local site_distance is calcdistance(reference_position,runway_table[key]).
+                    local site_heading is heading_between(runway_table[key],runway_table[end_key]).
+                    set nearest_distance to min(nearest_distance,site_distance).
+                    candidates:add(lex("selected",true,"location",site_name,"runway",runway_id,
+                        "distance",site_distance,
+                        "heading_error",abs(normalized_heading_error(site_heading,arrival_heading)))).
+                }
+            }
+        }
+    }
+    // Anchor the 5 km direction tie-break to the true nearest threshold;
+    // updating the anchor with each winner could drift through distant sites.
+    for candidate in candidates {
+        if candidate["distance"] <= nearest_distance+5 {
+            if not best["selected"] or candidate["heading_error"] < best["heading_error"] or
+               (candidate["heading_error"] = best["heading_error"] and candidate["distance"] < best["distance"]) {
+                set best to candidate.
+            }
+        }
+    }
+    return best.
+}
+
 function setup_reentry_script{
     parameter Location_ is "".
     parameter runway_nr_ is "".
@@ -267,8 +312,20 @@ flight_log_set_runway(Location,runway_nr,runway_start,runway_end,runway_heading,
 
 
    
-    ADDONS:TR:SETTARGET(runway_start).
-    ADDONS:TR:RESETDESCENTPROFILE(20).
+    // SETTARGET is only safe after Trajectories has an impact prediction.
+    // The reentry loop retries this pending setup after the deorbit node
+    // produces one.
+    set reentry_tr_target_pending to true.
+    if ADDONS:TR:available {
+        if ADDONS:TR:isvertwofour {
+            ADDONS:TR:RESETDESCENTPROFILE(20).
+        }
+        if ADDONS:TR:hasimpact {
+            ADDONS:TR:SETTARGET(runway_start).
+            set reentry_tr_target_pending to false.
+            flight_log_event("trajectories_target_armed","runway="+Location+"_"+runway_nr+"|phase=setup").
+        }
+    }
     reset_sys().                                                                             
    
 }
@@ -499,7 +556,6 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     // Trigger runway update when the location is changed
     set location_popup:onchange to update_runway_options@.
     
-    // Initialize runway options for the default selected location
     update_runway_options().
 
     // OK button to finalize the inputs
@@ -527,36 +583,24 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         wait 0.0001.
         update_reentry_gui().
         
-        // Automatically select landing site and runway if vessel is under 72,000 meters
+        // A late start must enter the control loop even while TR has no impact.
         if ship:altitude < 72000 {
-            local closest_distance is 9999999999.
-            local best_location is "".
-            local best_runway is "".
-            local best_heading_diff is 180.
-            
-            for loc in location_to_runways:keys {
-                for runway in location_to_runways[loc] {
-                    local runway_start_key is loc + "_runway_" + runway + "_start".
-                    local runway_end_key is loc + "_runway_" + runway + "_end".
-                    local runway_start_pos is Location_constants["kerbin"][runway_start_key].
-                    local runway_end_pos is Location_constants["kerbin"][runway_end_key].
-                    local distance_to_runway is calcdistance(ADDONS:TR:IMPACTPOS, runway_start_pos).
-                    local runway_heading is heading_between(runway_start_pos, runway_end_pos).
-                    local heading_diff is abs(compass_for() - runway_heading).
-                    
-                    if distance_to_runway < closest_distance - 5 or (distance_to_runway < 5 and heading_diff < best_heading_diff) {
-                        set closest_distance to distance_to_runway.
-                        set best_location to loc.
-                        set best_runway to runway.
-                        set best_heading_diff to heading_diff.
-                    }
-                }
+            local initial_reference is ship:geoposition.
+            local initial_reason is "position_without_impact".
+            if ADDONS:TR:available and ADDONS:TR:hasimpact {
+                set initial_reference to ADDONS:TR:IMPACTPOS.
+                set initial_reason to "trajectories_impact".
             }
-            
-            set Location to best_location.
-            set runway_nr to best_runway.
-            set Reentry_mode to Reentry_mode_menu:value.
-            set confirm_in to true.
+            local initial_selection is entry_initial_runway(initial_reference,compass_for_prograde()).
+            if initial_selection["selected"] {
+                set Location to initial_selection["location"].
+                set runway_nr to initial_selection["runway"].
+                set Reentry_mode to "Auto".
+                set confirm_in to true.
+                flight_log_event("entry_automatic_target","reason="+initial_reason+
+                    "|runway="+Location+"_"+runway_nr+
+                    "|distance_km="+round(initial_selection["distance"],2)).
+            }
         }
     }
     
@@ -579,6 +623,8 @@ function create_reentry_gui{
 	SET traj_disp_mainbox:STYLE:ALIGN TO "Center".
     SET traj_disp_mainbox:STYLe:HEIGHT TO 380.
     SET traj_disp_mainbox:STYLe:margin:v TO -150.
+    set traj_disp_mainbox:style:padding:v to 0.
+    set traj_disp_mainbox:style:padding:h to 0.
     set traj_data to console:addvbox().
 
     GLOBAL traj_disp_ssto IS console:ADDLABEL().
@@ -588,6 +634,7 @@ function create_reentry_gui{
     Global traj_disp_pred is console:ADDLABEL().
     SET traj_disp_pred:IMAGE TO "Libraries/gui_images/guid_pred_bug.png".
     SET traj_disp_pred:STYLe:WIDTH TO 8.
+    set traj_disp_pred:visible to false.
 
     // L/SIT route dots are added after the shuttle and guidance bugs.  kOS
     // lays labels out cumulatively inside this vbox, so their vertical
@@ -599,6 +646,31 @@ function create_reentry_gui{
         set path_bug:style:width to 4.
         set path_bug:visible to false.
         traj_disp_path:add(path_bug).
+    }
+
+    // Anchor V/SIT dots inside the existing chart, before the shuttle in the
+    // console tree. This transparent 1px origin establishes chart coordinates.
+    // Move label rectangles with margins; keep image padding zero so dots
+    // retain a usable content rectangle both above and below the shuttle.
+    global traj_disp_prediction_origin is traj_disp_mainbox:addvlayout().
+    set traj_disp_prediction_origin:style:bg to "".
+    set traj_disp_prediction_origin:style:width to 1.
+    set traj_disp_prediction_origin:style:height to 1.
+    set traj_disp_prediction_origin:style:hstretch to false.
+    set traj_disp_prediction_origin:style:vstretch to false.
+    set traj_disp_prediction_origin:style:padding:v to 0.
+    set traj_disp_prediction_origin:style:padding:h to 0.
+    set traj_disp_prediction_origin:style:margin:v to 0.
+    set traj_disp_prediction_origin:style:margin:h to 0.
+    set traj_disp_prediction_origin:visible to false.
+    global traj_disp_prediction_path is list().
+    for prediction_dot_index in range(0, 16) {
+        local prediction_dot is traj_disp_mainbox:addlabel().
+        set prediction_dot:image to "Libraries/gui_images/entry_path_dot.png".
+        set prediction_dot:style:width to 2.
+        set prediction_dot:style:height to 2.
+        set prediction_dot:visible to false.
+        traj_disp_prediction_path:add(prediction_dot).
     }
 
     set traj_data:style:bg to"Libraries/gui_images/bg_blank.png".
@@ -671,6 +743,143 @@ function hide_reentry_lsit_path {
     for path_bug in traj_disp_path {
         set path_bug:visible to false.
     }
+}
+
+function hide_reentry_vsit_prediction_path {
+    // Keep the chart origin visible on V/SIT even with no prediction. An
+    // empty Unity layout ignores its fixed height, changing console flow.
+    for prediction_dot in traj_disp_prediction_path {
+        set prediction_dot:visible to false.
+    }
+}
+
+// Chart-local axis positions from support/build_entry_nominal.py. The source
+// image is 539px tall, cropped by 82px, then drawn at 380px GUI height.
+function reentry_vsit_chart_plot_top {
+    return (94*539-82*380)/457.
+}
+
+function reentry_vsit_chart_plot_bottom {
+    return (314*539-82*380)/457.
+}
+
+function place_reentry_vsit_prediction_dot {
+    parameter marker_index, point_x, point_y, marker_size.
+    parameter previous_rect_y, previous_rect_height.
+    local marker is traj_disp_prediction_path[marker_index].
+    local previous_widget is traj_disp_prediction_origin.
+    if marker_index > 0 {
+        set previous_widget to traj_disp_prediction_path[marker_index-1].
+    } else {
+        set traj_disp_prediction_origin:visible to true.
+        set traj_disp_mainbox:style:padding:left to 0.
+    }
+    local marker_top is round(point_y-marker_size/2).
+    local marker_left is round(point_x-marker_size/2).
+    local margin_delta is marker_top-previous_rect_y-previous_rect_height.
+    // Unity collapses adjacent vertical margins with MAX. A negative top
+    // margin alone is suppressed by a zero bottom margin on the earlier
+    // widget. Pair both margins to move the entire rectangle upward.
+    set previous_widget:style:margin:bottom to min(0,margin_delta).
+    set marker:style:margin:top to margin_delta.
+    set marker:style:margin:bottom to 0.
+    set marker:style:margin:left to marker_left.
+    set marker:style:margin:right to 0.
+    set traj_disp_mainbox:style:padding:left to min(
+        traj_disp_mainbox:style:padding:left,marker_left
+    ).
+    set marker:style:padding:v to 0.
+    set marker:style:padding:h to 0.
+    set marker:style:width to marker_size.
+    set marker:style:height to marker_size.
+    set marker:style:hstretch to false.
+    set marker:style:vstretch to false.
+    set marker:visible to true.
+    return marker_top.
+}
+
+// Sample the latest path at the 16 fixed energy positions spanning this
+// display. Only retain the remaining path ahead of the live shuttle and
+// inside both displayed axes. Never clamp off-page points onto an edge or
+// extrapolate beyond the simulated TEAM endpoint.
+function reentry_vsit_display_points {
+    parameter points, page_energy_min, page_energy_max.
+    parameter page_range_min, page_range_max, current_energy.
+    local displayed_points is list().
+    if points:length < 2 { return displayed_points. }
+    local segment_index is 0.
+    local path_energy_max is points[0]["energy"].
+    local path_energy_min is points[points:length-1]["energy"].
+    for display_slot in range(0,16) {
+        local sample_energy is page_energy_max -
+            (page_energy_max-page_energy_min)*display_slot/15.
+        if sample_energy <= current_energy and
+           sample_energy <= path_energy_max and sample_energy >= path_energy_min {
+            // Energy decreases along the prediction. Advance this cursor once
+            // through the path while sampling the display from right to left.
+            until segment_index >= points:length-2 or
+                  points[segment_index+1]["energy"] <= sample_energy {
+                set segment_index to segment_index+1.
+            }
+            local high_point is points[segment_index].
+            local low_point is points[segment_index+1].
+            local energy_span is high_point["energy"]-low_point["energy"].
+            if energy_span > 0 {
+                local fraction is (high_point["energy"]-sample_energy)/energy_span.
+                local sample_range is high_point["range"] +
+                    (low_point["range"]-high_point["range"])*fraction.
+                if sample_range >= page_range_min and sample_range <= page_range_max {
+                    displayed_points:add(lex("energy",sample_energy,"range",sample_range)).
+                }
+            }
+        }
+    }
+    return displayed_points.
+}
+
+// The path keeps fixed chart coordinates between solver updates. Resampling
+// uses this page's full-width spacing; advancing the shuttle only removes
+// passed samples, without moving the remaining dots or stretching their gaps.
+function update_reentry_vsit_prediction_path {
+    parameter points.
+    parameter page_energy_min.
+    parameter page_energy_max.
+    parameter page_range_min.
+    parameter page_range_max.
+    parameter current_energy.
+    parameter calibration.
+    local display_points is reentry_vsit_display_points(
+        points,page_energy_min,page_energy_max,
+        page_range_min,page_range_max,current_energy
+    ).
+    local visible_count is display_points:length.
+    if visible_count = 0 {
+        hide_reentry_vsit_prediction_path().
+        return 0.
+    }
+    local previous_rect_y is 0.
+    local previous_rect_height is 1.
+    for marker_index in range(0,traj_disp_prediction_path:length) {
+        local marker is traj_disp_prediction_path[marker_index].
+        if marker_index < visible_count {
+            local path_point is display_points[marker_index].
+            local energy_from_left_km is (path_point["energy"]-page_energy_min)/1000.
+            local point_x is 50 + energy_from_left_km*calibration["energy_px_per_km"]+
+                calibration["pred_x_offset"].
+            local point_y is reentry_vsit_chart_plot_bottom() -
+                (path_point["range"]-page_range_min)/1000*calibration["pred_range_px_per_km"]+
+                calibration["pred_y_offset"].
+            set previous_rect_y to place_reentry_vsit_prediction_dot(
+                marker_index,point_x,point_y,2,previous_rect_y,previous_rect_height
+            ).
+            set previous_rect_height to 2.
+        } else {
+            set marker:visible to false.
+            set marker:style:width to 2.
+            set marker:style:height to 2.
+        }
+    }
+    return visible_count.
 }
 
 // Return a display-sized sample of the solver's complete planned ground path.
@@ -755,6 +964,8 @@ function update_reentry_gui {
         "guid_alt", 0,
         "guid_pos", 0,
         "guid_pos_valid", false,
+        "prediction_path", list(),
+        "prediction_path_valid", false,
         "range_remaining", 0,
         "pitch", pitch_for(),
         "yaw", compass_for(),
@@ -792,15 +1003,37 @@ function update_reentry_gui {
         set traj_disp_ssto:visible to false.
         set traj_disp_pred:visible to false.
         hide_reentry_lsit_path().
+        hide_reentry_vsit_prediction_path().
+        set traj_disp_prediction_origin:visible to false.
         traj_data:hide().
         return.
     } else {
         set traj_disp_ssto:visible to true.
-        set traj_disp_pred:visible to true.
+        // Keep the legacy marker hidden throughout this update. Only the
+        // L/SIT branch may show it after its target position is ready.
+        // Showing it here can flash between kOS opcode slices in V/SIT.
+        set traj_disp_pred:visible to false.
         traj_data:show().
     }
 
     local lsit_mode is inputs["mode"] = "L/SIT 1" or inputs["mode"] = "L/SIT 2".
+    local vsit_mode is inputs["mode"] = "TRAJ 1 V/SIT" or inputs["mode"] = "TRAJ 2 V/SIT" or
+        inputs["mode"] = "TRAJ 3 V/SIT" or inputs["mode"] = "TRAJ 4 V/SIT" or
+        inputs["mode"] = "TRAJ 5 V/SIT".
+    set traj_disp_prediction_origin:visible to vsit_mode.
+    if vsit_mode {
+        // A populated chart consumes its fixed 380px height. The readouts
+        // and shuttle were calibrated against an empty chart, which consumed
+        // no layout height. Overlap the following data box by exactly 380px
+        // to preserve that original console origin. Pair negative margins
+        // because Unity chooses MAX at each adjacent vertical boundary.
+        set traj_disp_mainbox:style:margin:bottom to -380.
+        set traj_data:style:margin:top to -380.
+    } else {
+        set traj_disp_mainbox:style:margin:bottom to -150.
+        set traj_data:style:margin:top to 0.
+        hide_reentry_vsit_prediction_path().
+    }
     if not lsit_mode {
         set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
         hide_reentry_lsit_path().
@@ -816,6 +1049,7 @@ function update_reentry_gui {
         local page_energy_min is entry_nominal_traj1_energy_min.
         local page_energy_max is entry_nominal_traj1_energy_max.
         local page_range_min is entry_nominal_traj1_range_min.
+        local page_range_max is entry_nominal_traj1_range_max.
         local vsit_calibration is reentry_traj1_vsit_calibration.
         set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
         if inputs["mode"] = "TRAJ 2 V/SIT" {
@@ -823,24 +1057,28 @@ function update_reentry_gui {
             set page_energy_min to entry_nominal_traj2_energy_min.
             set page_energy_max to entry_nominal_traj2_energy_max.
             set page_range_min to entry_nominal_traj2_range_min.
+            set page_range_max to entry_nominal_traj2_range_max.
             set vsit_calibration to reentry_traj2_vsit_calibration.
         } else if inputs["mode"] = "TRAJ 3 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_entry_nominal.png".
             set page_energy_min to entry_nominal_traj3_energy_min.
             set page_energy_max to entry_nominal_traj3_energy_max.
             set page_range_min to entry_nominal_traj3_range_min.
+            set page_range_max to entry_nominal_traj3_range_max.
             set vsit_calibration to reentry_traj3_vsit_calibration.
         } else if inputs["mode"] = "TRAJ 4 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_entry_nominal.png".
             set page_energy_min to entry_nominal_traj4_energy_min.
             set page_energy_max to entry_nominal_traj4_energy_max.
             set page_range_min to entry_nominal_traj4_range_min.
+            set page_range_max to entry_nominal_traj4_range_max.
             set vsit_calibration to reentry_traj4_vsit_calibration.
         } else if inputs["mode"] = "TRAJ 5 V/SIT" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj5_entry_nominal.png".
             set page_energy_min to entry_nominal_traj5_energy_min.
             set page_energy_max to entry_nominal_traj5_energy_max.
             set page_range_min to entry_nominal_traj5_range_min.
+            set page_range_max to entry_nominal_traj5_range_max.
             set vsit_calibration to reentry_traj5_vsit_calibration.
         }
 
@@ -869,20 +1107,49 @@ function update_reentry_gui {
         set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
         set traj_disp_ssto:STYLE:margin:h to ssto_margin_h.
 
-        local nominal_margin_v is 140 - (nominal_range-page_range_min)/1000 *
-            vsit_calibration["range_px_per_km"] +
-            vsit_calibration["pred_y_offset"].
-        set traj_disp_pred:STYLE:padding:top to nominal_margin_v-ssto_margin_v.
-        set traj_disp_pred:STYLE:margin:h to 50 + energy_from_left_km *
-            vsit_calibration["energy_px_per_km"] +
-            vsit_calibration["pred_x_offset"].
-        set traj_disp_pred:visible to true.
+        // Replace the static nominal-centreline bug with the cached path from
+        // the low/high guidance predictions. The live shuttle remains above it.
+        set traj_disp_pred:visible to false.
+        set traj_disp_pred:style:width to 0.
+        set traj_disp_pred:style:height to 0.
+        set traj_disp_pred:style:padding:top to 0.
+        set traj_disp_pred:style:margin:top to 0.
+        hide_reentry_lsit_path().
+        for path_marker in traj_disp_path {
+            set path_marker:style:width to 0.
+            set path_marker:style:height to 0.
+            set path_marker:style:padding:top to 0.
+            set path_marker:style:margin:top to 0.
+        }
+        local prediction_path_valid is false.
+        local prediction_path is list().
+        if inputs:haskey("prediction_path_valid") {
+            set prediction_path_valid to inputs["prediction_path_valid"].
+        }
+        if inputs:haskey("prediction_path") {
+            set prediction_path to inputs["prediction_path"].
+        }
+        if prediction_path_valid {
+            update_reentry_vsit_prediction_path(
+                prediction_path,page_energy_min,page_energy_max,
+                page_range_min,page_range_max,energy_height,vsit_calibration
+            ).
+        } else {
+            hide_reentry_vsit_prediction_path().
+        }
         hide_reentry_lsit_path().
     }
 
     // TEAM starts on the wide L/SIT 1 and moves to the tighter L/SIT 2 after
     // reaching base. Both views use the live terminal route.
     if inputs["mode"] = "L/SIT 1" or inputs["mode"] = "L/SIT 2" {
+        hide_reentry_vsit_prediction_path().
+        set traj_disp_pred:style:width to 8.
+        set traj_disp_pred:style:height to 8.
+        for path_marker in traj_disp_path {
+            set path_marker:style:width to 4.
+            set path_marker:style:height to 4.
+        }
         set console_time:text to ((timestamp():clock)).
         if inputs["mode"] = "L/SIT 1" {
             set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".

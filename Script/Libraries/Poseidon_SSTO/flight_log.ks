@@ -44,7 +44,10 @@ global POS_LOG_EVENT_FILE is "".
 // Version 20 adds terminal route work, clean-loss learning and brake forecast.
 // Version 21 adds current-turn extra distance and brake-protected energy.
 // Version 22 adds below-glide-slope turn pitch and fast-turn diagnostics.
-global POS_LOG_SCHEMA_VERSION is 24.
+// Version 25 adds entry recovery clocks and completed-solve timing.
+global POS_LOG_SCHEMA_VERSION is 25.
+global POS_LOG_ENTRY_BASIC_UT is -1.
+global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
@@ -55,6 +58,8 @@ global POS_LOG_LAST_SUBSTEP is "".
 global POS_LOG_LAST_DAP_MODE is "".
 global POS_LOG_LAST_STEERING_MODE is "".
 global POS_LOG_LAST_ENTRY_DISPLAY_MODE is "".
+global POS_LOG_ENTRY_TARGET_RECORDED is false.
+global POS_LOG_LAST_ENVELOPE_STATE is "".
 global POS_LOG_LAST_GPWS_STATE is "".
 global POS_LOG_LAST_GPWS_REASON is "".
 global POS_LOG_LAST_PDI_STATE is "".
@@ -268,7 +273,7 @@ function flight_log_vacuum_ascent_header {
 
 function flight_log_write_headers {
     if POS_LOG_HEADERS_WRITTEN { return. }
-    log "schema,session,ut,mission_time,sample,program,body,step,substep,dap_mode,steering_mode,vessel_status,rapier_mode,rapiers_active,nervs_active,wheel_brakes,rcs_actual,sas_actual,latitude,longitude,altitude,radar_altitude,airspeed,surface_speed,vertical_speed,surface_velocity_x,surface_velocity_y,surface_velocity_z,acceleration_x,acceleration_y,acceleration_z,pitch,heading,roll,facing_x,facing_y,facing_z,mass,thrust,dynamic_pressure,mach,throttle_command,throttle_actual,aoa_actual,aoa_target,bank_target,smooth_aoa,smooth_bank,base_pitch,aerostr_target_pitch,aerostr_target_roll,aerostr_turn_pitch,aerostr_turn_heading,envelope_state,envelope_regime,envelope_max_aoa,envelope_max_bank,envelope_min_throttle,envelope_rcs_assist,gpws_state,gpws_worst_clearance,gpws_required_clearance,gpws_clearance_margin,gpws_clear_timer,gpws_next_scan_ut,gpws_pullup_active,terminal_phase,terminal_profile_region,terminal_profile_altitude,terminal_profile_gradient,terminal_profile_error,terminal_profile_feedforward_vs,terminal_side,terminal_hold_laps,terminal_target_distance,terminal_remaining_distance,terminal_target_altitude,terminal_along_track,terminal_cross_track,terminal_energy_margin,terminal_target_energy,terminal_runway_heading_error,terminal_target_vs,landing_target_vs,landing_flare_fraction,terminal_pitch_bias,terminal_target_aoa,terminal_throttle,terminal_airbrake,terminal_gear,terminal_landing_stable,terminal_go_around_reason,terminal_pid_output,target_latitude,target_longitude,target_altitude,entry_reference_latitude,entry_reference_longitude,entry_reference_altitude,entry_reference_speed,entry_energy_reference,entry_energy_actual,entry_energy_error,entry_heading_error,entry_bank_command,entry_time_to_interface,entry_turn_side,entry_lift_to_drag,entry_segment_start_time,entry_segment_end_time,entry_segment_fraction,entry_segment_cross_track,runway_start_latitude,runway_start_longitude,runway_end_latitude,runway_end_longitude,runway_heading,runway_altitude,dap_dt,aerostr_target_direction,aerostr_turn_roll,aerostr_distance_pitch,aerostr_pitch,aerostr_roll,aerostr_heading,aoa_pitch_command,aoa_yaw_command,aoa_roll_command,css_pitch_output,css_yaw_output,css_roll_output,css_last_roll,css_last_aoa,envelope_last_aoa,envelope_last_speed,envelope_last_pitch_error,envelope_pitchdown_timer,envelope_authority_timer,envelope_upset_timer,envelope_stable_timer,envelope_restore_steering,vacuum_phase,vacuum_target_latitude,vacuum_target_longitude,vacuum_target_altitude,vacuum_target_distance,vacuum_surface_clearance,vacuum_surface_speed,vacuum_target_vertical_speed,vacuum_throttle,vacuum_stopping_distance,vacuum_available_acceleration,vacuum_tail_contact,vacuum_gear_pitch_target" + flight_log_vacuum_ascent_header() + flight_log_pdi_header() + flight_log_rendezvous_header() + flight_log_entry_predictive_header() + flight_log_terminal_energy_header() to POS_LOG_FLIGHT_FILE.
+    log "schema,session,ut,mission_time,sample,program,body,step,substep,dap_mode,steering_mode,vessel_status,rapier_mode,rapiers_active,nervs_active,wheel_brakes,rcs_actual,sas_actual,latitude,longitude,altitude,radar_altitude,airspeed,surface_speed,vertical_speed,surface_velocity_x,surface_velocity_y,surface_velocity_z,acceleration_x,acceleration_y,acceleration_z,pitch,heading,roll,facing_x,facing_y,facing_z,mass,thrust,dynamic_pressure,mach,throttle_command,throttle_actual,aoa_actual,aoa_target,bank_target,smooth_aoa,smooth_bank,base_pitch,aerostr_target_pitch,aerostr_target_roll,aerostr_turn_pitch,aerostr_turn_heading,envelope_state,envelope_regime,envelope_max_aoa,envelope_max_bank,envelope_min_throttle,envelope_rcs_assist,gpws_state,gpws_worst_clearance,gpws_required_clearance,gpws_clearance_margin,gpws_clear_timer,gpws_next_scan_ut,gpws_pullup_active,terminal_phase,terminal_profile_region,terminal_profile_altitude,terminal_profile_gradient,terminal_profile_error,terminal_profile_feedforward_vs,terminal_side,terminal_hold_laps,terminal_target_distance,terminal_remaining_distance,terminal_target_altitude,terminal_along_track,terminal_cross_track,terminal_energy_margin,terminal_target_energy,terminal_runway_heading_error,terminal_target_vs,landing_target_vs,landing_flare_fraction,terminal_pitch_bias,terminal_target_aoa,terminal_throttle,terminal_airbrake,terminal_gear,terminal_landing_stable,terminal_go_around_reason,terminal_pid_output,target_latitude,target_longitude,target_altitude,entry_reference_latitude,entry_reference_longitude,entry_reference_altitude,entry_reference_speed,entry_energy_reference,entry_energy_actual,entry_energy_error,entry_heading_error,entry_bank_command,entry_time_to_interface,entry_turn_side,entry_lift_to_drag,entry_segment_start_time,entry_segment_end_time,entry_segment_fraction,entry_segment_cross_track,runway_start_latitude,runway_start_longitude,runway_end_latitude,runway_end_longitude,runway_heading,runway_altitude,dap_dt,aerostr_target_direction,aerostr_turn_roll,aerostr_distance_pitch,aerostr_pitch,aerostr_roll,aerostr_heading,aoa_pitch_command,aoa_yaw_command,aoa_roll_command,css_pitch_output,css_yaw_output,css_roll_output,css_last_roll,css_last_aoa,envelope_last_aoa,envelope_last_speed,envelope_last_pitch_error,envelope_pitchdown_timer,envelope_authority_timer,envelope_upset_timer,envelope_stable_timer,envelope_restore_steering,vacuum_phase,vacuum_target_latitude,vacuum_target_longitude,vacuum_target_altitude,vacuum_target_distance,vacuum_surface_clearance,vacuum_surface_speed,vacuum_target_vertical_speed,vacuum_throttle,vacuum_stopping_distance,vacuum_available_acceleration,vacuum_tail_contact,vacuum_gear_pitch_target" + flight_log_vacuum_ascent_header() + flight_log_pdi_header() + flight_log_rendezvous_header() + flight_log_entry_predictive_header() + flight_log_terminal_energy_header() + flight_log_entry_recovery_header() to POS_LOG_FLIGHT_FILE.
     log "schema,session,ut,mission_time,program,event,detail" to POS_LOG_EVENT_FILE.
     set POS_LOG_HEADERS_WRITTEN to true.
 }
@@ -323,6 +328,8 @@ function flight_log_event {
 function flight_log_begin {
     parameter program_name.
     set POS_LOG_PROGRAM to program_name.
+    set POS_LOG_ENTRY_BASIC_UT to -1.
+    set POS_LOG_ENTRY_SOLVER_DURATION to 0.
     if POS_LOG_LEVEL = 0 { return. }
     flight_log_choose_files().
     set POS_LOG_RUNWAY to lex(
@@ -330,6 +337,7 @@ function flight_log_begin {
         "end_lat",0,"end_lng",0,"heading",0,"altitude",0
     ).
     set POS_LOG_TARGET to lex("lat",0,"lng",0,"altitude",0).
+    set POS_LOG_ENTRY_TARGET_RECORDED to false.
     set POS_LOG_ENTRY to lex(
         "reference_lat",0,"reference_lng",0,"reference_altitude",0,"reference_speed",0,
         "energy_reference",0,"energy_actual",0,"energy_error",0,"heading_error",0,
@@ -361,6 +369,7 @@ function flight_log_begin {
     set POS_LOG_LAST_DAP_MODE to "".
     set POS_LOG_LAST_STEERING_MODE to "".
     set POS_LOG_LAST_ENTRY_DISPLAY_MODE to "".
+    set POS_LOG_LAST_ENVELOPE_STATE to "".
     set POS_LOG_LAST_GPWS_STATE to "".
     set POS_LOG_LAST_GPWS_REASON to "".
     set POS_LOG_LAST_PDI_STATE to "".
@@ -375,6 +384,47 @@ function flight_log_begin {
     // replay distinguish guidance behavior from a differently configured CPU.
     flight_log_event("flight_start","mode=" + POS_LOGGING_MODE + "|body=" + POS_LOG_LAST_BODY +
         "|directory=" + POS_LOG_DIRECTORY + "|ipu=" + CONFIG:IPU).
+}
+
+// Recovery state is sampled only at the logger's existing medium/high cadence.
+// Low mode records one decision event per basic update or completed solve.
+function flight_log_entry_recovery_header {
+    return ",entry_recovery_mode,entry_target_converged,entry_solver_retry_ut,"+
+        "entry_basic_update_ut,entry_solver_duration,entry_basic_update_age,entry_rejected_candidates".
+}
+
+function flight_log_entry_recovery_columns {
+    local recovery_mode is "inactive".
+    local target_converged is false.
+    local retry_ut is -1.
+    local basic_ut is -1.
+    local rejected_count is 0.
+    if POS_LOG_PROGRAM = "reentry" {
+        set recovery_mode to "planning".
+        if defined basice_reentry_guidance {
+            if basice_reentry_guidance { set recovery_mode to "basic". }
+            else if defined entry_traj { set recovery_mode to "predictive". }
+        }
+        if defined val_tgt { set target_converged to val_tgt. }
+        if defined entry_solver_next_retry_time { set retry_ut to entry_solver_next_retry_time. }
+        if defined entry_basic_next_update { set basic_ut to entry_basic_next_update. }
+        if defined entry_rejected_runways { set rejected_count to entry_rejected_runways:keys:length. }
+    }
+    local basic_age is -1.
+    if POS_LOG_ENTRY_BASIC_UT >= 0 { set basic_age to time:seconds-POS_LOG_ENTRY_BASIC_UT. }
+    return ","+recovery_mode+","+target_converged+","+retry_ut+","+basic_ut+","+
+        POS_LOG_ENTRY_SOLVER_DURATION+","+basic_age+","+rejected_count.
+}
+
+function flight_log_entry_recovery {
+    parameter recovery_phase, solve_duration.
+    if POS_LOG_LEVEL < 1 { return. }
+    if recovery_phase = "basic_update" { set POS_LOG_ENTRY_BASIC_UT to time:seconds. }
+    if recovery_phase = "solver_complete" { set POS_LOG_ENTRY_SOLVER_DURATION to solve_duration. }
+    flight_log_event("entry_recovery_update","phase="+recovery_phase+
+        "|runway="+Location+"_"+runway_nr+"|solver_duration="+round(solve_duration,2)+
+        "|aoa="+round(dap["aoa"]["target_aoa"],2)+
+        "|bank="+round(dap["aoa"]["target_bank"],2)).
 }
 
 function flight_log_set_runway {
@@ -394,9 +444,14 @@ function flight_log_set_runway {
 function flight_log_set_entry_target {
     parameter team_interface.
     if POS_LOG_LEVEL < 1 { return. }
+    local target_changed is POS_LOG_TARGET["lat"] <> team_interface["target_latlng"]:lat or
+        POS_LOG_TARGET["lng"] <> team_interface["target_latlng"]:lng or
+        POS_LOG_TARGET["altitude"] <> team_interface["target_altitude"].
+    if POS_LOG_ENTRY_TARGET_RECORDED and not target_changed { return. }
     set POS_LOG_TARGET["lat"] to team_interface["target_latlng"]:lat.
     set POS_LOG_TARGET["lng"] to team_interface["target_latlng"]:lng.
     set POS_LOG_TARGET["altitude"] to team_interface["target_altitude"].
+    set POS_LOG_ENTRY_TARGET_RECORDED to true.
     flight_log_event("entry_target","latitude=" + round(POS_LOG_TARGET["lat"],6) +
         "|longitude=" + round(POS_LOG_TARGET["lng"],6) +
         "|altitude=" + round(POS_LOG_TARGET["altitude"],1) +
@@ -483,6 +538,26 @@ function flight_log_entry_prediction {
         "|upper_miss="+round(upper_miss,1)+"|authority="+round(authority,3)+
         "|sensitivity="+round(sensitivity,3)+
         "|elapsed="+round(elapsed_time,3)).
+}
+
+// Record the compact V/SIT path result once per ordinary two-bank prediction
+// update. This observer runs after sim_with_bank returns and is never called
+// from a trajectory simulation.
+function flight_log_entry_display_path {
+    parameter path_result.
+    parameter lower_bank.
+    parameter upper_bank.
+    parameter selected_bank.
+    if POS_LOG_LEVEL < 1 { return. }
+    local detail is "valid="+path_result["valid"]+"|reason="+path_result["reason"]+
+        "|points="+path_result["points"]:length+"|lower_bank="+round(lower_bank,3)+
+        "|upper_bank="+round(upper_bank,3)+"|selected_bank="+round(selected_bank,3).
+    if path_result["valid"] {
+        set detail to detail+"|weight="+round(path_result["weight"],4)+
+            "|energy_min="+round(path_result["energy_min"],1)+
+            "|energy_max="+round(path_result["energy_max"],1).
+    }
+    flight_log_event("entry_display_path",detail).
 }
 
 // Capture values produced by the live entry controller.  For medium this runs
@@ -716,7 +791,7 @@ function flight_log_write_sample {
     set POS_LOG_TERMINAL_HIGH_ENERGY_PITCH_COMMAND to terminal_high_energy_pitch_command.
     set POS_LOG_TERMINAL_HIGH_ENERGY_PID_OUTPUT to terminal_high_energy_pid_output.
     set POS_LOG_TERMINAL_HIGH_ENERGY_TIME_TO_AIM to terminal_high_energy_time_to_aim.
-    log POS_LOG_SCHEMA_VERSION + "," + POS_LOG_SESSION + "," + time:seconds + "," + missiontime + "," + POS_LOG_SAMPLE_INDEX + "," + program_name + "," + ship:body:name + "," + current_step + "," + current_substep + "," + dap["dap_mode"] + "," + dap["str_mode"] + "," + ship:status + "," + rapier_mode + "," + rapiers + "," + nervs + "," + brakes + "," + RCS + "," + SAS + "," + ship:geoposition:lat + "," + ship:geoposition:lng + "," + ship:altitude + "," + alt:radar + "," + ship:airspeed + "," + surface_velocity:mag + "," + ship:verticalspeed + "," + surface_velocity:x + "," + surface_velocity:y + "," + surface_velocity:z + "," + acceleration:x + "," + acceleration:y + "," + acceleration:z + "," + pitch_for() + "," + compass_for() + "," + roll_for() + "," + facing_vec:x + "," + facing_vec:y + "," + facing_vec:z + "," + ship:mass + "," + ship:thrust + "," + ship:q + "," + ADDONS:FAR:mach + "," + dapthrottle + "," + throttle + "," + calc_aoa() + "," + dap["aoa"]["target_aoa"] + "," + dap["aoa"]["target_bank"] + "," + dap["aoa"]["smooth_target_aoa"] + "," + dap["aoa"]["smooth_target_bank"] + "," + dap["aoa"]["base_pitch"] + "," + dap["aerostr"]["targetPitch"] + "," + dap["aerostr"]["targetRoll"] + "," + dap["aerostr"]["turn_pitch"] + "," + dap["aerostr"]["turn_heading"] + "," + envelope["state"] + "," + envelope["regime"] + "," + envelope["max_aoa"] + "," + envelope["max_bank"] + "," + envelope["min_throttle"] + "," + envelope["rcs_assist"] + "," + envelope["terrain_state"] + "," + envelope["terrain_worst_clearance"] + "," + envelope["terrain_required_clearance"] + "," + gpws_clearance_margin + "," + envelope["terrain_clear_timer"] + "," + envelope["terrain_next_scan"] + "," + gpws_pullup_active + "," + terminal_phase + "," + terminal_profile_region + "," + terminal_profile_altitude + "," + terminal_profile_gradient + "," + terminal_profile_error + "," + terminal_profile_feedforward_vs + "," + terminal_side + "," + terminal_hold_laps + "," + terminal_target_distance + "," + terminal_remaining_distance + "," + terminal_target_altitude + "," + terminal_along_track + "," + terminal_cross_track + "," + terminal_energy_margin + "," + terminal_target_energy + "," + terminal_runway_heading_error + "," + terminal_target_vs + "," + landing_target_vs + "," + landing_flare_fraction + "," + terminal_pitch_bias + "," + terminal_target_aoa + "," + terminal_throttle + "," + terminal_airbrake + "," + terminal_gear + "," + terminal_landing_stable + "," + terminal_go_around_reason + "," + terminal_pid_output + "," + POS_LOG_TARGET["lat"] + "," + POS_LOG_TARGET["lng"] + "," + POS_LOG_TARGET["altitude"] + "," + POS_LOG_ENTRY["reference_lat"] + "," + POS_LOG_ENTRY["reference_lng"] + "," + POS_LOG_ENTRY["reference_altitude"] + "," + POS_LOG_ENTRY["reference_speed"] + "," + POS_LOG_ENTRY["energy_reference"] + "," + POS_LOG_ENTRY["energy_actual"] + "," + POS_LOG_ENTRY["energy_error"] + "," + POS_LOG_ENTRY["heading_error"] + "," + POS_LOG_ENTRY["bank_command"] + "," + POS_LOG_ENTRY["time_to_interface"] + "," + POS_LOG_ENTRY["turn_side"] + "," + POS_LOG_ENTRY["lift_to_drag"] + "," + POS_LOG_ENTRY["segment_start_time"] + "," + POS_LOG_ENTRY["segment_end_time"] + "," + POS_LOG_ENTRY["segment_fraction"] + "," + POS_LOG_ENTRY["segment_cross_track"] + "," + POS_LOG_RUNWAY["start_lat"] + "," + POS_LOG_RUNWAY["start_lng"] + "," + POS_LOG_RUNWAY["end_lat"] + "," + POS_LOG_RUNWAY["end_lng"] + "," + POS_LOG_RUNWAY["heading"] + "," + POS_LOG_RUNWAY["altitude"] + "," + dap["dt"] + "," + dap["aerostr"]["targetDirection"] + "," + dap["aerostr"]["turn_roll"] + "," + dap["aerostr"]["distance_pitch"] + "," + dap["aerostr"]["aerostr_pitch"] + "," + dap["aerostr"]["aerostr_roll"] + "," + dap["aerostr"]["aerostr_heading"] + "," + dap["aoa"]["aoa_pitch"] + "," + dap["aoa"]["aoa_yaw"] + "," + dap["aoa"]["aoa_roll"] + "," + dap["css"]["pitch_out"] + "," + dap["css"]["yaw_out"] + "," + dap["css"]["roll_out"] + "," + dap["css"]["last_roll"] + "," + dap["css"]["last_aoa"] + "," + envelope["last_aoa"] + "," + envelope["last_speed"] + "," + envelope["last_pitch_error"] + "," + envelope["pitchdown_timer"] + "," + envelope["authority_timer"] + "," + envelope["upset_timer"] + "," + envelope["stable_timer"] + "," + envelope["restore_steering"] + "," + vacuum_phase + "," + vacuum_target_latitude + "," + vacuum_target_longitude + "," + vacuum_target_altitude + "," + vacuum_target_distance + "," + vacuum_surface_clearance + "," + vacuum_surface_speed + "," + vacuum_target_vertical_speed + "," + vacuum_throttle + "," + vacuum_stopping_distance + "," + vacuum_available_acceleration + "," + vacuum_tail_contact + "," + vacuum_gear_pitch_target + "," + vacuum_ascent_phase + "," + vacuum_ascent_target_altitude + "," + vacuum_ascent_target_inclination + "," + vacuum_ascent_launch_heading + "," + vacuum_ascent_surface_clearance + "," + vacuum_ascent_vertical_speed + "," + vacuum_ascent_horizontal_speed + "," + vacuum_ascent_target_pitch + "," + vacuum_ascent_attitude_error + "," + vacuum_ascent_nerv_twr + "," + vacuum_ascent_rapier_kick_active + "," + vacuum_ascent_predicted_apoapsis + "," + vacuum_ascent_predicted_periapsis + "," + vacuum_ascent_node_dv + "," + vacuum_ascent_node_eta + flight_log_pdi_columns() + flight_log_rendezvous_columns() + flight_log_entry_predictive_columns() + flight_log_terminal_energy_columns() to POS_LOG_FLIGHT_FILE.
+    log POS_LOG_SCHEMA_VERSION + "," + POS_LOG_SESSION + "," + time:seconds + "," + missiontime + "," + POS_LOG_SAMPLE_INDEX + "," + program_name + "," + ship:body:name + "," + current_step + "," + current_substep + "," + dap["dap_mode"] + "," + dap["str_mode"] + "," + ship:status + "," + rapier_mode + "," + rapiers + "," + nervs + "," + brakes + "," + RCS + "," + SAS + "," + ship:geoposition:lat + "," + ship:geoposition:lng + "," + ship:altitude + "," + alt:radar + "," + ship:airspeed + "," + surface_velocity:mag + "," + ship:verticalspeed + "," + surface_velocity:x + "," + surface_velocity:y + "," + surface_velocity:z + "," + acceleration:x + "," + acceleration:y + "," + acceleration:z + "," + pitch_for() + "," + compass_for() + "," + roll_for() + "," + facing_vec:x + "," + facing_vec:y + "," + facing_vec:z + "," + ship:mass + "," + ship:thrust + "," + ship:q + "," + ADDONS:FAR:mach + "," + dapthrottle + "," + throttle + "," + calc_aoa() + "," + dap["aoa"]["target_aoa"] + "," + dap["aoa"]["target_bank"] + "," + dap["aoa"]["smooth_target_aoa"] + "," + dap["aoa"]["smooth_target_bank"] + "," + dap["aoa"]["base_pitch"] + "," + dap["aerostr"]["targetPitch"] + "," + dap["aerostr"]["targetRoll"] + "," + dap["aerostr"]["turn_pitch"] + "," + dap["aerostr"]["turn_heading"] + "," + envelope["state"] + "," + envelope["regime"] + "," + envelope["max_aoa"] + "," + envelope["max_bank"] + "," + envelope["min_throttle"] + "," + envelope["rcs_assist"] + "," + envelope["terrain_state"] + "," + envelope["terrain_worst_clearance"] + "," + envelope["terrain_required_clearance"] + "," + gpws_clearance_margin + "," + envelope["terrain_clear_timer"] + "," + envelope["terrain_next_scan"] + "," + gpws_pullup_active + "," + terminal_phase + "," + terminal_profile_region + "," + terminal_profile_altitude + "," + terminal_profile_gradient + "," + terminal_profile_error + "," + terminal_profile_feedforward_vs + "," + terminal_side + "," + terminal_hold_laps + "," + terminal_target_distance + "," + terminal_remaining_distance + "," + terminal_target_altitude + "," + terminal_along_track + "," + terminal_cross_track + "," + terminal_energy_margin + "," + terminal_target_energy + "," + terminal_runway_heading_error + "," + terminal_target_vs + "," + landing_target_vs + "," + landing_flare_fraction + "," + terminal_pitch_bias + "," + terminal_target_aoa + "," + terminal_throttle + "," + terminal_airbrake + "," + terminal_gear + "," + terminal_landing_stable + "," + terminal_go_around_reason + "," + terminal_pid_output + "," + POS_LOG_TARGET["lat"] + "," + POS_LOG_TARGET["lng"] + "," + POS_LOG_TARGET["altitude"] + "," + POS_LOG_ENTRY["reference_lat"] + "," + POS_LOG_ENTRY["reference_lng"] + "," + POS_LOG_ENTRY["reference_altitude"] + "," + POS_LOG_ENTRY["reference_speed"] + "," + POS_LOG_ENTRY["energy_reference"] + "," + POS_LOG_ENTRY["energy_actual"] + "," + POS_LOG_ENTRY["energy_error"] + "," + POS_LOG_ENTRY["heading_error"] + "," + POS_LOG_ENTRY["bank_command"] + "," + POS_LOG_ENTRY["time_to_interface"] + "," + POS_LOG_ENTRY["turn_side"] + "," + POS_LOG_ENTRY["lift_to_drag"] + "," + POS_LOG_ENTRY["segment_start_time"] + "," + POS_LOG_ENTRY["segment_end_time"] + "," + POS_LOG_ENTRY["segment_fraction"] + "," + POS_LOG_ENTRY["segment_cross_track"] + "," + POS_LOG_RUNWAY["start_lat"] + "," + POS_LOG_RUNWAY["start_lng"] + "," + POS_LOG_RUNWAY["end_lat"] + "," + POS_LOG_RUNWAY["end_lng"] + "," + POS_LOG_RUNWAY["heading"] + "," + POS_LOG_RUNWAY["altitude"] + "," + dap["dt"] + "," + dap["aerostr"]["targetDirection"] + "," + dap["aerostr"]["turn_roll"] + "," + dap["aerostr"]["distance_pitch"] + "," + dap["aerostr"]["aerostr_pitch"] + "," + dap["aerostr"]["aerostr_roll"] + "," + dap["aerostr"]["aerostr_heading"] + "," + dap["aoa"]["aoa_pitch"] + "," + dap["aoa"]["aoa_yaw"] + "," + dap["aoa"]["aoa_roll"] + "," + dap["css"]["pitch_out"] + "," + dap["css"]["yaw_out"] + "," + dap["css"]["roll_out"] + "," + dap["css"]["last_roll"] + "," + dap["css"]["last_aoa"] + "," + envelope["last_aoa"] + "," + envelope["last_speed"] + "," + envelope["last_pitch_error"] + "," + envelope["pitchdown_timer"] + "," + envelope["authority_timer"] + "," + envelope["upset_timer"] + "," + envelope["stable_timer"] + "," + envelope["restore_steering"] + "," + vacuum_phase + "," + vacuum_target_latitude + "," + vacuum_target_longitude + "," + vacuum_target_altitude + "," + vacuum_target_distance + "," + vacuum_surface_clearance + "," + vacuum_surface_speed + "," + vacuum_target_vertical_speed + "," + vacuum_throttle + "," + vacuum_stopping_distance + "," + vacuum_available_acceleration + "," + vacuum_tail_contact + "," + vacuum_gear_pitch_target + "," + vacuum_ascent_phase + "," + vacuum_ascent_target_altitude + "," + vacuum_ascent_target_inclination + "," + vacuum_ascent_launch_heading + "," + vacuum_ascent_surface_clearance + "," + vacuum_ascent_vertical_speed + "," + vacuum_ascent_horizontal_speed + "," + vacuum_ascent_target_pitch + "," + vacuum_ascent_attitude_error + "," + vacuum_ascent_nerv_twr + "," + vacuum_ascent_rapier_kick_active + "," + vacuum_ascent_predicted_apoapsis + "," + vacuum_ascent_predicted_periapsis + "," + vacuum_ascent_node_dv + "," + vacuum_ascent_node_eta + flight_log_pdi_columns() + flight_log_rendezvous_columns() + flight_log_entry_predictive_columns() + flight_log_terminal_energy_columns() + flight_log_entry_recovery_columns() to POS_LOG_FLIGHT_FILE.
     set POS_LOG_SAMPLE_INDEX to POS_LOG_SAMPLE_INDEX + 1.
 }
 
@@ -747,6 +822,13 @@ function flight_log_tick {
         set POS_LOG_LAST_STEERING_MODE to dap["str_mode"].
         flight_log_event("steering_mode","value=" + dap["str_mode"]).
     }
+    if POS_LOG_LAST_ENVELOPE_STATE <> dap["envelope"]["state"] {
+        set POS_LOG_LAST_ENVELOPE_STATE to dap["envelope"]["state"].
+        flight_log_event("envelope_state","value="+POS_LOG_LAST_ENVELOPE_STATE+
+            "|regime="+dap["envelope"]["regime"]+"|aoa="+round(calc_aoa(),2)+
+            "|bank="+round(roll_for(),2)+"|pitch="+round(pitch_for(),2)+
+            "|altitude="+round(ship:altitude,1)).
+    }
     if POS_LOG_LAST_GPWS_STATE <> dap["envelope"]["terrain_state"] or POS_LOG_LAST_GPWS_REASON <> dap["envelope"]["terrain_inhibit_reason"] {
         set POS_LOG_LAST_GPWS_STATE to dap["envelope"]["terrain_state"].
         set POS_LOG_LAST_GPWS_REASON to dap["envelope"]["terrain_inhibit_reason"].
@@ -756,6 +838,10 @@ function flight_log_tick {
     if POS_LOG_LEVEL = 2 and time:seconds < POS_LOG_NEXT_SAMPLE_TIME { return. }
     if POS_LOG_LEVEL = 2 { set POS_LOG_NEXT_SAMPLE_TIME to time:seconds + 1. }
     flight_log_write_sample(program_name,current_step,current_substep).
+    if defined abort_state and abort_state:haskey("active") and abort_state["active"] and
+       abort_state["mode"] = "contingency_abort" {
+        flight_log_contingency_sample(abort_state).
+    }
 }
 
 // Observed maneuver phases (not private upstream state names). Runs only in
@@ -781,6 +867,65 @@ function flight_log_maneuver_observe {
     flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
 }
 
+// Takeoff evidence uses events.csv without changing the flight.csv schema.
+// Low: predictions and transitions. Medium: 1 Hz. High: each physics tick.
+// Called only from the real ascent executive, never aerodynamic predictors.
+function flight_log_takeoff_prediction {
+    parameter estimate, prediction_phase.
+    if POS_LOG_LEVEL = 0 { return. }
+    flight_log_event("takeoff_prediction","phase="+prediction_phase+
+        "|reason="+estimate["reason"]+"|model_valid="+estimate["model_valid"]+
+        "|sufficient="+estimate["sufficient"]+"|mass_t="+estimate["mass_t"]+
+        "|nominal_propulsion_assumed="+estimate["nominal_propulsion_assumed"]+
+        "|rotate_mps="+AVES["Speed"]["Rotate"]+"|liftoff_mps="+estimate["liftoff_speed_mps"]+
+        "|rotation_m="+estimate["rotation_distance_m"]+"|liftoff_m="+estimate["liftoff_distance_m"]+
+        "|climb_m="+estimate["climb_distance_m"]+"|screen_height_m="+estimate["screen_height_m"]+
+        "|required_m="+estimate["required_runway_m"]+"|required_departure_m="+estimate["required_departure_m"]+
+        "|departure_status="+estimate["departure_status"]+"|departure_evidence="+estimate["departure_evidence"]+
+        "|liftoff_fits="+estimate["liftoff_fits"]+"|screen_fits="+estimate["screen_fits"]+
+        "|estimated_feasible="+estimate["estimated_feasible"]+"|screen_beyond_runway_m="+estimate["screen_beyond_runway_m"]+
+        "|remaining_m="+estimate["remaining_runway_m"]+
+        "|margin_m="+estimate["runway_margin_m"]+"|distance_margin_fraction="+estimate["distance_margin_fraction"]+
+        "|reference_stop_at_rotation_m="+estimate["reference_stop_at_rotation_m"]+
+        "|stop_reference_valid="+estimate["stop_reference_valid"]).
+}
+
+function flight_log_takeoff_observe {
+    parameter evidence, estimate, roll_start_position, release_ut, ascent_phase.
+    if POS_LOG_LEVEL = 0 { return. }
+    local transition is "".
+    if not evidence["released"] {
+        set evidence["released"] to true.
+        set transition to "brake_release".
+    } else if not evidence["rotated"] and ascent_phase = "rotate" {
+        set evidence["rotated"] to true.
+        set transition to "rotation".
+    } else if not evidence["airborne"] and ship:status = "FLYING" and ship:verticalspeed > 0.3 {
+        set evidence["airborne"] to true.
+        set transition to "liftoff".
+    } else if evidence["airborne"] and ship:altitude - evidence["base_altitude_m"] >= estimate["screen_height_m"] {
+        set evidence["screen_reached"] to true.
+        set transition to "screen_height".
+    }
+    local sample_due is POS_LOG_LEVEL >= 2 and time:seconds >= evidence["next_sample"].
+    if transition = "" and not sample_due { return. }
+    local detail is "phase="+ascent_phase+"|elapsed_s="+(time:seconds-release_ut)+
+        "|roll_m="+calcdistance_m(roll_start_position,ship:geoposition)+
+        "|speed_mps="+ship:airspeed+"|vs_mps="+ship:verticalspeed+
+        "|height_m="+(ship:altitude-evidence["base_altitude_m"])+
+        "|pitch_deg="+pitch_for()+"|mass_t="+ship:mass+"|thrust_kn="+ship:thrust+
+        "|status="+ship:status+"|predicted_liftoff_m="+estimate["liftoff_distance_m"]+
+        "|predicted_required_m="+estimate["required_runway_m"]+
+        "|predicted_departure_m="+estimate["required_departure_m"]+
+        "|departure_status="+estimate["departure_status"]+"|departure_evidence="+estimate["departure_evidence"].
+    if transition <> "" { flight_log_event("takeoff_"+transition,detail). }
+    if sample_due {
+        set evidence["next_sample"] to time:seconds+0.02.
+        if POS_LOG_LEVEL = 2 { set evidence["next_sample"] to time:seconds+1. }
+        flight_log_event("takeoff_sample",detail).
+    }
+}
+
 function flight_log_rcs_observe {
     parameter apsis, target_altitude, evidence.
     if POS_LOG_LEVEL < 2 { return. }
@@ -791,4 +936,73 @@ function flight_log_rcs_observe {
     local actual is ship:apoapsis.
     if apsis = "periapsis" { set actual to ship:periapsis. }
     flight_log_event("rcs_correction_sample","apsis="+apsis+"|target_m="+target_altitude+"|actual_m="+actual+"|error_m="+(actual-target_altitude)+"|fore="+ship:control:fore+"|mass="+ship:mass).
+}
+
+// Called only behind flight_log_tick's existing medium/high cadence gate.
+// No terrain queries or predictions: observe the executive's cached decision.
+function flight_log_contingency_sample {
+    parameter state.
+    local detail is "phase="+state["phase"]+"|altitude="+ship:altitude+
+        "|speed="+ship:airspeed+"|vs="+ship:verticalspeed+
+        "|mass="+ship:mass+"|lf="+ship:liquidfuel+"|ox="+ship:oxidizer+
+        "|rapiers_out="+state["scenario"]["rapiers_out"]+
+        "|nervs_out="+state["scenario"]["nervs_out"]+
+        "|throttle="+ship:control:mainthrottle+
+        "|gpws="+dap["envelope"]["terrain_state"].
+    if state["target"]["selected"] {
+        set detail to detail+"|kind="+state["target"]["kind"]+
+            "|range="+state["target"]["distance_m"]+"|energy_margin="+state["target"]["margin"].
+    }
+    if state:haskey("nerv_power") {
+        set detail to detail+"|nerv_available_thrust_kn="+state["nerv_power"]["thrust_kn"]+
+            "|nerv_acceleration="+state["nerv_power"]["acceleration"]+
+            "|nerv_isp="+state["nerv_power"]["isp"]+"|nerv_dv="+state["nerv_power"]["dv"]+
+            "|nerv_vacuum_dv="+state["nerv_power"]["vacuum_dv"]+
+            "|lf_reserve="+state["lf_reserve"]+"|assist_height="+state["assist_height"]+
+            "|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis.
+        if state["target"]["selected"] and state["target"]:haskey("unpowered_margin") {
+            set detail to detail+"|unpowered_margin="+state["target"]["unpowered_margin"].
+        }
+        if state["entry_target"]["selected"] {
+            set detail to detail+"|entry_range="+state["entry_target"]["distance_m"]+
+                "|entry_margin="+state["entry_target"]["margin"].
+        }
+        if state:haskey("orbit_budget") {
+            set detail to detail+"|orbit_required_dv="+state["orbit_budget"]["required_dv"]+
+                "|orbit_dv_margin="+state["orbit_budget"]["margin"].
+        }
+        if state:haskey("orbit_pitch") { set detail to detail+"|orbit_pitch="+state["orbit_pitch"]. }
+        if state:haskey("orbit_alignment") { set detail to detail+"|orbit_alignment="+state["orbit_alignment"]. }
+    }
+    if state:haskey("ditch_aoa") {
+        set detail to detail+"|ditch_aoa="+state["ditch_aoa"]+"|bottom_height="+ship:bounds:bottomalt.
+    }
+    flight_log_event("contingency_sample",detail).
+}
+
+// Passive RTLS evidence. Low records state transitions; medium samples at
+// 1 Hz and high once per control tick. Never called from a predictor.
+function flight_log_rtls_observe {
+    parameter state, evidence.
+    if POS_LOG_LEVEL = 0 { return. }
+    if evidence["phase"] <> state["phase"] or evidence["active"] <> state["active"] {
+        flight_log_event("rtls_phase","from="+evidence["phase"]+"|to="+state["phase"]+
+            "|source_step="+state["source_step"]+"|submode="+state["submode"]+
+            "|active="+state["active"]+"|success="+state["result"]["success"]+
+            "|reason="+state["result"]["reason"]).
+        set evidence["phase"] to state["phase"].
+        set evidence["active"] to state["active"].
+    }
+    if POS_LOG_LEVEL < 2 or not state["active"] { return. }
+    if POS_LOG_LEVEL = 2 and time:seconds < evidence["next_sample"] { return. }
+    if POS_LOG_LEVEL = 2 { set evidence["next_sample"] to time:seconds+1. }
+    flight_log_event("rtls_sample","phase="+state["phase"]+"|source_step="+state["source_step"]+
+        "|submode="+state["submode"]+"|rapiers_out="+state["scenario"]["rapiers_out"]+
+        "|nervs_out="+state["scenario"]["nervs_out"]+"|altitude="+ship:altitude+
+        "|speed="+ship:airspeed+"|vs="+ship:verticalspeed+"|mass="+ship:mass+
+        "|lf="+ship:liquidfuel+"|ox="+ship:oxidizer+"|throttle_command="+dapthrottle+
+        "|throttle_actual="+ship:control:mainthrottle+"|heading="+compass_for_prograde()+
+        "|bank_target="+dap["aoa"]["target_bank"]+"|aoa_target="+dap["aoa"]["target_aoa"]+
+        "|location="+state["target"]["location"]+"|runway="+state["target"]["runway_num"]+
+        "|handoff_started="+state["handoff"]["started"]).
 }

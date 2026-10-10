@@ -93,7 +93,7 @@ function aerostr{
 }
 function checksrt_inputs{
   declare parameter input_pitch, input_heading, input_roll.
-  local heading_err to input_heading - compass_for_prograde().
+  local heading_err to normalized_heading_error(input_heading,compass_for_prograde()).
   if input_roll < -AVES["MaxRoll"]{
     set dap["aerostr"]["aerostr_Roll"] to -AVES["MaxRoll"].
   }

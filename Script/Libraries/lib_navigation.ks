@@ -3,43 +3,29 @@
 // - Spherical trig helpers for building approach waypoints and HAC entries.
 // - Functions here are used by the entry guidance and team guidance code.
 // Notes: comments only.
-function get_geoposition_along_heading {
-    declare parameter starting_LATLNG, vec_heading, distance.
-
-     if vec_heading > 360 {
-        set vec_heading to vec_heading - 360.
-    } 
-    if vec_heading < 0 {
-        set vec_heading to vec_heading + 360.
+function navigation_longitude_delta {
+    parameter delta_deg.
+    until delta_deg >= -180 and delta_deg <= 180 {
+        if delta_deg > 180 { set delta_deg to delta_deg-360. }
+        if delta_deg < -180 { set delta_deg to delta_deg+360. }
     }
-
-    // Convert heading and lat/lng to radians
-    local vec_heading_rad to vec_heading.
-    local lat_rad to starting_LATLNG:lat * constant:degtorad.
-    local lng_rad to starting_LATLNG:lng * constant:degtorad.
-
-    // Define Kerbin's radius (600,000 meters)
-    local planet_radius to 600000.
-
-    // Calculate angular distance (in radians) from the given distance
-    local angular_distance to distance / planet_radius.
-
-    // Calculate new latitude using the spherical law of cosines
-    local new_lat_rad to arcsin(sin(lat_rad) * cos(angular_distance) + cos(lat_rad) * sin(angular_distance) * cos(vec_heading_rad)).
-
-    // Calculate new longitude using spherical law of cosines
-    local new_lng_rad to lng_rad + arctan2(
-        sin(vec_heading_rad) * sin(angular_distance) * cos(lat_rad),
-        cos(angular_distance) - sin(lat_rad) * sin(new_lat_rad)
-    ).
-
-    // Convert the result back to degrees
-    local new_lat to new_lat_rad * constant:radtodeg.
-    local new_lng to new_lng_rad * constant:radtodeg.
-
-    // Return the new geoposition as a LATLNG object
-    return latlng(new_lat, new_lng).
+    return delta_deg.
 }
+
+// kOS trigonometry consumes and returns degrees. Convert only the physical
+// arc length/radius ratio, which is measured in radians.
+function get_geoposition_along_heading {
+    parameter starting_LATLNG, vec_heading, distance.
+    local angular_deg is distance / SHIP:BODY:RADIUS * constant:radtodeg.
+    local start_lat is starting_LATLNG:lat.
+    local new_lat is arcsin(max(-1,min(1,
+        sin(start_lat)*cos(angular_deg)+cos(start_lat)*sin(angular_deg)*cos(vec_heading)))).
+    local longitude_offset is arctan2(
+        sin(vec_heading)*sin(angular_deg)*cos(start_lat),
+        cos(angular_deg)-sin(start_lat)*sin(new_lat)).
+    return latlng(new_lat,navigation_longitude_delta(starting_LATLNG:lng+longitude_offset)).
+}
+
 // Function to calculate geoposition on a circular heading
 function get_geoposition_on_circle {
     declare parameter center_LATLNG, radius,circle_direction, circle_heading.
@@ -61,107 +47,46 @@ function get_geoposition_on_circle {
 
 function calcdistance {
     parameter geopos1, geopos2.
-    
-    // Radius of Kerbin in km
-    local rad to 600.  
-    
-    // Convert latitudes and longitudes to radians and calculate deltas
-    local lat1_rad to geopos1:lat * constant:degtorad.
-    local lat2_rad to geopos2:lat * constant:degtorad.
-    local dlat to (geopos2:lat - geopos1:lat) * constant:degtorad.
-    local dlng to (geopos2:lng - geopos1:lng) * constant:degtorad.
-
-    
-
-    // Haversine formula components
-    local a to sin(dlat / 2) * sin(dlat / 2) +
-           cos(lat1_rad) * cos(lat2_rad) *
-           sin(dlng / 2) * sin(dlng / 2).
-    local c to 2 * arctan2(sqrt(a), sqrt(1 - a)).
-
-    // Return distance in km and log for debugging
-    local distance to rad * c.
-    
-    return distance.
+    return calcdistance_m(geopos1,geopos2)/1000.
 }
+
 function calcdistance_m {
     parameter geopos1, geopos2.
-    
-    // Radius of Kerbin in km
-    local rad to 600.  
-    
-    // Convert latitudes and longitudes to radians and calculate deltas
-    local lat1_rad to geopos1:lat * constant:degtorad.
-    local lat2_rad to geopos2:lat * constant:degtorad.
-    local dlat to (geopos2:lat - geopos1:lat) * constant:degtorad.
-    local dlng to (geopos2:lng - geopos1:lng) * constant:degtorad.
-
-    
-
-    // Haversine formula components
-    local a to sin(dlat / 2) * sin(dlat / 2) +
-           cos(lat1_rad) * cos(lat2_rad) *
-           sin(dlng / 2) * sin(dlng / 2).
-    local c to 2 * arctan2(sqrt(a), sqrt(1 - a)).
-
-    // Return distance in km and log for debugging
-    local distance to rad * c.
-    
-    return distance*1000.
+    local delta_lat is geopos2:lat-geopos1:lat.
+    local delta_lng is navigation_longitude_delta(geopos2:lng-geopos1:lng).
+    local haversine is max(0,min(1,
+        sin(delta_lat/2)^2+cos(geopos1:lat)*cos(geopos2:lat)*sin(delta_lng/2)^2)).
+    local central_angle_deg is 2*arctan2(sqrt(haversine),sqrt(1-haversine)).
+    return SHIP:BODY:RADIUS * central_angle_deg * constant:degtorad.
 }
+
 function heading_between {
-    parameter current_position.
-    parameter target_position.  // Target position as a vector (lat, long) in degrees.
-    
-    // Constants
-    local x is 0.
-    local y is 0.
-    local a_heading is 0.
-    local deg_to_rad to constant:pi / 180.
-
-    // Current Position of the ship
-    
-
-    // Convert current and target latitude and longitude from degrees to radians
-    local current_lat to current_position:lat * deg_to_rad.
-    local current_long to current_position:lng * deg_to_rad.
-    local target_lat to target_position:lat * deg_to_rad.
-    local target_long to target_position:lng * deg_to_rad.
-
-    // Calculate the delta between the current and target longitudes
-    local delta_long to target_long - current_long.
-    // Normalize delta_long to the range [-π, π]
-    set delta_long to delta_long - 2 * constant:pi * floor((delta_long + constant:pi) / (2 * constant:pi)).
-
-    // Calculate the heading using spherical trigonometry
-    set y to sin(delta_long) * cos(target_lat).
-    set x to cos(current_lat) * sin(target_lat) - sin(current_lat) * cos(target_lat) * cos(delta_long).
-
-    set a_heading to arctan2(y, x).  // Calculate heading in radians
-
-    until a_heading >= 0 and a_heading < 360{
-        if a_heading >= 360 {
-            set a_heading to a_heading - 360.
-        } 
-        if a_heading < 0 {
-            set a_heading to a_heading + 360.
-        }   
-    }
-
-    // Distance threshold to detect if the current position is effectively the same as the target position
-    local distance_threshold to 0.00001.  // Adjust this value as needed for precision
-    local lat_diff to current_lat - target_lat.
-    local long_diff to current_long - target_long.
-    local distance_squared to lat_diff^2 + long_diff^2.
-
-    if distance_squared < distance_threshold^2 {
-        
-        return 0.  // Alternatively, return 'undefined' or another indicator for "already at target"
-    }
-    
-    // Return the calculated heading
-    return a_heading.
+    parameter current_position, target_position.
+    local delta_lng is navigation_longitude_delta(target_position:lng-current_position:lng).
+    if abs(target_position:lat-current_position:lat) < 0.000000001 and abs(delta_lng) < 0.000000001 { return 0. }
+    local bearing_y is sin(delta_lng)*cos(target_position:lat).
+    local bearing_x is cos(current_position:lat)*sin(target_position:lat)-
+        sin(current_position:lat)*cos(target_position:lat)*cos(delta_lng).
+    local bearing_deg is arctan2(bearing_y,bearing_x).
+    if bearing_deg < 0 { set bearing_deg to bearing_deg+360. }
+    return bearing_deg.
 }
+
+// Project a runway start onto its local heading and check cross-track and
+// alignment tolerances supplied by the selected craft's AVES configuration.
+function takeoff_runway_geometry {
+    parameter runway_length_m, distance_from_start_m, start_bearing_error_deg, facing_error_deg.
+    parameter geometry_config.
+    local along_distance is distance_from_start_m * cos(start_bearing_error_deg).
+    local cross_distance is distance_from_start_m * sin(start_bearing_error_deg).
+    local remaining_distance is runway_length_m - along_distance.
+    local valid is runway_length_m > 0 and along_distance >= -geometry_config["start_tolerance_m"] and
+        along_distance < runway_length_m and abs(cross_distance) <= geometry_config["cross_track_tolerance_m"] and
+        abs(facing_error_deg) <= geometry_config["facing_tolerance_deg"].
+    return lex("valid",valid,"along_track_m",along_distance,
+        "cross_track_m",cross_distance,"remaining_m",max(0,remaining_distance)).
+}
+
 function heading_to_target {
     parameter target_position.  // Target position as a vector (lat, long) in degrees.
 

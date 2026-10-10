@@ -5,6 +5,7 @@
 set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/contingency.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/rendezvous.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
@@ -89,6 +90,13 @@ if launch_heading < 0 {
 set previous_speed to ship:airspeed.
 set t0 to -1.
 local takeoff_start_position is ship:geoposition.
+local takeoff_estimate is assess_takeoff_runway(active_runway).
+local takeoff_evidence is lex("released",false,"rotated",false,"airborne",false,
+    "screen_reached",false,"next_sample",0,"base_altitude_m",ship:altitude).
+print("Takeoff estimate: " + takeoff_estimate["reason"]).
+print("Runway requirement " + round(takeoff_estimate["required_runway_m"]) + " m; available " +
+    round(takeoff_estimate["remaining_runway_m"]) + " m; departure to 35m " + round(takeoff_estimate["required_departure_m"]) + " m").
+flight_log_takeoff_prediction(takeoff_estimate,"preflight").
 local v1_announced is false.
 local abort_info is lex().
 global abort_state is lex("active",false).
@@ -143,6 +151,9 @@ until running = false{
             if t0 = -1{
                 set t0 to time:seconds.
                 set takeoff_start_position to ship:geoposition.
+                set takeoff_evidence["base_altitude_m"] to ship:altitude.
+                set takeoff_estimate to assess_takeoff_runway(active_runway).
+                flight_log_takeoff_prediction(takeoff_estimate,"brake_release").
             }
         }
 
@@ -438,6 +449,9 @@ until running = false{
     }
     if step = "runway_abort"{
         set abort_state to abort_refresh_state(abort_state).
+        if abort_state["mode"] = "contingency_abort" {
+            set step to "contingency_abort".
+        } else {
         set Lastest_status to "Runway abort".
         brakes on.
         set dapthrottle to 0.
@@ -449,6 +463,7 @@ until running = false{
             set abort_state["result"]["reason"] to "stopped_on_runway".
             set abort_state["active"] to false.
             set step to "end".
+        }
         }
     }if step = "rtls"{
         set abort_state to abort_refresh_state(abort_state).
@@ -465,6 +480,10 @@ until running = false{
                 "target_mass",rtls_policy["target_mass"],"turn_bank",rtls_config["turn_bank"]
             ).
             if abort_state["phase"] = "initialize" {
+                // Alignment may have ramped thrust to idle. RTLS owns thrust
+                // from entry onward, including an already-airborne turnback.
+                set dapthrottle to 1.
+                set rtls_log_evidence to lex("phase","","active",true,"next_sample",0).
                 set abort_state["target"] to lex(
                     "selected",true,"location",active_runway["Location"],"runway_num",active_runway["runway_num"],
                     "start",active_runway["start"],"end",active_runway["end"],"heading",active_runway["heading"],
@@ -544,6 +563,7 @@ until running = false{
                     if reciprocal_heading_error <= rtls_config["reciprocal_heading_tolerance"] and ship:altitude >= handoff_altitude and not abort_state["handoff"]["started"] {
 
                         set abort_state["phase"] to "handoff".
+                        set abort_state["phase_entered"] to time:seconds.
                         set rtls_handoff_time to time:seconds.
 
                     }
@@ -572,9 +592,12 @@ until running = false{
                     set abort_state["result"]["success"] to recovery_result["success"].
                     set abort_state["result"]["reason"] to recovery_result["reason"].
                     set abort_state["active"] to false.
+                    set abort_state["phase"] to "complete".
+                    set abort_state["phase_entered"] to time:seconds.
                     set step to "end".
                 }    
             }
+            flight_log_rtls_observe(abort_state,rtls_log_evidence).
         }
     }
     if step = "atr"{
@@ -616,18 +639,27 @@ until running = false{
         SET step to "end".
     }
     if step = "contingency_abort"{
-        abort_set_fuel_dump(false).
-        set Lastest_status to "4RO contingency abort detected - mode not implemented".
-        set abort_state["result"]["success"] to false.
-        set abort_state["result"]["reason"] to "4RO_unimplemented".
+        set abort_state to abort_refresh_state(abort_state).
+        contingency_update(abort_state).
+        set Lastest_status to "Contingency: " + abort_state["phase"].
+        if not abort_state["active"] {
+            set Lastest_status to "Contingency: " + abort_state["result"]["reason"].
+            set step to "end".
+        }
     }
     if step = "end"{
         set running to false.
         //set Lastest_status to "ending".
-        reset_sys().
+        if abort_state:haskey("mode") and abort_state["mode"] = "contingency_abort" {
+            // The contingency executive already secured or released controls.
+            // reset_sys would re-enable engines/gear and overwrite pilot throttle.
+        } else { reset_sys(). }
         set warp to 0.
         update_readouts().
         assent_gui:hide().
+    }
+    if t0 >= 0 and not takeoff_evidence["screen_reached"] {
+        flight_log_takeoff_observe(takeoff_evidence,takeoff_estimate,takeoff_start_position,t0,step).
     }
     flight_log_tick("ascent",step,"").
     wait 0.

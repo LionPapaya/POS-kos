@@ -1,6 +1,6 @@
 // Live kOS adapters and bounded orbital planning for PDI.
 // Numerical integration is in pdi_guidance.ks and has no live reads or logger.
-RUNONCEPATH("0:/Libraries/Poseidon_SSTO/pdi_guidance.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/PDI/pdi_guidance.ks").
 RUNONCEPATH("0:/Libraries/lib_orbital_nodes.ks").
 
 function pdi_frame {

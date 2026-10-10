@@ -312,6 +312,23 @@ function envelope_terrain_refresh {
     }
 }
 
+// Entry recovery restores attitude, not a climb: an orbital descent may
+// remain controllable with negative flight-path pitch throughout recovery.
+function envelope_upset_release {
+    parameter envelope, recovery_config, entry_recovery, recovery_aoa, recovery_rate, recovery_bank, recovery_pitch, recovery_dt.
+    if not entry_recovery {
+        return recovery_pitch >= recovery_config["recovery_exit_pitch"] and recovery_aoa <= envelope["max_aoa"].
+    }
+    if abs(recovery_aoa) <= min(recovery_config["recovery_safe_aoa"],envelope["max_aoa"]) and
+       abs(recovery_rate) <= recovery_config["entry_recovery_max_aoa_rate"] and
+       abs(recovery_bank) <= recovery_config["entry_recovery_max_bank"] {
+        set envelope["stable_timer"] to envelope["stable_timer"] + recovery_dt.
+    } else {
+        set envelope["stable_timer"] to 0.
+    }
+    return envelope["stable_timer"] >= recovery_config["entry_recovery_stable_time"].
+}
+
 function envelope_refresh {
     local envelope is dap["envelope"].
     // Once the terminal controller commits the aircraft to its flare, it is
@@ -325,7 +342,11 @@ function envelope_refresh {
     // Keep the dedicated inhibited reason in flight logs: it is a state
     // transition that proves a landing run, rather than an accidental ground
     // state, owned the protection handoff.
-    if defined step and step = "landing" {
+    if (defined step and step = "landing") or
+       (defined abort_state and abort_state:haskey("active") and abort_state["active"] and
+        abort_state["mode"] = "contingency_abort" and
+        (abort_state["phase"] = "final" or abort_state["phase"] = "ground_stop" or
+         abort_state["phase"] = "ocean_ditch")) {
         // Recovery modes replace STEERING's normal dap_steering lock with a
         // direct AoA lock.  Reclaim that lock before clearing the recovery
         // state; otherwise an aerostr-to-aerostr landing handoff never calls
@@ -341,6 +362,13 @@ function envelope_refresh {
         }
         set envelope["state"] to "normal".
         set envelope["regime"] to "landing".
+        if defined abort_state and abort_state["active"] and abort_state["mode"] = "contingency_abort" and
+           abort_state["phase"] = "ocean_ditch" {
+            // Ditching deliberately decelerates below the normal stall gate.
+            // Preserve clearance/AoA control until actual water contact.
+            set envelope["max_aoa"] to contingency_config()["ditch_max_aoa"].
+            set envelope["max_bank"] to 0.
+        }
         set envelope["min_throttle"] to 0.
         set envelope["rcs_assist"] to false.
         set envelope["restore_steering"] to landing_restore_steering.
@@ -350,6 +378,20 @@ function envelope_refresh {
         set envelope["stable_timer"] to 0.
         rcs off.
         envelope_terrain_reset(envelope,"inhibited","landing_controller",true).
+        return.
+    }
+    // Above the atmosphere the contingency insertion executive owns its
+    // coast/burn timing. A stale atmospheric throttle floor must not burn
+    // through the coast or override its alignment-gated insertion command.
+    if defined abort_state and abort_state["active"] and abort_state["mode"] = "contingency_abort" and
+       (abort_state["phase"] = "orbit_coast" or abort_state["phase"] = "orbit_insert") and
+       ship:altitude >= ship:body:atm:height {
+        set envelope["state"] to "normal".
+        set envelope["regime"] to "contingency_orbit".
+        set envelope["min_throttle"] to 0.
+        set envelope["rcs_assist"] to false.
+        set envelope["restore_steering"] to false.
+        envelope_terrain_reset(envelope,"inhibited","orbital_insertion",true).
         return.
     }
     // PDI owns thrust, RCS and terrain protection throughout the airless
@@ -509,6 +551,7 @@ function envelope_refresh {
 
     if (envelope["state"] = "normal" or envelope["state"] = "authority_assist") and envelope["upset_timer"] >= config_envelope["upset_confirm_time"] {
         set envelope["state"] to "upset_zero_aoa".
+        set envelope["stable_timer"] to 0.
         set envelope["rcs_assist"] to rcs_available.
     }
 
@@ -521,7 +564,17 @@ function envelope_refresh {
     } else if envelope["state"] = "upset_pullup" {
         set envelope["min_throttle"] to 1.
         set envelope["rcs_assist"] to rcs_available.
-        if pitch_for() >= config_envelope["recovery_exit_pitch"] and actual_aoa <= envelope["max_aoa"] {
+        local entry_recovery is defined step and (step = "reentry_low" or step = "reentry_mid" or
+            step = "reentry_high" or step = "reentry_int").
+        if envelope_upset_release(envelope,config_envelope,entry_recovery,actual_aoa,aoa_rate,roll_for(),pitch_for(),dt) {
+            flight_log_event("upset_recovered","entry="+entry_recovery+"|aoa="+round(actual_aoa,2)+
+                "|aoa_rate="+round(aoa_rate,2)+"|bank="+round(roll_for(),2)+
+                "|pitch="+round(pitch_for(),2)+"|stable_time="+round(envelope["stable_timer"],2)).
+            set envelope["min_throttle"] to 0.
+            set envelope["rcs_assist"] to false.
+            set envelope["upset_timer"] to 0.
+            set envelope["pitchdown_timer"] to 0.
+            set envelope["authority_timer"] to 0.
             set envelope["state"] to "normal".
             set envelope["restore_steering"] to true.
             set envelope["stable_timer"] to 0.
@@ -591,11 +644,17 @@ function envelope_run_recovery {
 if not (dap:haskey("update")) {
     dap:add("update", {
     if not dap["setup_done"]{
-        setup_dap().
+        dap:setup().
     }
     set dap["dt"] to time:seconds - dap["l_t"].
     set dap["l_t"] to time:seconds.
     envelope_refresh().
+    if defined abort_state and abort_state["active"] and abort_state["mode"] = "contingency_abort" and
+       (abort_state["phase"] = "orbit_coast" or abort_state["phase"] = "orbit_insert") {
+        // Retain atmospheric steering protection, while the executive owns
+        // coast timing and permits thrust only after actual alignment.
+        set dap["envelope"]["min_throttle"] to 0.
+    }
     if not(dap["dap_mode_set"]["dapmode"] = dap["dap_mode"] and dap["dap_mode_set"]["str_mode"] = dap["str_mode"]){
         if dap["dap_mode"] = "auto" and dap["str_mode"] = "aerostr"{
             dap:set_aerostr_auto().
@@ -724,7 +783,7 @@ if not (dap:haskey("update")) {
 if not (dap:haskey("set_aoa_auto")) {
     dap:add("set_aoa_auto", {
     if not dap["setup_done"]{
-        setup_dap().
+        dap:setup().
     }
     lock dap_steering to heading(dap["aoa"]["aoa_yaw"], dap["aoa"]["aoa_pitch"], dap["aoa"]["aoa_roll"]).
     lock steering to dap_steering.
@@ -740,7 +799,7 @@ if not (dap:haskey("set_aoa_auto")) {
 if not (dap:haskey("set_aerostr_auto")) {
     dap:add("set_aerostr_auto", {
     if not dap["setup_done"]{
-        setup_dap().
+        dap:setup().
     }
     lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]).
     lock steering to dap_steering.
@@ -755,7 +814,7 @@ if not (dap:haskey("set_aerostr_auto")) {
 if not (dap:haskey("set_vector_auto")) {
     dap:add("set_vector_auto", {
     if not dap["setup_done"]{
-        setup_dap().
+        dap:setup().
     }
     lock dap_steering to dap["vector"]["targetVector"].
     lock steering to dap_steering.
@@ -770,7 +829,7 @@ if not (dap:haskey("set_vector_auto")) {
 if not (dap:haskey("set_off")) {
     dap:add("set_off", {
     if not dap["setup_done"]{
-        setup_dap().
+        dap:setup().
     }
     set dap["dap_mode"] to "off".
     set dap["dap_mode_set"]["dapmode"] to "off".
@@ -786,7 +845,7 @@ if not (dap:haskey("set_off")) {
 if not(dap:haskey("set_css")) {
     dap:add("set_css", {
     if not dap["setup_done"]{
-        setup_dap().
+        dap:setup().
     }
     set dap["dap_mode"] to "css".
     set dap["css"]["yaw_out"] to compass_for().

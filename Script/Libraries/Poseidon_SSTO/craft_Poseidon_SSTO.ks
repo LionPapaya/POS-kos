@@ -56,6 +56,13 @@ function check_inputs{
     }
 }
 
+// Continuous range-control law: 2% overshoot needs no range reduction;
+// 7% or more requests the maximum basic-entry bank.
+function basic_entry_bank_magnitude {
+    parameter percentage_error.
+    return max(0,min(70,70*(-percentage_error-2)/5)).
+}
+
 function goto_target{
     if not(defined reentry_target){
             set ecrl_2hac to get_geoposition_along_heading(runway_start,runway_heading+180,Aves["HacDistance"]*2).
@@ -67,7 +74,16 @@ function goto_target{
     local sim is current_simstate().
     
     set dap["aoa"]["target_aoa"] to AVES["EGAOA"](ship:altitude).
-    local y is sim_with_bank(sim,0,0,reentry_target).
+    local basic_target_altitude is 0.
+    if defined Team_interface {
+        set reentry_target to Team_interface["target_latlng"].
+        set basic_target_altitude to Team_interface["target_altitude"].
+        // Keep a descending prediction while the handoff speed gate is pending.
+        if ship:altitude <= basic_target_altitude {
+            set basic_target_altitude to max(runway_altitude,ship:altitude-1000).
+        }
+    }
+    local y is sim_with_bank(sim,0,basic_target_altitude,reentry_target).
     local x is y["final_state"]["latlong"].
 
     set distance_between_runway_start_IMPACTPOS to calcdistance(ship:geoposition,reentry_target) - calcdistance(ship:geoposition,x).
@@ -77,17 +93,13 @@ function goto_target{
         // Calculate the total runway distance dynamically
 
         // Calculate the percentage difference
-        set percentage_diff to calc_percentage(distance_between_runway_start_IMPACTPOS, calcdistance(ship:geoposition,reentry_target)).
-
-        // Calculate dynamic pitch
-        // Map the percentage difference (-7% to -2%) to a pitch range (e.g., 90 to 17 degrees)
-        if percentage_diff >= -7 and percentage_diff <= -2 {
-            set t_bank to 70 - ((70 - 0) * abs(percentage_diff) / 7). // Linearly interpolate
-        } else if percentage_diff > -2 {
-            set t_bank to 0. // Default to minimal pitch above -2%
-        } else {
-            set t_bank to 70. // Default to max pitch below -7%
+        set percentage_diff to 0.
+        local basic_target_distance is calcdistance(ship:geoposition,reentry_target).
+        if basic_target_distance > 0.001 {
+            set percentage_diff to calc_percentage(distance_between_runway_start_IMPACTPOS, basic_target_distance).
         }
+
+        set t_bank to basic_entry_bank_magnitude(percentage_diff).
 
         // Calculate brake state based on percentage difference
         if percentage_diff <= -10 {
@@ -95,19 +107,19 @@ function goto_target{
         } else {
             brakes off.
         }    
-        local heading_error is heading_to_target(reentry_target) - compass_for_prograde().
-
-            // Normalisiere den Fehler
-        if abs(heading_error) <= 180{
-            if heading_error > 180 {
-                set heading_error to heading_error - 360.
-            } 
-            if heading_error < -180 {
-                set heading_error to heading_error + 360.
+        local heading_error is normalized_heading_error(heading_to_target(reentry_target),compass_for_prograde()).
+        // A lateral undershoot still deserves a turn if a modest bank reduces
+        // predicted geographic miss. Do not spend range on a turn that worsens it.
+        if t_bank < 1 and abs(heading_error) > AVES["EG_rev°"] and ship:altitude > basic_target_altitude {
+            local turn_probe_bank is min(25,abs(heading_error)).
+            local turn_probe is sim_with_bank(sim,turn_probe_bank,basic_target_altitude,reentry_target).
+            if calcdistance(turn_probe["final_state"]["latlong"],reentry_target) < calcdistance(x,reentry_target) {
+                set t_bank to turn_probe_bank.
             }
         }
-        if not (defined entry_turnside){
-            if heading_error > 0{
+        if not (defined entry_turnside) or
+           (entry_turnside <> "right" and entry_turnside <> "left") {
+            if heading_error >= 0{
                 set entry_turnside to "right".
             }
             if heading_error < 0{
@@ -238,6 +250,118 @@ function runway_abort_feasibility {
     ).
 }
 
+// Empirical Poseidon takeoff envelope. Every craft-specific coefficient,
+// validity range and named-departure exception is configured in AVES.
+function takeoff_performance {
+    parameter takeoff_mass_t, remaining_runway_m, rotation_speed_mps, rotation_pitch_deg.
+    parameter density_ratio is 1, thrust_ratio is 1.
+    parameter departure_site is "", runway_direction is "", start_offset_m is 0.
+    parameter model_config is AVES["Takeoff"].
+    local result is lex("model_valid",false,"sufficient",false,
+        "liftoff_fits",false,"screen_fits",false,"reason","invalid_inputs",
+        "rotation_distance_m",0,"liftoff_distance_m",0,"climb_distance_m",0,
+        "required_runway_m",0,"required_departure_m",0,"runway_margin_m",0,"liftoff_speed_mps",0,
+        "departure_evidence","none","departure_status","unknown",
+        "estimated_feasible",false,"screen_beyond_runway_m",0,
+        "screen_height_m",model_config["screen_height_m"],
+        "distance_margin_fraction",model_config["distance_margin_fraction"],
+        "reference_stop_at_rotation_m",0,"stop_reference_valid",false).
+    if takeoff_mass_t <= 0 or remaining_runway_m <= 0 or rotation_speed_mps <= 0 or
+       density_ratio <= 0 or thrust_ratio <= 0 { return result. }
+    local mass_ratio is takeoff_mass_t / model_config["reference_mass_t"].
+    local roll_coefficient is model_config["roll_coefficient"] * mass_ratio / thrust_ratio.
+    local lift_speed is max(rotation_speed_mps,
+        model_config["lift_speed_mps"] * sqrt(mass_ratio / density_ratio)).
+    local rotation_distance is roll_coefficient * rotation_speed_mps^2.
+    // Pitch starts at Rotate; do not equate this to becoming airborne.
+    local response_speed is rotation_speed_mps + model_config["rotation_response"] / (2 * roll_coefficient).
+    set lift_speed to max(lift_speed,response_speed).
+    local lift_distance is roll_coefficient * lift_speed^2.
+    local climb_distance is model_config["climb_distance_m"] * mass_ratio^model_config["climb_mass_exponent"] /
+        density_ratio / thrust_ratio.
+    local required_distance is (lift_distance + climb_distance) * (1+model_config["distance_margin_fraction"]).
+    set result["rotation_distance_m"] to rotation_distance.
+    set result["liftoff_distance_m"] to lift_distance.
+    set result["climb_distance_m"] to climb_distance.
+    set result["required_runway_m"] to lift_distance * (1+model_config["distance_margin_fraction"]).
+    set result["required_departure_m"] to required_distance.
+    set result["runway_margin_m"] to remaining_runway_m - lift_distance * (1+model_config["distance_margin_fraction"]).
+    set result["screen_beyond_runway_m"] to max(0,required_distance-remaining_runway_m).
+    set result["liftoff_speed_mps"] to lift_speed.
+    set result["liftoff_fits"] to lift_distance * (1+model_config["distance_margin_fraction"]) <= remaining_runway_m.
+    set result["screen_fits"] to required_distance <= remaining_runway_m.
+    set result["model_valid"] to takeoff_mass_t >= model_config["minimum_mass_t"] and
+        takeoff_mass_t <= model_config["maximum_mass_t"] and
+        abs(rotation_speed_mps-model_config["validated_rotation_speed_mps"]) < model_config["rotation_speed_tolerance_mps"] and
+        abs(rotation_pitch_deg-model_config["validated_rotation_pitch_deg"]) < model_config["rotation_pitch_tolerance_deg"] and
+        abs(density_ratio-1) < model_config["density_ratio_tolerance"] and
+        abs(thrust_ratio-1) < model_config["thrust_ratio_tolerance"].
+    set result["estimated_feasible"] to result["liftoff_fits"].
+    set result["sufficient"] to result["model_valid"] and result["liftoff_fits"].
+    set result["reason"] to "extrapolated".
+    if result["model_valid"] {
+        set result["reason"] to "estimated_runway_sufficient".
+        if not result["liftoff_fits"] { set result["reason"] to "runway_margin_unconfirmed". }
+    }
+    if result["estimated_feasible"] { set result["departure_status"] to "estimated_feasible". }
+    local evidence_config is model_config["demonstrated_departure"].
+    if departure_site = evidence_config["site"] and runway_direction = evidence_config["direction"] and
+       takeoff_mass_t >= evidence_config["minimum_mass_t"] and takeoff_mass_t <= evidence_config["maximum_mass_t"] and
+       abs(start_offset_m) <= evidence_config["maximum_start_offset_m"] and
+       remaining_runway_m >= evidence_config["minimum_runway_m"] and result["model_valid"] {
+        set result["departure_evidence"] to evidence_config["evidence"] .
+        set result["departure_status"] to "demonstrated_departure".
+        set result["reason"] to "demonstrated_departure".
+        set result["sufficient"] to true.
+    }
+    set result["reference_stop_at_rotation_m"] to model_config["stop_reference_slope"] * rotation_speed_mps^2 +
+        model_config["stop_reference_margin_m"].
+    set result["stop_reference_valid"] to rotation_speed_mps >= model_config["minimum_stop_reference_speed_mps"] and
+        rotation_speed_mps <= model_config["maximum_stop_reference_speed_mps"].
+    return result.
+}
+
+// Poseidon runway preflight assessment. Generic runway geometry is provided by
+// lib_navigation; craft assumptions remain in AVES.
+function assess_takeoff_runway {
+    parameter selected_runway.
+    local takeoff_config is AVES["Takeoff"].
+    local estimate is takeoff_performance(ship:mass,0,AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"]).
+    set estimate["remaining_runway_m"] to 0.
+    set estimate["mass_t"] to ship:mass.
+    set estimate["nominal_propulsion_assumed"] to true.
+    if ship:body:name <> takeoff_config["body"] or selected_runway["heading"] < 0 {
+        set estimate["reason"] to "unknown_runway_or_body".
+        return estimate.
+    }
+    local runway_length is calcdistance_m(selected_runway["start"],selected_runway["end"]).
+    local start_distance is calcdistance_m(selected_runway["start"],ship:geoposition).
+    local bearing_error is normalized_heading_error(heading_between(selected_runway["start"],ship:geoposition),selected_runway["heading"]).
+    local facing_error is normalized_heading_error(compass_for(),selected_runway["heading"]).
+    local geometry is takeoff_runway_geometry(runway_length,start_distance,bearing_error,facing_error,takeoff_config["geometry"]).
+    set estimate to takeoff_performance(ship:mass,geometry["remaining_m"],AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"],
+        1,1,selected_runway["location"],selected_runway["runway_num"],geometry["along_track_m"]).
+    set estimate["remaining_runway_m"] to geometry["remaining_m"].
+    set estimate["mass_t"] to ship:mass.
+    set estimate["nominal_propulsion_assumed"] to true.
+    set estimate["along_track_m"] to geometry["along_track_m"].
+    set estimate["cross_track_m"] to geometry["cross_track_m"].
+    if not geometry["valid"] {
+        set estimate["model_valid"] to false.
+        set estimate["sufficient"] to false.
+        set estimate["estimated_feasible"] to false.
+        set estimate["departure_status"] to "unknown".
+        set estimate["reason"] to "not_aligned_on_runway".
+    }
+    if ship:altitude < takeoff_config["minimum_altitude_m"] or ship:altitude > takeoff_config["maximum_altitude_m"] {
+        set estimate["model_valid"] to false.
+        set estimate["sufficient"] to false.
+        set estimate["departure_status"] to "unknown".
+        set estimate["reason"] to "unvalidated_atmosphere".
+    }
+    return estimate.
+}
+
 function ask_abort_modes{
     parameter scenarios, phase.
     
@@ -245,7 +369,7 @@ function ask_abort_modes{
         return "contingency_abort".
     }else if phase ="launch"{
         return "runway_abort".
-    }else if phase = "rotate"{
+    }else if phase = "rotate" or phase = "ascent_alignment"{
         return "rtls".
     }else if phase ="speed_build" or phase ="high_altitude_climb"{
         return "atr".
@@ -261,7 +385,7 @@ function create_abort_state {
         "submode",abort_info["scenario"]["rapiers_out"] + "RO",
         "phase","initialize","phase_entered",time:seconds,"source_step",origin_step,
         "scenario",abort_info["scenario"],"engines",abort_info["engines"],
-        "departure_runway",departure_runway,
+        "departure_runway",departure_runway,"nervs_were_active",nervs,
         "runway_stop",lex("roll_distance_m",0,"required_stop_distance_m",0,"runway_remaining_m",0,"model_valid",false,"permitted",false),
         "target",lex("selected",false,"location","","runway_num","","start","","end","","heading",-1,"altitude",-1,"distance_m",0,"score",0),
         "policy",lex("use_nervs",false,"fuel_dump",false,"target_mass",ship:mass,"turn_bank",0),
@@ -298,9 +422,15 @@ function abort_refresh_state {
     set state["submode"] to state["scenario"]["rapiers_out"] + "RO".
     set state["last_failure_refresh"] to time:seconds.
     if state["scenario"]["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] {
+        if state["mode"] <> "contingency_abort" {
+            set state["nervs_were_active"] to nervs.
+            set state["phase"] to "initialize".
+            set state["phase_entered"] to time:seconds.
+            set state["target"]["selected"] to false.
+            set state["handoff"]["started"] to false.
+            flight_log_event("contingency_escalation","from="+state["mode"]+"|rapiers_out="+state["scenario"]["rapiers_out"]).
+        }
         set state["mode"] to "contingency_abort".
-        set state["phase"] to "unimplemented".
-        set state["phase_entered"] to time:seconds.
     }
     return state.
 }
@@ -402,6 +532,27 @@ Poseidon_SSTO:add("Ascent",lex(
     // Tune these from flight logs if the vehicle's normal insertion time changes.
     "rendezvous_nominal_insertion_time",480,
     "rendezvous_window_angle",3
+)).
+// Poseidon takeoff model coefficients and evidence limits. The model is
+// advisory outside these measured conditions; update from logged flights.
+Poseidon_SSTO:add("Takeoff",lex(
+    "body","Kerbin",
+    "reference_mass_t",69.5,"minimum_mass_t",68.72565,"maximum_mass_t",70.04567,
+    "roll_coefficient",0.107,"lift_speed_mps",133,"rotation_response",3.6,
+    "climb_distance_m",1230,"climb_mass_exponent",2,
+    "distance_margin_fraction",0.15,"screen_height_m",35,
+    "validated_rotation_speed_mps",110,"rotation_speed_tolerance_mps",0.01,
+    "validated_rotation_pitch_deg",20,"rotation_pitch_tolerance_deg",0.01,
+    "density_ratio_tolerance",0.001,"thrust_ratio_tolerance",0.001,
+    "minimum_altitude_m",70,"maximum_altitude_m",325,
+    "stop_reference_slope",0.055,"stop_reference_margin_m",30,
+    "minimum_stop_reference_speed_mps",13,"maximum_stop_reference_speed_mps",113.6,
+    "geometry",lex("start_tolerance_m",5,"cross_track_tolerance_m",20,"facing_tolerance_deg",10),
+    "demonstrated_departure",lex(
+        "site","Nye-Island","direction","15","minimum_mass_t",68.72565,
+        "maximum_mass_t",68.82,"maximum_start_offset_m",5,"minimum_runway_m",1515,
+        "evidence","flight_20_22_and_maintainer_confirmation"
+    )
 )).
 // Airless-body departure profile.  The RAPIERs are deliberately only a brief
 // liftoff assist: once clear of the rear wheel/tail support, ascent is NERV-only.
@@ -505,6 +656,9 @@ Poseidon_SSTO:add("Envelope",lex(
     "upset_confirm_time",0.75,
     "recovery_safe_aoa",15,
     "recovery_exit_pitch",30,
+    "entry_recovery_max_bank",10,
+    "entry_recovery_max_aoa_rate",2,
+    "entry_recovery_stable_time",1.0,
     "Terrain",lex(
         "enabled",true,
         "arm_max_radar_altitude",10000,
