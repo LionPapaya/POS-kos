@@ -254,12 +254,16 @@ function entry_initial_runway {
 function setup_reentry_script{
     parameter Location_ is "".
     parameter runway_nr_ is "".
-    set steeringManager:ROLLCONTROLANGLERANGE to 180.
-    steeringManager:resetpids().
+    parameter preserve_propulsion is false.
+    if not preserve_propulsion {
+        set steeringManager:ROLLCONTROLANGLERANGE to 180.
+        steeringManager:resetpids().
+    }
     set step to "Deorbit".
     set substep to "findStep".
     set running to true.
     clearScreen.  
+    if not preserve_propulsion {
     if maxThrust > 110{
         set nervs to true.
     } 
@@ -269,10 +273,11 @@ function setup_reentry_script{
 
     set rapier_mode to "air".
     set rapiers to false.
+    }
     set Lastest_status to "Inizializing Script".
     set deorbit_start to false.
     set deorbit_calc to false.
-    dap:setup().
+    if not preserve_propulsion { dap:setup(). }
 
     if Location_ = "" or runway_nr_ = ""{
         create_reentry_display().
@@ -529,6 +534,13 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     for loc in location_to_runways:keys {
         location_popup:addoption(loc).
     }
+    // kOS popup menus can begin without a selected value. Select a valid
+    // entry before the runway callback indexes the location table.
+    if location_to_runways:keys:length > 0 {
+        if not wait_for_confirm and location_to_runways:haskey(force_loaction) {
+            set location_popup:value to force_loaction.
+        } else { set location_popup:index to 0. }
+    }
     location_box:show().
 
     // Runway Selection Popup Menu (dynamically updated)
@@ -542,6 +554,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     function update_runway_options {
         parameter dummy is "lol".
         local selected_location is location_popup:value.
+        if not location_to_runways:haskey(selected_location) { return. }
         local available_runways is location_to_runways[selected_location].
 
         // Clear current runway options

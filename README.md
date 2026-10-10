@@ -225,3 +225,7 @@ The active page follows energy height and clamps only beyond the complete 100–
 
 - The kOS community libraries and frameworks used for input, navball, and location constants.
 - Giulio Dondi for the Ferram add-on and aerodynamic-force helpers.
+
+### Late-ascent aborts: AED, ATO and EDR
+
+ATI has been replaced by AED (energy-managed runway diversion), ATO (supervised orbit recovery), and EDR (emergency deorbit/return). Their guidance remains in Orbit Main until the reentry/TEAM handoff. Engine failures, deliberate isolation, per-engine survivor limits, original fuel reserves and rejected-attempt history persist across transfers. See [the ascent recovery guide](ASCENT_ABORTS.md) for the dispatch matrix, implemented behavior and initial flight tests. These modes have source/offline validation and still require KSP/FAR flight calibration.

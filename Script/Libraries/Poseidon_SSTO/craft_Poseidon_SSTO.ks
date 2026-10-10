@@ -1,4 +1,11 @@
 function reset_sys{
+    if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+        set dapthrottle to 0.
+        if dap:haskey("envelope") { set dap["envelope"]["min_throttle"] to 0. }
+        lock throttle to recovery_throttle(dapthrottle,0).
+        recovery_apply_limits().
+        return.
+    }
     if ship:altitude < 1000 {
         gear on.
         brakes on.
@@ -171,6 +178,52 @@ function abort_engine_snapshot {
         "rapier", lex("installed",0,"working",0,"failed",0,"failed_ids",lex()),
         "nerv", lex("installed",0,"working",0,"failed",0,"failed_ids",lex())
     ).
+    if defined recovery_engines {
+        for identity in recovery_engines:keys { set recovery_engines[identity]["present"] to false. }
+        for kind in list("rapier","nerv") {
+            local pattern is "R.A.P.I.E.R".
+            if kind = "nerv" { set pattern to "LV-N". }
+            for engine_part in ship:partstitledpattern(pattern) {
+                local identity is "part_"+engine_part:uid.
+                if recovery_engines:haskey(identity) {
+                    set recovery_engines[identity]["present"] to true.
+                    set recovery_engines[identity]["part"] to engine_part.
+                }
+            }
+        }
+        for identity in recovery_engines:keys {
+            local entry is recovery_engines[identity].
+            local kind is entry["kind"].
+            local was_failed is entry["failed"].
+            set snapshot[kind]["installed"] to snapshot[kind]["installed"]+1.
+            if not entry["present"] {
+                set entry["failed"] to true.
+                set entry["failure_reason"] to "missing_part".
+            } else if entry["desired"] and not entry["isolated"] and not entry["failed"] {
+                if not entry["part"]:ignition {
+                    set entry["failed"] to true.
+                    set entry["failure_reason"] to "commanded_engine_shutdown".
+                } else if ship:control:mainthrottle > 0.05 and time:seconds-entry["commanded_since"] >= 2 {
+                    if entry["part"]:flameout or entry["part"]:availablethrust <= 0 or entry["part"]:thrust <= 0.01 {
+                        if entry["fault_since"] < 0 { set entry["fault_since"] to time:seconds. }
+                        if time:seconds-entry["fault_since"] >= 2 {
+                            set entry["failed"] to true.
+                            set entry["failure_reason"] to "no_delivered_thrust".
+                        }
+                    } else { set entry["fault_since"] to -1. }
+                } else { set entry["fault_since"] to -1. }
+            }
+            if entry["failed"] and not was_failed and defined flight_log_event {
+                flight_log_event("recovery_engine_failure","id="+identity+"|kind="+kind+"|reason="+entry["failure_reason"]).
+            }
+            if entry["failed"] { snapshot[kind]["failed_ids"]:add(identity,true). }
+            else { set snapshot[kind]["working"] to snapshot[kind]["working"]+1. }
+        }
+        for kind in list("rapier","nerv") {
+            set snapshot[kind]["failed"] to snapshot[kind]["failed_ids"]:keys:length.
+        }
+        return snapshot.
+    }
     local rapier_parts is ship:partstitledpattern("R.A.P.I.E.R").
     set snapshot["rapier"]["installed"] to rapier_parts:length.
     for engine_part in rapier_parts {
@@ -200,11 +253,11 @@ function check_abort {
     local engines is abort_engine_snapshot().
     // Intentionally shut-down engines are not failures.  During ascent all
     // commanded RAPIERs are expected; NERVs become expected after activation.
-    if not rapiers {
+    if not rapiers and not defined recovery_engines {
         set engines["rapier"]["failed"] to 0.
         set engines["rapier"]["failed_ids"] to lex().
     }
-    if not nervs {
+    if not nervs and not defined recovery_engines {
         set engines["nerv"]["failed"] to 0.
         set engines["nerv"]["failed_ids"] to lex().
     }
@@ -362,26 +415,47 @@ function assess_takeoff_runway {
     return estimate.
 }
 
-function ask_abort_modes{
+function ask_abort_modes {
     parameter scenarios, phase.
-    
-    if scenarios["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] {
-        return "contingency_abort".
-    }else if phase ="launch"{
-        return "runway_abort".
-    }else if phase = "rotate" or phase = "ascent_alignment"{
-        return "rtls".
-    }else if phase ="speed_build" or phase ="high_altitude_climb"{
-        return "atr".
-    }else{
-        return "ati".
+    local ro is scenarios["rapiers_out"].
+    local no is scenarios["nervs_out"].
+    if phase = "apoapsis_build" or phase = "coast" or phase = "insertion" or phase = "circularize" or phase = "circ" or
+       (defined recovery_nominal_cutoff and recovery_nominal_cutoff) {
+        if no > 0 { return "edr". }
+        return "ato".
     }
+    if phase = "closed_cycle_climb" {
+        if no > 0 {
+            if ro < 4 { return "aed". }
+            return "edr".
+        }
+        return "ato".
+    }
+    if phase = "nerv_assist" {
+        if ro >= 4 { return "contingency_abort". }
+        if no > 0 or ro >= 2 { return "aed". }
+        return "ato".
+    }
+    if ro >= AVES["Abort"]["contingency_rapiers_out"] { return "contingency_abort". }
+    if phase = "launch" { return "runway_abort". }
+    if phase = "rotate" or phase = "ascent_alignment" { return "rtls". }
+    return "atr".
 }
 
 function create_abort_state {
     parameter abort_info, origin_step, departure_runway.
+    local lf_origin is ship:liquidfuel.
+    local ox_origin is ship:oxidizer.
+    local cutoff is false.
+    if defined recovery_initial_lf { set lf_origin to recovery_initial_lf. }
+    if defined recovery_initial_ox { set ox_origin to recovery_initial_ox. }
+    if defined recovery_nominal_cutoff { set cutoff to recovery_nominal_cutoff. }
     return lex(
         "active",abort_info["abort"],"mode",abort_info["mode"],
+        "managed",abort_info["mode"] = "aed" or abort_info["mode"] = "ato" or abort_info["mode"] = "edr",
+        "current_ascent_phase",origin_step,"nominal_cutoff",cutoff,
+        "lf_reserve",lf_origin*0.1,"ox_reserve",ox_origin*0.1,
+        "orbit_attempted",false,"orbit_abandoned",false,"suppress_orbit",false,"rejected_targets",lex(),"committed",false,
         "submode",abort_info["scenario"]["rapiers_out"] + "RO",
         "phase","initialize","phase_entered",time:seconds,"source_step",origin_step,
         "scenario",abort_info["scenario"],"engines",abort_info["engines"],
@@ -398,39 +472,34 @@ function create_abort_state {
 function abort_refresh_state {
     parameter state.
     local snapshot is abort_engine_snapshot().
-    // Failure counts are sticky and may only increase during an abort.
-    if rapiers {
-        for engine_id in snapshot["rapier"]["failed_ids"]:keys {
-            if not state["engines"]["rapier"]["failed_ids"]:haskey(engine_id) {
-                state["engines"]["rapier"]["failed_ids"]:add(engine_id,true).
+    for kind in list("rapier","nerv") {
+        local observe_kind is defined recovery_engines or (kind = "rapier" and rapiers) or (kind = "nerv" and nervs).
+        if observe_kind and snapshot:haskey(kind) {
+            if not state["engines"]:haskey(kind) { state["engines"]:add(kind,snapshot[kind]). }
+            else {
+                for identity in snapshot[kind]["failed_ids"]:keys {
+                    set state["engines"][kind]["failed_ids"][identity] to true.
+                }
+                set state["engines"][kind]["failed"] to state["engines"][kind]["failed_ids"]:keys:length.
+                set state["engines"][kind]["working"] to max(0,state["engines"][kind]["installed"]-state["engines"][kind]["failed"]).
             }
         }
-        set state["engines"]["rapier"]["failed"] to state["engines"]["rapier"]["failed_ids"]:keys:length.
-        set state["engines"]["rapier"]["working"] to state["engines"]["rapier"]["installed"] - state["engines"]["rapier"]["failed"].
-    }
-    if nervs {
-        for engine_id in snapshot["nerv"]["failed_ids"]:keys {
-            if not state["engines"]["nerv"]["failed_ids"]:haskey(engine_id) {
-                state["engines"]["nerv"]["failed_ids"]:add(engine_id,true).
-            }
-        }
-        set state["engines"]["nerv"]["failed"] to state["engines"]["nerv"]["failed_ids"]:keys:length.
-        set state["engines"]["nerv"]["working"] to state["engines"]["nerv"]["installed"] - state["engines"]["nerv"]["failed"].
     }
     set state["scenario"]["rapiers_out"] to state["engines"]["rapier"]["failed"].
     set state["scenario"]["nervs_out"] to state["engines"]["nerv"]["failed"].
-    set state["submode"] to state["scenario"]["rapiers_out"] + "RO".
+    set state["submode"] to state["scenario"]["rapiers_out"]+"RO".
+    set state["failure_summary"] to state["submode"]+","+state["scenario"]["nervs_out"]+"NO".
     set state["last_failure_refresh"] to time:seconds.
-    if state["scenario"]["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] {
-        if state["mode"] <> "contingency_abort" {
-            set state["nervs_were_active"] to nervs.
-            set state["phase"] to "initialize".
-            set state["phase_entered"] to time:seconds.
-            set state["target"]["selected"] to false.
-            set state["handoff"]["started"] to false.
-            flight_log_event("contingency_escalation","from="+state["mode"]+"|rapiers_out="+state["scenario"]["rapiers_out"]).
-        }
+    if defined recovery_apply_limits { recovery_apply_limits(). }
+    if not (state:haskey("managed") and state["managed"]) and
+       state["scenario"]["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] and
+       state["mode"] <> "contingency_abort" {
+        flight_log_event("contingency_escalation","from="+state["mode"]+"|rapiers_out="+state["scenario"]["rapiers_out"]).
         set state["mode"] to "contingency_abort".
+        set state["phase"] to "initialize".
+        set state["phase_entered"] to time:seconds.
+        set state["target"]["selected"] to false.
+        set state["handoff"]["started"] to false.
     }
     return state.
 }
@@ -880,3 +949,241 @@ local abort_modes is lex().
 Poseidon_SSTO:add("AbortModes", abort_modes).
 
 global AVES is Poseidon_SSTO.
+
+// Rebuilt once for each launch, before monitoring. Registry identity survives
+// missing parts and separates health from intentional recovery isolation.
+function recovery_register_engines {
+    global recovery_engines is lex().
+    global recovery_nominal_cutoff is false.
+    global recovery_initial_lf is ship:liquidfuel.
+    global recovery_initial_ox is ship:oxidizer.
+    for kind in list("rapier","nerv") {
+        local pattern is "R.A.P.I.E.R".
+        if kind = "nerv" { set pattern to "LV-N". }
+        for engine_part in ship:partstitledpattern(pattern) {
+            local side is 0.
+            local lateral is vdot(engine_part:position-ship:position,ship:facing:starvector).
+            if lateral < -0.1 { set side to -1. }
+            if lateral > 0.1 { set side to 1. }
+            recovery_engines:add("part_"+engine_part:uid,lex(
+                "kind",kind,"part",engine_part,"failed",false,"isolated",false,
+                "desired",engine_part:ignition,"original_limit",engine_part:thrustlimit,
+                "side",side,"commanded_since",time:seconds,"fault_since",-1,"present",true,
+                "failure_reason","","limit",engine_part:thrustlimit)).
+        }
+    }
+}
+
+function recovery_set_command {
+    parameter engine_part, desired.
+    if not defined recovery_engines { return. }
+    local identity is "part_"+engine_part:uid.
+    if not recovery_engines:haskey(identity) { return. }
+    local entry is recovery_engines[identity].
+    if desired and not entry["desired"] { set entry["commanded_since"] to time:seconds. }
+    set entry["desired"] to desired.
+    if not desired { set entry["fault_since"] to -1. }
+}
+
+function recovery_set_isolated {
+    parameter kind, isolated.
+    if not defined recovery_engines { return. }
+    for identity in recovery_engines:keys {
+        local entry is recovery_engines[identity].
+        if entry["kind"] = kind and not entry["failed"] {
+            if entry["isolated"] <> isolated and defined flight_log_event {
+                flight_log_event("recovery_engine_isolation","id="+identity+"|kind="+kind+"|isolated="+isolated).
+            }
+            set entry["isolated"] to isolated.
+            if isolated {
+                set entry["desired"] to false.
+                set entry["fault_since"] to -1.
+                if entry["present"] and entry["part"]:ignition { entry["part"]:shutdown. }
+            }
+        }
+    }
+}
+
+function recovery_rapier_layout {
+    local healthy is 0.
+    local left_count is 0.
+    local right_count is 0.
+    local unknown is false.
+    if defined recovery_engines {
+        for identity in recovery_engines:keys {
+            local entry is recovery_engines[identity].
+            if entry["kind"] = "rapier" and not entry["failed"] and entry["present"] {
+                set healthy to healthy+1.
+                if entry["side"] < 0 { set left_count to left_count+1. }
+                if entry["side"] > 0 { set right_count to right_count+1. }
+                if entry["side"] = 0 { set unknown to true. }
+            }
+        }
+    }
+    return lex("healthy",healthy,"opposite_pair",left_count > 0 and right_count > 0,
+        "unknown",unknown,"left",left_count,"right",right_count).
+}
+
+function recovery_apply_limits {
+    local nerv_failures is 0.
+    if defined recovery_engines {
+        for identity in recovery_engines:keys {
+            local entry is recovery_engines[identity].
+            if entry["kind"] = "nerv" and entry["failed"] { set nerv_failures to nerv_failures+1. }
+        }
+        for identity in recovery_engines:keys {
+            local entry is recovery_engines[identity].
+            if entry["present"] and defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+                local reserve_stop is ship:liquidfuel <= abort_state["lf_reserve"].
+                if entry["kind"] = "rapier" and entry["part"]:mode = "ClosedCycle" and
+                   ship:oxidizer <= abort_state["ox_reserve"] { set reserve_stop to true. }
+                if reserve_stop {
+                    if (entry["desired"] or entry["part"]:ignition) and defined flight_log_event {
+                        flight_log_event("recovery_engine_reserve_stop","id="+identity+"|kind="+entry["kind"]+
+                            "|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
+                    }
+                    set entry["desired"] to false.
+                    set entry["fault_since"] to -1.
+                    if entry["part"]:ignition { entry["part"]:shutdown. }
+                }
+            }
+            if entry["kind"] = "nerv" and entry["present"] {
+                local limit_pct is min(entry["original_limit"],entry["part"]:thrustlimit).
+                if nerv_failures > 0 { set limit_pct to min(limit_pct,20). }
+                if nerv_failures >= 2 or entry["failed"] { set limit_pct to 0. }
+                if limit_pct <> entry["limit"] and defined flight_log_event {
+                    flight_log_event("recovery_engine_limit","id="+identity+"|kind=nerv|limit="+limit_pct+"|nervs_out="+nerv_failures).
+                }
+                set entry["part"]:thrustlimit to limit_pct.
+                set entry["limit"] to limit_pct.
+                if limit_pct = 0 {
+                    set entry["desired"] to false.
+                    if entry["part"]:ignition { entry["part"]:shutdown. }
+                }
+            }
+        }
+    } else if defined abort_state and abort_state:haskey("scenario") {
+        // Older recovery entry points still preserve the lone-NERV restriction.
+        set nerv_failures to abort_state["scenario"]["nervs_out"].
+        if nerv_failures > 0 {
+            for engine_part in ship:partstitledpattern("LV-N") {
+                set engine_part:thrustlimit to min(engine_part:thrustlimit,20).
+                if nerv_failures >= 2 { engine_part:shutdown. }
+            }
+        }
+    }
+}
+
+function recovery_power {
+    parameter state, use_rapiers, use_nervs.
+    recovery_apply_limits().
+    local force_kn is 0.
+    local vacuum_force is 0.
+    local mass_rate is 0.
+    local vacuum_rate is 0.
+    local lf_rate is 0.
+    local ox_rate is 0.
+    local healthy_rapiers is 0.
+    local healthy_nervs is 0.
+    local usable_lf is max(0,ship:liquidfuel-state["lf_reserve"]).
+    local usable_ox is max(0,ship:oxidizer-state["ox_reserve"]).
+    for kind in list("rapier","nerv") {
+        local pattern is "R.A.P.I.E.R".
+        if kind = "nerv" { set pattern to "LV-N". }
+        if (kind = "rapier" and use_rapiers) or (kind = "nerv" and use_nervs) {
+            for engine_part in ship:partstitledpattern(pattern) {
+                if not engine_blocked_by_abort(kind,engine_part) and not engine_part:flameout {
+                    // POSSIBLETHRUST includes the limiter and works before ignition.
+                    local engine_force is engine_part:possiblethrust.
+                    local engine_vacuum_force is engine_part:possiblethrustat(0).
+                    local engine_rate is engine_force/(max(1,engine_part:isp)*constant:g0).
+                    local lf_ratio is 0.
+                    local ox_ratio is 0.
+                    local lf_density is 0.005.
+                    local ox_density is 0.005.
+                    local resources_used is engine_part:consumedresources.
+                    for resource_name in resources_used:keys {
+                        local consumed is resources_used[resource_name].
+                        if consumed:name = "LiquidFuel" {
+                            set lf_ratio to consumed:ratio.
+                            set lf_density to consumed:density.
+                            if engine_part:ignition {
+                                set usable_lf to min(usable_lf,max(0,consumed:amount-state["lf_reserve"])).
+                            }
+                        }
+                        if consumed:name = "Oxidizer" {
+                            set ox_ratio to consumed:ratio.
+                            set ox_density to consumed:density.
+                            if engine_part:ignition {
+                                set usable_ox to min(usable_ox,max(0,consumed:amount-state["ox_reserve"])).
+                            }
+                        }
+                    }
+                    local mixture_mass is lf_ratio*lf_density+ox_ratio*ox_density.
+                    if mixture_mass > 0 and engine_force > 0 and engine_part:isp > 0 and usable_lf > 0 and
+                       (ox_ratio = 0 or usable_ox > 0) {
+                        set force_kn to force_kn+engine_force.
+                        set mass_rate to mass_rate+engine_rate.
+                        set vacuum_force to vacuum_force+engine_vacuum_force.
+                        set vacuum_rate to vacuum_rate+engine_vacuum_force/(max(1,engine_part:vacuumisp)*constant:g0).
+                        set lf_rate to lf_rate+engine_rate*lf_ratio/mixture_mass.
+                        set ox_rate to ox_rate+engine_rate*ox_ratio/mixture_mass.
+                        if kind = "rapier" { set healthy_rapiers to healthy_rapiers+1. }
+                        if kind = "nerv" { set healthy_nervs to healthy_nervs+1. }
+                    }
+                }
+            }
+        }
+    }
+    // One coupled burn duration spends the shared LF supply once, even when
+    // RAPIERs and NERVs are simultaneously credited. Ox can be limiting first.
+    local burn_time is 0.
+    if lf_rate > 0 { set burn_time to usable_lf/lf_rate. }
+    if ox_rate > 0 { set burn_time to min(burn_time,usable_ox/ox_rate). }
+    local fuel_t is min(ship:mass*0.9,burn_time*mass_rate).
+    local isp_s is 0.
+    local vacuum_isp_s is 0.
+    local dv is 0.
+    local vacuum_dv is 0.
+    if mass_rate > 0 {
+        set isp_s to force_kn/(mass_rate*constant:g0).
+        set dv to isp_s*constant:g0*ln(ship:mass/(ship:mass-fuel_t)).
+    }
+    if vacuum_rate > 0 {
+        set vacuum_isp_s to vacuum_force/(vacuum_rate*constant:g0).
+        set vacuum_dv to vacuum_isp_s*constant:g0*ln(ship:mass/(ship:mass-fuel_t)).
+    }
+    return lex("thrust",force_kn,"thrust_kn",force_kn,"acceleration",force_kn/max(0.001,ship:mass),
+        "dv",dv,"vacuum_dv",vacuum_dv,"vacuum_thrust",vacuum_force,"isp",isp_s,"vacuum_isp",vacuum_isp_s,
+        "mass_flow",mass_rate,"lf_flow",lf_rate,"ox_flow",ox_rate,"fuel_t",fuel_t,"burn_time",burn_time,
+        "healthy_rapiers",healthy_rapiers,"healthy_nervs",healthy_nervs,"usable",force_kn > 0 and burn_time > 0).
+}
+
+function recovery_throttle {
+    parameter requested, floor is 0.
+    local command is max(requested,floor).
+    if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+        // Recovery owns coast, alignment and energy decisions. Retain attitude
+        // and terrain steering protection; they cannot override burn timing.
+        set command to requested.
+        if ship:liquidfuel <= abort_state["lf_reserve"] { return 0. }
+    }
+    return max(0,min(1,command)).
+}
+
+function recovery_select_mode {
+    parameter state, current_phase.
+    if state["nominal_cutoff"] and state["scenario"]["nervs_out"] > 0 { return "edr". }
+    // Return commitment is permanent: a changed failure count reconfigures
+    // propulsion but cannot reopen the abandoned ascent/orbit attempt.
+    if state["mode"] = "edr" { return "edr". }
+    if state["mode"] = "aed" and state["scenario"]["rapiers_out"] >= 4 { return "edr". }
+    local selected is ask_abort_modes(state["scenario"],current_phase).
+    if selected = "ato" and (state["orbit_abandoned"] or
+       (state:haskey("suppress_orbit") and state["suppress_orbit"])) {
+        if state["mode"] = "aed" or state["mode"] = "contingency_abort" { return state["mode"]. }
+        if state["scenario"]["rapiers_out"] < 4 { return "aed". }
+        return "edr".
+    }
+    return selected.
+}

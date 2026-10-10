@@ -474,14 +474,19 @@ function contingency_update {
     abort_set_fuel_dump(false).
     set dapthrottle to 0.
     rapiersoff().
+    if defined recovery_engines { recovery_apply_limits(). }
     if not state:haskey("orbit_eligible") {
         local were_active is nervs.
         if state:haskey("nervs_were_active") { set were_active to state["nervs_were_active"]. }
+        if state:haskey("suppress_orbit") and state["suppress_orbit"] { set were_active to false. }
+        if state["scenario"]["nervs_out"] > 0 { set were_active to false. }
         set state["orbit_eligible"] to were_active.
-        set state["orbit_attempted"] to false.
-        set state["orbit_abandoned"] to false.
+        if not state:haskey("orbit_attempted") { set state["orbit_attempted"] to false. }
+        if not state:haskey("orbit_abandoned") { set state["orbit_abandoned"] to false. }
         set state["orbit_budget"] to lex("required_dv",0,"margin",0,"possible",false).
-        set state["lf_reserve"] to ship:liquidfuel*cfg["lf_reserve_fraction"].
+        if not state:haskey("lf_reserve") {
+            set state["lf_reserve"] to ship:liquidfuel*cfg["lf_reserve_fraction"].
+        }
         set state["entry_searched"] to false.
         set state["entry_target"] to lex("selected",false).
         flight_log_event("contingency_nerv_policy","orbit_first="+were_active+

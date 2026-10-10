@@ -130,7 +130,7 @@ if not (dap:haskey("setup")) {
     if not(defined(dapthrottle)){
         global dapthrottle is 0.
     }
-    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
+    lock throttle to recovery_throttle(dapthrottle,dap["envelope"]["min_throttle"]).
 
     set dap["setup_done"] to true.
 }).
@@ -648,6 +648,9 @@ if not (dap:haskey("update")) {
     }
     set dap["dt"] to time:seconds - dap["l_t"].
     set dap["l_t"] to time:seconds.
+    if defined recovery_apply_limits and defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+        recovery_apply_limits().
+    }
     envelope_refresh().
     if defined abort_state and abort_state["active"] and abort_state["mode"] = "contingency_abort" and
        (abort_state["phase"] = "orbit_coast" or abort_state["phase"] = "orbit_insert") {
@@ -787,7 +790,7 @@ if not (dap:haskey("set_aoa_auto")) {
     }
     lock dap_steering to heading(dap["aoa"]["aoa_yaw"], dap["aoa"]["aoa_pitch"], dap["aoa"]["aoa_roll"]).
     lock steering to dap_steering.
-    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
+    lock throttle to recovery_throttle(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aoa".
     set dap["dap_mode_set"]["dapmode"] to "auto".
@@ -803,7 +806,7 @@ if not (dap:haskey("set_aerostr_auto")) {
     }
     lock dap_steering to heading(dap["aerostr"]["targetDirection"], dap["aerostr"]["targetPitch"], dap["aerostr"]["targetRoll"]).
     lock steering to dap_steering.
-    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
+    lock throttle to recovery_throttle(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aerostr".
     set dap["dap_mode_set"]["dapmode"] to "auto".
@@ -818,7 +821,7 @@ if not (dap:haskey("set_vector_auto")) {
     }
     lock dap_steering to dap["vector"]["targetVector"].
     lock steering to dap_steering.
-    lock throttle to max(dapthrottle,dap["envelope"]["min_throttle"]).
+    lock throttle to recovery_throttle(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "vector".
     set dap["dap_mode_set"]["dapmode"] to "auto".
@@ -834,7 +837,7 @@ if not (dap:haskey("set_off")) {
     set dap["dap_mode"] to "off".
     set dap["dap_mode_set"]["dapmode"] to "off".
     set dap["dap_mode_set"]["str_mode"] to dap["str_mode"].
-    lock throttle to SHIP:CONTROL:PILOTMAINTHROTTLE.
+    lock throttle to recovery_throttle(SHIP:CONTROL:PILOTMAINTHROTTLE,0).
     set dapthrottle to 0.
     unlock steering.
     sas on.
@@ -857,7 +860,7 @@ if not(dap:haskey("set_css")) {
     // set_off() deliberately unlocks steering.  Every managed-mode setter
     // must reattach it so CSS/auto handoffs always regain control.
     lock steering to dap_steering.
-    lock throttle to max(SHIP:CONTROL:PILOTMAINTHROTTLE,dap["envelope"]["min_throttle"]).
+    lock throttle to recovery_throttle(SHIP:CONTROL:PILOTMAINTHROTTLE,dap["envelope"]["min_throttle"]).
     set dap["dap_mode_set"]["dapmode"] to "css".
     set dap["dap_mode_set"]["str_mode"] to dap["str_mode"].
 }).
@@ -867,7 +870,16 @@ if not(dap:haskey("set_css")) {
 
 
 function engine_blocked_by_abort {
-    parameter engine_type, engine_part.
+    parameter engine_type, engine_part, check_reserves is true.
+    if defined recovery_engines and recovery_engines:haskey("part_"+engine_part:uid) {
+        local entry is recovery_engines["part_"+engine_part:uid].
+        if entry["failed"] or entry["isolated"] { return true. }
+    }
+    if check_reserves and defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+        if ship:liquidfuel <= abort_state["lf_reserve"] { return true. }
+        if engine_type = "rapier" and engine_part:mode = "ClosedCycle" and
+           ship:oxidizer <= abort_state["ox_reserve"] { return true. }
+    }
     if not(defined abort_state) { return false. }
     if not abort_state:haskey("engines") { return false. }
     if not abort_state["engines"]:haskey(engine_type) { return false. }
@@ -877,8 +889,9 @@ function engine_blocked_by_abort {
 
 function rapierson{
     for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-        if not rapiers_:ignition and not engine_blocked_by_abort("rapier",rapiers_){
-            rapiers_:ACTIVATE.
+        if not engine_blocked_by_abort("rapier",rapiers_) {
+            recovery_set_command(rapiers_,true).
+            if not rapiers_:ignition { rapiers_:ACTIVATE. }
         }
     }
     set rapiers to true.
@@ -886,6 +899,7 @@ function rapierson{
 }
 function rapiersoff{
     for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
+        recovery_set_command(rapiers_,false).
         if rapiers_:ignition{
             rapiers_:SHUTDOWN.
         }
@@ -896,7 +910,7 @@ function togglerapiermode{
     PARAMETER TGT_MODE IS "TOGGEL".
     if TGT_MODE = "TOGGEL"{
         for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-            if not engine_blocked_by_abort("rapier",rapiers_) {
+            if not engine_blocked_by_abort("rapier",rapiers_,false) {
                 rapiers_:TOGGLEMODE().
                 SET rapier_mode to RAPIERS_:MODE.
             }
@@ -905,14 +919,14 @@ function togglerapiermode{
     }ELSE IF TGT_MODE = "AIR"{
         
         for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-            IF NOT engine_blocked_by_abort("rapier",rapiers_) {
+            IF NOT engine_blocked_by_abort("rapier",rapiers_,false) {
                 IF NOT (rapiers_:MODE = "AirBreathing") { rapiers_:TOGGLEMODE(). }
                 SET rapier_mode to "AirBreathing".
             }
         }
     }ELSE IF TGT_MODE = "CLOSED"{
         for rapiers_ in ship:partstitledpattern("R.A.P.I.E.R"){
-            IF NOT engine_blocked_by_abort("rapier",rapiers_) {
+            IF NOT engine_blocked_by_abort("rapier",rapiers_,false) {
                 IF NOT (rapiers_:MODE = "ClosedCycle") { rapiers_:TOGGLEMODE(). }
                 SET rapier_mode to "ClosedCycle".
             }
@@ -920,15 +934,18 @@ function togglerapiermode{
     }
 }   
 function nervson{
+    recovery_apply_limits().
     for nervs_ in  ship:partstitledpattern("LV-N"){
-        if not nervs_:ignition and not engine_blocked_by_abort("nerv",nervs_){
-        nervs_:ACTIVATE.
+        if not engine_blocked_by_abort("nerv",nervs_) and nervs_:thrustlimit > 0 {
+            recovery_set_command(nervs_,true).
+            if not nervs_:ignition { nervs_:ACTIVATE. }
         }
     }
     set nervs to true.
 }
 function nervsoff{
     for nervs_ in  ship:partstitledpattern("LV-N"){
+        recovery_set_command(nervs_,false).
         if nervs_:ignition{
             nervs_:SHUTDOWN.
         }

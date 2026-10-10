@@ -19,7 +19,75 @@ RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
 RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_route.ks").
 
+// The orbit executive transfers one recovery context; setup cannot reset its
+// per-engine commands, authority restrictions, reserves or attempt history.
+function reentry_recovery_context {
+    parameter request.
+    if request:haskey("context") { return request["context"]. }
+    return lex("mission","normal","preserve_propulsion",false,"allow_go_around",true).
+}
+
+function reentry_recovery_preserved {
+    parameter context.
+    return context:haskey("mission") and context["mission"] = "abort" and
+        context:haskey("preserve_propulsion") and context["preserve_propulsion"].
+}
+
+function reentry_apply_handoff {
+    parameter context.
+    if context:haskey("initial_phase") {
+        set step to context["initial_phase"].
+        set substep to "".
+    }
+    if context:haskey("capture_interface") {
+        global Team_interface is context["capture_interface"].
+        flight_log_set_entry_target(Team_interface).
+    }
+}
+
+function reentry_recovery_fallback {
+    parameter state, reason.
+    if state["mode"] = "contingency_abort" { return state. }
+    flight_log_event("recovery_fallback","from="+state["mode"]+"|to=contingency_abort|reason="+reason).
+    set state["mode"] to "contingency_abort".
+    set state["phase"] to "initialize".
+    set state["phase_entered"] to time:seconds.
+    set state["orbit_abandoned"] to true.
+    set state["suppress_orbit"] to true.
+    // Reinitialize all contingency service caches while preserving reserves
+    // and the rejected maneuver history; its initialization honors this flag.
+    if state:haskey("orbit_eligible") { state:remove("orbit_eligible"). }
+    if defined recovery_engines { recovery_set_isolated("nerv",false). }
+    set state["target"]["selected"] to false.
+    set state["handoff"]["started"] to false.
+    return state.
+}
+
+function reentry_recovery_monitor {
+    parameter state, preserve_propulsion, current_phase.
+    set state to abort_refresh_state(state).
+    if preserve_propulsion {
+        abort_set_fuel_dump(false).
+        recovery_apply_limits().
+        if state["scenario"]["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] {
+            set state to reentry_recovery_fallback(state,"terminal_rapier_loss").
+        }
+        if state["mode"] <> "contingency_abort" and
+           ship:liquidfuel <= state["lf_reserve"] and current_phase = "TEAM" {
+            set state to reentry_recovery_fallback(state,"terminal_fuel_reserve").
+        }
+    }
+    return state.
+}
+
+function reentry_ground_complete {
+    parameter contact, ground_speed.
+    return contact = "LANDED" and ground_speed < 1.
+}
+
 parameter force_tgt is lex("force",false,"Location","","Runway","").
+global reentry_context is reentry_recovery_context(force_tgt).
+global reentry_preserve_propulsion is reentry_recovery_preserved(reentry_context).
 if not SHIP:BODY:atm:exists {
     // Airless operations are intentionally not an alternate branch of entry
     // guidance.  The dedicated program owns its NERV-only deorbit, powered
@@ -36,15 +104,24 @@ if not(defined recovery_result) {
 }
 //if ship:periapsis > 70000{
 if not(force_tgt["force"]){
-    setup_reentry_script().
+    setup_reentry_script("","",reentry_preserve_propulsion).
 }ELSE{
-    setup_reentry_script(force_tgt["Location"],force_tgt["Runway"]).
+    setup_reentry_script(force_tgt["Location"],force_tgt["Runway"],reentry_preserve_propulsion).
 }
 //}
 // Discard plans retained by a previous run; every entry starts from live state.
 if defined entry_traj { unset entry_traj. }
 if defined Team_interface { unset Team_interface. }
 if defined reentry_target { unset reentry_target. }
+reentry_apply_handoff(reentry_context).
+if reentry_preserve_propulsion {
+    abort_set_fuel_dump(false).
+    recovery_apply_limits().
+    if defined terminal_route { unset terminal_route. }
+    flight_log_event("recovery_handoff_received","mode="+abort_state["mode"]+
+        "|source_step="+abort_state["source_step"]+"|phase="+step+
+        "|lf_reserve="+abort_state["lf_reserve"]+"|ox_reserve="+abort_state["ox_reserve"]).
+}
 global basice_reentry_guidance is false.
 global entry_attitude_initialized is false.
 global entry_rejected_runways is lexicon().
@@ -75,7 +152,16 @@ global team_handoff_transition_active is false.
 global team_handoff_transition_start is 0.
 global team_handoff_start_aoa is 0.
 global team_handoff_start_bank is 0.
-dap:setup().
+if not reentry_preserve_propulsion { dap:setup(). }
+if reentry_preserve_propulsion and step = "TEAM" {
+    set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
+    set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
+    set team_handoff_transition_start to time:seconds.
+    set team_handoff_transition_active to true.
+    set dap["str_mode"] to "aoa".
+    flight_log_event("team_handoff","reason=aed_capture|start_aoa="+team_handoff_start_aoa+
+        "|start_bank="+team_handoff_start_bank+"|target_altitude="+Team_interface["target_altitude"]).
+}
 if reentry_tr_target_pending {
     local target_wait_reason is "impact_pending".
     if not ADDONS:TR:available { set target_wait_reason to "addon_unavailable". }
@@ -87,7 +173,7 @@ set console_mode to "DATA".
 until running = false{
     // An RTLS/ATR can lose additional engines after its recovery handoff.
     if defined abort_state and abort_state["active"] {
-        set abort_state to abort_refresh_state(abort_state).
+        set abort_state to reentry_recovery_monitor(abort_state,reentry_preserve_propulsion,step).
         if abort_state["mode"] = "contingency_abort" {
             set step to "contingency_abort".
             contingency_update(abort_state).
@@ -295,8 +381,10 @@ until running = false{
        
         if not entry_attitude_initialized and ship:altitude <= 75000 {
             reset_sys().
-            nervsoff().
-            rapierson().
+            if not reentry_preserve_propulsion {
+                nervsoff().
+                rapierson().
+            } else { recovery_apply_limits(). }
             set dap["str_mode"] to "aoa".
             set dap["aoa"]["target_aoa"] to AVES["EGAOA"](ship:altitude).
             set dap["aoa"]["target_bank"] to 0.
@@ -691,7 +779,8 @@ until running = false{
         if terminal_route_runway_change_request <> "" {
             local requested_runway is terminal_route_runway_change_request.
             set terminal_route_runway_change_request to "".
-            if terminal_route_runway_change_allowed(terminal_route) {
+            if terminal_route_runway_change_allowed(terminal_route) and
+               (not reentry_preserve_propulsion or not abort_state["committed"]) {
                 local runway_change is terminal_route_change_runway(requested_runway).
                 set Lastest_status to runway_change["message"].
                 if runway_change["success"] {
@@ -704,6 +793,18 @@ until running = false{
             }
         }
         set terminal_route to terminal_route_update(terminal_route).
+        if reentry_preserve_propulsion {
+            if terminal_route["phase"] = "base" or terminal_route["phase"] = "final" {
+                set abort_state["committed"] to true.
+            }
+            if reentry_context:haskey("allow_go_around") and not reentry_context["allow_go_around"] and
+               terminal_route["phase"] = "go_around" {
+                set abort_state to reentry_recovery_fallback(abort_state,"go_around_unavailable").
+                set step to "contingency_abort".
+            }
+        }
+        // A capability transfer commits before another terminal command.
+        if step = "TEAM" {
         terminal_route_fly(terminal_route).
         if team_handoff_transition_active {
             local transition_elapsed is time:seconds-team_handoff_transition_start.
@@ -750,7 +851,8 @@ until running = false{
         }
 
         if terminal_route["phase"] = "final" or terminal_route["phase"] = "base"{
-            abort_set_fuel_dump(ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
+            abort_set_fuel_dump(not reentry_preserve_propulsion and
+                ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
         }
 
         if terminal_route["landing_ready"]{
@@ -780,6 +882,7 @@ until running = false{
                 terminal_route_change_phase(terminal_route,"go_around").
                 set Lastest_status to "Go around: landing commit unstable (GS error " + round(landing_commit["glideslope_error"],1) + "m)".
             }
+        }
         }
     }
 
@@ -846,8 +949,13 @@ until running = false{
         }
         // A momentary stall or a bounce can have near-zero airspeed while
         // still airborne.  Only wheel contact is a valid terminal condition.
-        if ship:status = "LANDED" and ship:airspeed < 1 {
+        if reentry_ground_complete(ship:status,ship:groundspeed) {
             set recovery_result to lex("complete",true,"success",true,"reason","landing_complete").
+            if reentry_preserve_propulsion {
+                set abort_state["active"] to false.
+                set abort_state["result"] to lex("success",true,"reason","landing_complete").
+                flight_log_event("recovery_outcome","mode="+abort_state["mode"]+"|success=true|reason=landing_complete").
+            }
             set step to "end".
             log_status("Landing completed, switching to end phase").
         }
@@ -857,8 +965,17 @@ until running = false{
             set recovery_result to lex("complete",true,"success",false,"reason","recovery_ended_before_landing").
         }
         set running to false.
-        if not(defined abort_state) or not abort_state:haskey("mode") or abort_state["mode"] <> "contingency_abort" {
-            reset_sys().
+        local recovery_owns_cleanup is false.
+        if defined abort_state {
+            set recovery_owns_cleanup to abort_state:haskey("managed") and abort_state["managed"].
+            if abort_state:haskey("mode") and abort_state["mode"] = "contingency_abort" {
+                set recovery_owns_cleanup to true.
+            }
+        }
+        if not recovery_owns_cleanup { reset_sys(). }
+        if reentry_preserve_propulsion and abort_state["result"]["reason"] <> "pilot_handoff" {
+            set dapthrottle to 0.
+            dap:set_off().
         }
         set warp to 0.
         update_readouts().
@@ -875,6 +992,13 @@ until running = false{
         entry_nominal_energy_height(ship:altitude,ship:airspeed),
         entry_display_range_remaining
     ).
+    if reentry_preserve_propulsion and abort_state["mode"] <> "contingency_abort" and
+       abort_state["phase"] <> step {
+        flight_log_event("recovery_phase","mode="+abort_state["mode"]+
+            "|from="+abort_state["phase"]+"|to="+step).
+        set abort_state["phase"] to step.
+        set abort_state["phase_entered"] to time:seconds.
+    }
     flight_log_tick("reentry",step,substep).
     wait 0.
 }

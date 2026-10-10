@@ -838,6 +838,9 @@ function flight_log_tick {
     if POS_LOG_LEVEL = 2 and time:seconds < POS_LOG_NEXT_SAMPLE_TIME { return. }
     if POS_LOG_LEVEL = 2 { set POS_LOG_NEXT_SAMPLE_TIME to time:seconds + 1. }
     flight_log_write_sample(program_name,current_step,current_substep).
+    if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+        flight_log_recovery_sample(abort_state).
+    }
     if defined abort_state and abort_state:haskey("active") and abort_state["active"] and
        abort_state["mode"] = "contingency_abort" {
         flight_log_contingency_sample(abort_state).
@@ -1005,4 +1008,92 @@ function flight_log_rtls_observe {
         "|bank_target="+dap["aoa"]["target_bank"]+"|aoa_target="+dap["aoa"]["target_aoa"]+
         "|location="+state["target"]["location"]+"|runway="+state["target"]["runway_num"]+
         "|handoff_started="+state["handoff"]["started"]).
+}
+
+// Cached executive fields only. This helper does not query parts, terrain,
+// aerodynamic addons or predictors; the caller owns the sample cadence.
+function flight_log_recovery_fields {
+    parameter cached, prefix, names.
+    local detail is "".
+    for field_name in names {
+        if cached:haskey(field_name) {
+            set detail to detail+"|"+prefix+field_name+"="+cached[field_name].
+        }
+    }
+    return detail.
+}
+
+function flight_log_recovery_sample {
+    parameter state.
+    if POS_LOG_LEVEL < 2 { return. }
+    local detail is "mode="+state["mode"]+"|phase="+state["phase"]+
+        "|source_step="+state["source_step"]+"|active="+state["active"]+
+        "|lf="+ship:liquidfuel+"|ox="+ship:oxidizer+
+        "|altitude="+ship:altitude+"|speed="+ship:airspeed+"|vs="+ship:verticalspeed+
+        "|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+
+        "|thrust="+ship:thrust+"|throttle_command="+dapthrottle+
+        "|throttle_actual="+ship:control:mainthrottle+
+        "|aoa_command="+dap["aoa"]["target_aoa"]+"|bank_command="+dap["aoa"]["target_bank"].
+    set detail to detail+flight_log_recovery_fields(state,"",list(
+        "current_step","ascent_phase","current_ascent_phase","nominal_cutoff","lf_reserve","ox_reserve",
+        "orbit_attempted","orbit_abandoned","suppress_orbit","committed",
+        "assist_acceleration","alignment","orbit_alignment","orbit_pitch","burn_started","burn_deadline",
+        "return_burn_started","return_burn_deadline","capture_gate_since",
+        "burn_seconds","burn_started_ut","return_started_ut","orbit_started_ut","escape_pitch",
+        "energy_height","energy_margin","progress_speed","progress_climb","pitch","entry_verified",
+        "aed_intent","aed_energy","aed_energy_margin","aed_distance","aed_heading_error",
+        "aed_assist_time","aed_assist_dv","aed_assist_lf","aed_assist_ox",
+        "aed_capture_since","aed_committed" )).
+    for cache_name in list("power","nerv_power","orbit_budget","ato_budget","edr_budget","budget","aed","capture","gates","orbit_prediction","return_plan") {
+        if state:haskey(cache_name) {
+            set detail to detail+flight_log_recovery_fields(state[cache_name],cache_name+"_",list(
+                "thrust","thrust_kn","acceleration","dv","mass_flow","lf_flow","ox_flow",
+                "healthy_rapiers","healthy_nervs","burn_time","isp","vacuum_isp",
+                "required_dv","margin","possible","reason","predicted_apoapsis","predicted_periapsis",
+                "apoapsis","periapsis","duration","elapsed","time_to_entry","time_to_apoapsis",
+                "energy_height","energy_margin","position","heading","altitude","speed","sink",
+                "capture_altitude","capture_speed","capture_distance","stable_since","valid",
+                "predicted_ap","predicted_pe","burn_seconds","pitch","window_ut","entry_speed",
+                "entry_slope","footprint","vacuum_dv","vacuum_thrust" )).
+        }
+    }
+    if state:haskey("target") {
+        set detail to detail+flight_log_recovery_fields(state["target"],"target_",list(
+            "selected","location","runway_num","heading","altitude","distance_m","margin","reason" )).
+        if state["target"]:haskey("capture_interface") {
+            set detail to detail+flight_log_recovery_fields(state["target"]["capture_interface"],"target_capture_",list(
+                "target_altitude","target_speed","altitude_tolerance","speed_tolerance","heading_tolerance" )).
+        }
+        if state["target"]:haskey("screen") {
+            set detail to detail+flight_log_recovery_fields(state["target"]["screen"],"target_screen_",list(
+                "energy_margin","shortage_margin","excess_margin","turn_cost","range_margin","possible","reason" )).
+        }
+    }
+    if state:haskey("capture_interface") {
+        set detail to detail+flight_log_recovery_fields(state["capture_interface"],"capture_",list(
+            "target_altitude","target_speed","altitude_tolerance","speed_tolerance","heading_tolerance" )).
+    }
+    if state:haskey("result") {
+        set detail to detail+flight_log_recovery_fields(state["result"],"outcome_",list("success","reason" )).
+    }
+    if state:haskey("engines") {
+        for family_name in list("rapier","nerv") {
+            if state["engines"]:haskey(family_name) {
+                local family is state["engines"][family_name].
+                set detail to detail+flight_log_recovery_fields(family,family_name+"_",list("installed","working","failed" )).
+                if family:haskey("failed_ids") {
+                    for failed_id in family["failed_ids"]:keys {
+                        set detail to detail+"|failed_"+family_name+"_"+failed_id+"=true".
+                    }
+                }
+            }
+        }
+    }
+    if defined recovery_engines {
+        for engine_id in recovery_engines:keys {
+            set detail to detail+flight_log_recovery_fields(recovery_engines[engine_id],"engine_"+engine_id+"_",list(
+                "kind","failed","isolated","desired","original_limit","limit","side" )).
+        }
+    }
+    flight_log_event("recovery_sample",detail).
 }
