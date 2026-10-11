@@ -912,6 +912,8 @@ until running = false{
                 set abort_state["aed_last_search"] to time:seconds.
                 set abort_state["aed_intent"] to "ascending_coast".
                 set abort_state["aed_committed"] to false.
+                set abort_state["aed_powered"] to false.
+                set abort_state["aed_search_cycles"] to 0.
                 recovery_set_isolated("rapier",false).
                 recovery_set_isolated("nerv",true).
                 togglerapiermode("CLOSED").
@@ -923,6 +925,17 @@ until running = false{
                     abort_state["lf_reserve"],abort_state["ox_reserve"],cfg).
                 set abort_state["aed_assist_budget"] to assist.
                 set abort_state["aed_search"] to recovery_aed_search(current_simstate(),abort_state["rejected_targets"],assist,cfg).
+                set abort_state["aed_logged_search_index"] to -1.
+                flight_log_event("aed_search_started","order=nearest_runway|candidates="+abort_state["aed_search"]["candidates"]:length).
+                if recovery_aed_power_available(power) {
+                    local exploratory is recovery_aed_powered_target(abort_state["aed_search"],current_simstate(),cfg).
+                    if exploratory["selected"] {
+                        set abort_state["target"] to exploratory.
+                        set abort_state["aed_powered"] to true.
+                        flight_log_event("aed_diversion_target","location="+exploratory["location"]+
+                            "|runway="+exploratory["runway_num"]+"|provisional=True|distance="+exploratory["distance_m"]).
+                    }
+                }
                 recovery_phase(abort_state,"select_runway").
             }
             local dt_aed is max(0,min(0.25,time:seconds-abort_state["aed_last_update"])).
@@ -932,17 +945,35 @@ until running = false{
             set abort_state["aed_last_lf"] to ship:liquidfuel.
             set abort_state["aed_last_ox"] to ship:oxidizer.
             local power is recovery_power(abort_state,true,false).
+            // Reserves protect the orbit budget, not a compulsory engine cut
+            // during an airborne diversion. Release them before declaring loss.
+            if not recovery_aed_power_available(power) and
+               (abort_state["lf_reserve"] > 0 or abort_state["ox_reserve"] > 0) and
+               ship:liquidfuel > 0 and ship:oxidizer > 0 {
+                local layout is recovery_rapier_layout().
+                if layout["healthy"] > 0 {
+                    flight_log_event("aed_reserve_released","lf_reserve="+abort_state["lf_reserve"]+
+                        "|ox_reserve="+abort_state["ox_reserve"]+"|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
+                    set abort_state["lf_reserve"] to 0.
+                    set abort_state["ox_reserve"] to 0.
+                    set power to recovery_power(abort_state,true,false).
+                }
+            }
+            set abort_state["power"] to power.
             if abort_state["aed_throttle"] > 0 {
                 set abort_state["aed_assist_time"] to abort_state["aed_assist_time"]+dt_aed.
                 set abort_state["aed_assist_dv"] to abort_state["aed_assist_dv"]+
                     power["acceleration"]*abort_state["aed_throttle"]*dt_aed.
             }
-            if power["healthy_rapiers"] = 0 or power["thrust"] <= 0 {
+            if not recovery_aed_power_available(power) {
                 recovery_transition(abort_state,"edr","aed_rapier_unavailable"). set abort_tick_complete to true.
             }
             if not abort_tick_complete {
-                if time:seconds-abort_state["aed_started"] > cfg["maximum_duration"] {
-                    recovery_transition(abort_state,"contingency_abort","aed_timeout"). set abort_tick_complete to true.
+                if time:seconds-abort_state["aed_started"] > cfg["maximum_duration"] and
+                   not abort_state:haskey("aed_deadline_logged") {
+                    set abort_state["aed_deadline_logged"] to true.
+                    set abort_state["aed_powered"] to true.
+                    flight_log_event("aed_powered_replan","reason=aed_timeout|power_available=True").
                 }
                 if not abort_tick_complete {
                     local desired_aoa is cfg["low_drag_aoa"].
@@ -981,14 +1012,14 @@ until running = false{
                         } else if intent <> "energy_dissipation" or energy_aed < 1200 {
                             set intent to "descending_capture".
                         }
-                        if intent <> abort_state["aed_intent"] {
+                        if not abort_state["aed_powered"] and intent <> abort_state["aed_intent"] {
                             set abort_state["aed_intent"] to intent.
                             flight_log_event("aed_intent","intent="+intent+"|energy="+round(energy_aed,1)).
                         }
                         if intent = "energy_dissipation" {
                             set desired_aoa to cfg["drag_aoa"].
                         }
-                        if intent = "powered_extension" {
+                        if intent = "powered_extension" and not abort_state["aed_powered"] {
                             set desired_aoa to 4.
                             local assist is abort_state["aed_assist_budget"].
                             local assist_available is abort_state["aed_assist_time"] < assist["time"] and
@@ -996,16 +1027,13 @@ until running = false{
                                 abort_state["aed_assist_lf"] < assist["lf"] and
                                 (assist["ox"] <= 0 or abort_state["aed_assist_ox"] < assist["ox"]) and
                                 ship:liquidfuel > abort_state["lf_reserve"] and ship:oxidizer > abort_state["ox_reserve"].
-                            if assist_available {
-                                set throttle_aed to cfg["assist_throttle"].
-                            } else {
-                                set abort_state["rejected_targets"][target["location"]+"_"+target["runway_num"]] to "assist_budget_exhausted".
-                                set abort_state["target"] to lex("selected",false).
-                                recovery_phase(abort_state,"select_runway").
-                                set abort_state["aed_search"] to recovery_aed_search(current_simstate(),abort_state["rejected_targets"],
-                                    lex("time",0,"dv",0),cfg).
-                                set abort_state["aed_last_search"] to time:seconds.
-                                flight_log_event("aed_target_rejected","reason=assist_budget_exhausted").
+                            // The small assist allowance limits predictor credit;
+                            // it must not prohibit burning remaining usable fuel.
+                            set throttle_aed to cfg["assist_throttle"].
+                            if not assist_available and not abort_state:haskey("aed_assist_limit_logged") {
+                                set abort_state["aed_assist_limit_logged"] to true.
+                                flight_log_event("aed_powered_extension","reason=forecast_assist_budget_exhausted"+
+                                    "|power_available=True|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
                             }
                         }
                         // No high-speed TEAM holding turn: all capture conditions must hold
@@ -1015,7 +1043,8 @@ until running = false{
                             ship:airspeed,ship:verticalspeed,
                             normalized_heading_error(target["heading"],compass_for_prograde()),roll_for(),
                             clearance_aed,terminal_margin,0,cfg).
-                        if gate["valid"] {
+                        local provisional is target:haskey("provisional") and target["provisional"].
+                        if gate["valid"] and not provisional {
                             if abort_state["aed_capture_since"] < 0 {
                                 set abort_state["aed_capture_since"] to time:seconds.
                             }
@@ -1040,7 +1069,31 @@ until running = false{
                             set abort_state["aed_search"] to recovery_aed_search(current_simstate(),abort_state["rejected_targets"],
                                 lex("time",max(0,abort_state["aed_assist_budget"]["time"]-abort_state["aed_assist_time"]),
                                 "dv",max(0,abort_state["aed_assist_budget"]["dv"]-abort_state["aed_assist_dv"])),cfg,abort_state["target"]).
+                            set abort_state["aed_logged_search_index"] to -1.
                             set abort_state["aed_last_search"] to time:seconds.
+                        }
+                    }
+                    if abort_state["aed_powered"] {
+                        local diversion_distance is cfg["capture_distance"].
+                        local diversion_error is 0.
+                        if abort_state["target"]["selected"] {
+                            set diversion_distance to calcdistance_m(ship:geoposition,
+                                abort_state["target"]["capture_interface"]["target_latlng"]).
+                            set diversion_error to normalized_heading_error(heading_to_target(
+                                abort_state["target"]["capture_interface"]["target_latlng"]),compass_for_prograde()).
+                        }
+                        local powered_command is recovery_aed_powered_command(ship:airspeed,ship:verticalspeed,
+                            ship:altitude-max(0,ship:geoposition:terrainheight),diversion_distance,diversion_error,
+                            ship:body:mu/ship:body:radius^2,ship:q,cfg).
+                        set desired_aoa to powered_command["aoa"].
+                        set desired_bank to powered_command["bank"].
+                        set throttle_aed to powered_command["throttle"].
+                        set abort_state["aed_turn_distance"] to powered_command["turn_distance"].
+                        set abort_state["aed_turn_ready"] to powered_command["turn_ready"].
+                        if abort_state["aed_intent"] <> powered_command["intent"] {
+                            set abort_state["aed_intent"] to powered_command["intent"].
+                            flight_log_event("aed_intent","intent="+abort_state["aed_intent"]+
+                                "|turn_distance="+powered_command["turn_distance"]+"|turn_ready="+powered_command["turn_ready"]).
                         }
                     }
                     // Envelope DAP still owns q/thermal/terrain/stall protection. AED command
@@ -1054,14 +1107,23 @@ until running = false{
                     set dap["aoa"]["target_bank"] to abort_state["aed_bank"].
                     set abort_state["aed_throttle"] to abort_state["aed_throttle"]+
                         max(-0.5*dt_aed,min(0.5*dt_aed,throttle_aed-abort_state["aed_throttle"])).
-                    if ship:liquidfuel <= abort_state["lf_reserve"] or ship:oxidizer <= abort_state["ox_reserve"] or
-                        abort_state["aed_assist_time"] >= abort_state["aed_assist_budget"]["time"] or
-                        abort_state["aed_assist_dv"] >= abort_state["aed_assist_budget"]["dv"] {
-                        set abort_state["aed_throttle"] to 0.
-                    }
                     set dapthrottle to abort_state["aed_throttle"].
                     recovery_apply_limits().
                     if not abort_state["aed_search"]["complete"] {
+                        local pending_search is abort_state["aed_search"].
+                        if pending_search:haskey("index") and pending_search["index"] < pending_search["candidates"]:length and
+                           pending_search["prediction"] = 0 and pending_search["family"] = "low" {
+                            set pending_search to recovery_aed_search_refresh_candidate(pending_search,current_simstate(),
+                                cfg,abort_state["target"]).
+                        }
+                        if pending_search:haskey("index") and pending_search["index"] < pending_search["candidates"]:length and
+                           pending_search["index"] <> abort_state["aed_logged_search_index"] {
+                            local pending_candidate is pending_search["candidates"][pending_search["index"]].
+                            set abort_state["aed_logged_search_index"] to pending_search["index"].
+                            set abort_state["aed_candidate"] to pending_candidate["location"]+"_"+pending_candidate["runway_num"].
+                            flight_log_event("aed_candidate_started","target="+abort_state["aed_candidate"]+
+                                "|index="+pending_search["index"]+"|distance="+pending_candidate["distance"]).
+                        }
                         set abort_state["aed_search"] to recovery_aed_search_step(abort_state["aed_search"],cfg).
                         if abort_state["aed_search"]["complete"] {
                             for rejected_key in abort_state["aed_search"]["rejections"]:keys {
@@ -1077,15 +1139,17 @@ until running = false{
                                         set retained_feasible to true.
                                     }
                                 }
-                                if not retained_feasible and abort_state["aed_search"]["rejections"]:haskey(target_key) {
+                                if not retained_feasible and abort_state["aed_search"]["rejections"]:haskey(target_key) and
+                                   not abort_state["aed_powered"] {
                                     set abort_state["rejected_targets"][target_key] to "live_prediction_rejected".
                                     flight_log_event("aed_target_rejected","target="+target_key+"|reason=live_prediction_rejected").
                                     set abort_state["target"] to lex("selected",false).
                                     set abort_state["aed_capture_since"] to -1.
                                 }
                             }
-                            if not abort_state["target"]["selected"] {
+                            if not abort_state["target"]["selected"] or abort_state["aed_powered"] {
                                 if abort_state["aed_search"]["best"]["selected"] {
+                                    set abort_state["aed_powered"] to false.
                                     set abort_state["target"] to abort_state["aed_search"]["best"].
                                     recovery_phase(abort_state,"energy_transit").
                                     flight_log_event("aed_runway_selected","location="+abort_state["target"]["location"]+
@@ -1093,7 +1157,36 @@ until running = false{
                                         "|altitude="+abort_state["target"]["capture_interface"]["target_altitude"]+
                                         "|energy_margin="+abort_state["target"]["screen"]["energy_margin"]).
                                 } else {
-                                    recovery_transition(abort_state,"contingency_abort","aed_no_converged_runway").
+                                    // A search deadline / unpowered rejection is not
+                                    // evidence that a powered diversion is impossible.
+                                    set abort_state["aed_powered"] to true.
+                                    set abort_state["aed_capture_since"] to -1.
+                                    recovery_phase(abort_state,"powered_replan").
+                                    local search is abort_state["aed_search"].
+                                    local search_reason is "exhausted".
+                                    if search:haskey("reason") { set search_reason to search["reason"]. }
+                                    local exploratory is recovery_aed_powered_target(search,current_simstate(),cfg).
+                                    if exploratory["selected"] {
+                                        set abort_state["target"] to exploratory.
+                                        flight_log_event("aed_diversion_target","location="+exploratory["location"]+
+                                            "|runway="+exploratory["runway_num"]+"|provisional=True|distance="+exploratory["distance_m"]).
+                                    }
+                                    set abort_state["aed_search_cycles"] to abort_state["aed_search_cycles"]+1.
+                                    flight_log_event("aed_search_result","reason="+search_reason+
+                                        "|cycle="+abort_state["aed_search_cycles"]+"|power_available=True|action=powered_replan").
+                                    if search_reason = "timeout" {
+                                        // Keep unfinished integrations and the next
+                                        // candidate; never restart at runway zero.
+                                        set abort_state["aed_search"] to recovery_aed_search_resume(search).
+                                    } else {
+                                        set abort_state["rejected_targets"] to lex().
+                                        local remaining_assist is recovery_aed_assist(power,ship:liquidfuel,ship:oxidizer,
+                                            abort_state["lf_reserve"],abort_state["ox_reserve"],cfg).
+                                        set abort_state["aed_search"] to recovery_aed_search(current_simstate(),
+                                            abort_state["rejected_targets"],remaining_assist,cfg).
+                                        set abort_state["aed_logged_search_index"] to -1.
+                                    }
+                                    set abort_state["aed_last_search"] to time:seconds.
                                 }
                             }
                         }

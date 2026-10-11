@@ -1043,7 +1043,12 @@ function flight_log_recovery_sample {
         "energy_height","energy_margin","progress_speed","progress_climb","pitch","entry_verified",
         "aed_intent","aed_energy","aed_energy_margin","aed_distance","aed_heading_error",
         "aed_assist_time","aed_assist_dv","aed_assist_lf","aed_assist_ox",
-        "aed_capture_since","aed_committed" )).
+        "aed_capture_since","aed_committed","aed_powered","aed_candidate","aed_search_cycles",
+        "aed_turn_distance","aed_turn_ready","aed_deadline_logged" )).
+    if state:haskey("aed_search") {
+        set detail to detail+flight_log_recovery_fields(state["aed_search"],"aed_search_",list(
+            "index","family","started","complete","reason" )).
+    }
     for cache_name in list("power","nerv_power","orbit_budget","ato_budget","edr_budget","budget","aed","capture","gates","orbit_prediction","return_plan") {
         if state:haskey(cache_name) {
             set detail to detail+flight_log_recovery_fields(state[cache_name],cache_name+"_",list(
@@ -1059,7 +1064,7 @@ function flight_log_recovery_sample {
     }
     if state:haskey("target") {
         set detail to detail+flight_log_recovery_fields(state["target"],"target_",list(
-            "selected","location","runway_num","heading","altitude","distance_m","margin","reason" )).
+            "selected","location","runway_num","heading","altitude","distance_m","margin","reason","provisional" )).
         if state["target"]:haskey("capture_interface") {
             set detail to detail+flight_log_recovery_fields(state["target"]["capture_interface"],"target_capture_",list(
                 "target_altitude","target_speed","altitude_tolerance","speed_tolerance","heading_tolerance" )).

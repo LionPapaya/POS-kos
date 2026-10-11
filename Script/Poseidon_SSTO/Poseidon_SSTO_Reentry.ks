@@ -74,7 +74,15 @@ function reentry_recovery_monitor {
         }
         if state["mode"] <> "contingency_abort" and
            ship:liquidfuel <= state["lf_reserve"] and current_phase = "TEAM" {
-            set state to reentry_recovery_fallback(state,"terminal_fuel_reserve").
+            if ship:liquidfuel > 0 and state["engines"]["rapier"]["working"] > 0 {
+                flight_log_event("recovery_reserve_released","reason=terminal_diversion|lf_reserve="+
+                    state["lf_reserve"]+"|ox_reserve="+state["ox_reserve"]+"|lf="+ship:liquidfuel+
+                    "|ox="+ship:oxidizer).
+                set state["lf_reserve"] to 0.
+                set state["ox_reserve"] to 0.
+            } else {
+                set state to reentry_recovery_fallback(state,"terminal_fuel_unavailable").
+            }
         }
     }
     return state.

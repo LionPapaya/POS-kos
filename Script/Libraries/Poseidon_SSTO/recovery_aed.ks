@@ -12,7 +12,72 @@ function recovery_aed_config {
         "low_drag_aoa",6,"drag_aoa",20,"thin_aoa",8,
         "assist_time",30,"assist_dv",180,"assist_throttle",0.6,
         "assist_fuel_fraction",0.08,"capture_energy_tolerance",1800,
-        "maximum_duration",1200).
+        "maximum_duration",1200,"powered_speed_band",60,"turn_room_fraction",0.8,
+        "maximum_prediction_age",60).
+}
+function recovery_aed_turn_distance {
+    parameter speed_value, heading_error, gravity_value, config_AED.
+    return speed_value^2/(max(gravity_value,0.01)*tan(config_AED["maximum_bank"])) *
+        abs(heading_error)*constant:degtorad.
+}
+// A failed forecast is not a propulsion failure. This uses the live, limited,
+// resource-accessible power estimate rather than the installed engine count.
+function recovery_aed_power_available {
+    parameter power.
+    return power["healthy_rapiers"] > 0 and power["thrust"] > 0 and power["dv"] > 0.
+}
+// Exploratory diversion only: geometry does not certify a landing or TEAM
+// capture. The normal predictor and actual capture gate must still approve it.
+function recovery_aed_powered_target {
+    parameter search, input_state, config_AED.
+    local preferred is lex("selected",false,"score",1e12).
+    local gravity_value is ship:body:mu/ship:body:radius^2.
+    for candidate in search["candidates"] {
+        local intake is candidate["capture_interface"].
+        local range_now is calcdistance_m(input_state["latlong"],intake["target_latlng"]).
+        local course_error is normalized_heading_error(
+            heading_between(input_state["latlong"],intake["target_latlng"]),compass_for_simstate(input_state)).
+        local route_cost is range_now+recovery_aed_turn_distance(input_state["surfvel"]:mag,
+            course_error,gravity_value,config_AED).
+        if route_cost < preferred["score"] {
+            // Copy the candidate so exploratory steering cannot alter the
+            // predictor's feasibility result or its best-candidate cache.
+            set preferred to lex("selected",true,"provisional",true,
+                "location",candidate["location"],"runway_num",candidate["runway_num"],
+                "start",candidate["start"],"end",candidate["end"],
+                "heading",candidate["heading"],"altitude",candidate["altitude"],
+                "capture_interface",intake,"distance_m",range_now,"score",route_cost,
+                "screen",lex("feasible",false,"reason","powered_exploration","energy_margin",0)).
+        }
+    }
+    return preferred.
+}
+// Delay a large turn until its arc fits the available approach room. Power
+// holds capture speed / protects low-altitude sink, never the old ascent speed.
+function recovery_aed_powered_command {
+    parameter speed_value, sink_value, clearance, distance_value, course_error,
+        gravity_value, dynamic_pressure, config_AED.
+    local arc_m is recovery_aed_turn_distance(speed_value,course_error,gravity_value,config_AED).
+    local can_turn is clearance >= config_AED["minimum_clearance"] and dynamic_pressure > 0.1 and
+        speed_value >= 120 and arc_m <= max(config_AED["capture_distance"],
+            distance_value*config_AED["turn_room_fraction"]).
+    local bank_value is 0.
+    local aoa_value is config_AED["low_drag_aoa"].
+    local intent_value is "powered_diversion".
+    if can_turn {
+        set bank_value to max(-config_AED["maximum_bank"],min(config_AED["maximum_bank"],-0.6*course_error)).
+    } else if abs(course_error) > config_AED["capture_heading"] {
+        set intent_value to "turn_deceleration".
+        if clearance > config_AED["minimum_capture_height"] and dynamic_pressure > 0.1 {
+            set aoa_value to config_AED["drag_aoa"].
+        }
+    }
+    local throttle_value is max(0,min(1,(config_AED["capture_speed"]-speed_value)/config_AED["powered_speed_band"])).
+    if clearance < config_AED["minimum_capture_height"]+config_AED["minimum_clearance"] and sink_value < -5 {
+        set throttle_value to max(throttle_value,config_AED["assist_throttle"]).
+    }
+    return lex("aoa",aoa_value,"bank",bank_value,"throttle",throttle_value,
+        "intent",intent_value,"turn_distance",arc_m,"turn_ready",can_turn).
 }
 function recovery_aed_energy {
     parameter current_height,current_speed,capture_height,capture_speed,gravity_value.
@@ -76,8 +141,7 @@ function recovery_aed_screen {
     local result is lex("feasible",false,"reason","prediction_nonconverged",
         "energy_margin",0,"assist_required",0,"score",999999999).
     if not low_prediction["converged"] or not drag_prediction["converged"] { return result. }
-    local turn_distance is speed_value^2/(max(gravity_value,0.01)*tan(config_AED["maximum_bank"])) *
-        abs(heading_error)*constant:degtorad.
+    local turn_distance is recovery_aed_turn_distance(speed_value,heading_error,gravity_value,config_AED).
     if turn_distance > candidate_distance {
         set result["reason"] to "insufficient_turn_room". return result.
     }
@@ -181,6 +245,7 @@ function recovery_aed_search {
                         candidates:add(lex("selected",true,"location",site,"runway_num",runway_id,
                             "start",table[key],"end",table[end_key],"heading",direction,
                             "altitude",KerbinRunwayalt[height_key],"capture_interface",intake,
+                            "runway_distance",calcdistance_m(input_state["latlong"],table[key]),
                             "distance",calcdistance_m(input_state["latlong"],intake["target_latlng"]),
                             "bearing",heading_between(input_state["latlong"],intake["target_latlng"]),
                             "score",999999999)).
@@ -188,6 +253,20 @@ function recovery_aed_search {
                 }
             }
         }
+    }
+    // Stable insertion sort by actual runway proximity, not location-table
+    // insertion order or the potentially far upstream capture point.
+    local nearby_index is 1.
+    until nearby_index >= candidates:length {
+        local nearby is candidates[nearby_index].
+        local previous_index is nearby_index-1.
+        until previous_index < 0 {
+            if candidates[previous_index]["runway_distance"] <= nearby["runway_distance"] { break. }
+            set candidates[previous_index+1] to candidates[previous_index].
+            set previous_index to previous_index-1.
+        }
+        set candidates[previous_index+1] to nearby.
+        set nearby_index to nearby_index+1.
     }
     if existing_target["selected"] {
         local reorder_index is 0.
@@ -204,17 +283,62 @@ function recovery_aed_search {
         }
     }
     return lex("candidates",candidates,"index",0,"family","low","prediction",0,
-        "input",input_state,"assist",assist_budget,"started",time:seconds,
-        "complete",false,"best",lex("selected",false,"score",999999999),"rejections",lexicon()).
+        "input",input_state,"input_ut",time:seconds,"assist",assist_budget,"started",time:seconds,
+        "complete",false,"reason","running","best",lex("selected",false,"score",999999999),"rejections",lexicon()).
+}
+function recovery_aed_search_refresh_candidate {
+    parameter search, input_state, config_AED, retained_target.
+    local candidate is search["candidates"][search["index"]].
+    set search["input"] to input_state.
+    set search["input_ut"] to time:seconds.
+    if not retained_target["selected"] or
+       retained_target["location"] <> candidate["location"] or
+       retained_target["runway_num"] <> candidate["runway_num"] or
+       (retained_target:haskey("provisional") and retained_target["provisional"]) {
+        set candidate["capture_interface"] to recovery_aed_interface(candidate["start"],candidate["heading"],
+            candidate["altitude"],input_state["altitude"],config_AED).
+    }
+    set candidate["distance"] to calcdistance_m(input_state["latlong"],candidate["capture_interface"]["target_latlng"]).
+    set candidate["bearing"] to heading_between(input_state["latlong"],candidate["capture_interface"]["target_latlng"]).
+    return search.
+}
+function recovery_aed_search_resume {
+    parameter search.
+    set search["complete"] to false.
+    set search["reason"] to "running".
+    set search["started"] to time:seconds.
+    set search["rejections"] to lex().
+    return search.
 }
 function recovery_aed_search_step {
     parameter search,config_AED.
     if search["complete"] { return search. }
-    if time:seconds-search["started"] > config_AED["search_timeout"] or
-        search["index"] >= search["candidates"]:length {
+    if search["index"] >= search["candidates"]:length {
+        set search["reason"] to "exhausted".
+        set search["complete"] to true. return search.
+    }
+    if time:seconds-search["started"] > config_AED["search_timeout"] {
+        set search["reason"] to "timeout".
         set search["complete"] to true. return search.
     }
     local candidate is search["candidates"][search["index"]].
+    if not candidate["capture_interface"]["valid"] {
+        set search["rejections"][candidate["location"]+"_"+candidate["runway_num"]] to "capture_height_unavailable".
+        set search["index"] to search["index"]+1.
+        set search["prediction"] to 0.
+        set search["family"] to "low".
+        return search.
+    }
+    // Reject an impossible immediate turn before spending the entire slice
+    // integrating two trajectories. Powered recovery can revisit it slower.
+    if search["prediction"] = 0 and search["family"] = "low" and
+       recovery_aed_turn_distance(search["input"]["surfvel"]:mag,
+            normalized_heading_error(candidate["bearing"],compass_for_simstate(search["input"])),
+            ship:body:mu/ship:body:radius^2,config_AED) > candidate["distance"] {
+        set search["rejections"][candidate["location"]+"_"+candidate["runway_num"]] to "insufficient_turn_room".
+        set search["index"] to search["index"]+1.
+        return search.
+    }
     if search["prediction"] = 0 {
         set search["prediction"] to recovery_aed_prediction(search["input"],
             candidate["capture_interface"]["target_altitude"],candidate["bearing"],search["family"],config_AED).
@@ -234,10 +358,18 @@ function recovery_aed_search_step {
                 normalized_heading_error(candidate["bearing"],compass_for_simstate(search["input"])),
                 search["input"]["surfvel"]:mag,ship:body:mu/ship:body:radius^2,
                 candidate["low"],candidate["drag"],search["assist"],config_AED).
+            if search:haskey("input_ut") and time:seconds-search["input_ut"] > config_AED["maximum_prediction_age"] {
+                set screening["feasible"] to false.
+                set screening["reason"] to "prediction_stale".
+            }
             set candidate["screen"] to screening.
             if screening["feasible"] {
+                set candidate["provisional"] to false.
                 set candidate["score"] to screening["score"].
                 if candidate["score"] < search["best"]["score"] { set search["best"] to candidate. }
+                // Nearest viable runway wins; do not wait for distant sites.
+                set search["reason"] to "feasible".
+                set search["complete"] to true.
             } else {
                 set search["rejections"][candidate["location"]+"_"+candidate["runway_num"]] to screening["reason"].
             }
