@@ -1160,8 +1160,8 @@ function recovery_power {
 }
 
 function recovery_throttle {
-    parameter requested, floor is 0.
-    local command is max(requested,floor).
+    parameter requested, floor_ is 0.
+    local command is max(requested,floor_).
     if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
         // Recovery owns coast, alignment and energy decisions. Retain attitude
         // and terrain steering protection; they cannot override burn timing.
