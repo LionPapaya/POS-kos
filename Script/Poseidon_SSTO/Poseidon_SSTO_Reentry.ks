@@ -858,9 +858,8 @@ until running = false{
             brakes off.
         }
 
-        if terminal_route["phase"] = "final" or terminal_route["phase"] = "base"{
-            abort_set_fuel_dump(not reentry_preserve_propulsion and
-                ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
+        if not reentry_preserve_propulsion and (terminal_route["phase"] = "final" or terminal_route["phase"] = "base"){
+            abort_set_fuel_dump(ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
         }
 
         if terminal_route["landing_ready"]{
@@ -935,8 +934,9 @@ until running = false{
         set dap["aerostr"]["turn_roll"] to 0.
         set dap["aerostr"]["turn_heading"] to heading_to_target(runway_end).
 
+        local landing_speed_scale is terminal_mass_speed_scale(ship:mass,AVES["TerminalRoute"]).
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
-            ship:status = "LANDED",alt_ovr_runway,landing_config).
+            ship:status = "LANDED",alt_ovr_runway,landing_config,landing_speed_scale).
         local brake_reason is "speed_band".
         if ship:status = "LANDED" or alt_ovr_runway <= landing_config["wheel_brake_altitude"] {
             set brake_reason to "wheel_contact_zone".
@@ -944,8 +944,8 @@ until running = false{
         if landing_brake_command <> brakes or terminal_route_debug["brake_mode"] <> "landing" or
            terminal_route_debug["brake_reason"] <> brake_reason {
             flight_log_approach_brake("landing",brake_reason,landing_brake_command,
-                AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"],
-                landing_config["brake_on_speed"],landing_config["brake_off_speed"],terminal_route["energy_margin"]).
+                AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"]*landing_speed_scale,
+                landing_config["brake_on_speed"]*landing_speed_scale,landing_config["brake_off_speed"]*landing_speed_scale,terminal_route["energy_margin"]).
         }
         set terminal_route_debug["brake_mode"] to "landing".
         set terminal_route_debug["brake_reason"] to brake_reason.

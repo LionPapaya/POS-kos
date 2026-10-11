@@ -860,6 +860,9 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     ),
     "debug_log_interval",0.5,
     "max_landing_mass", 36,
+    // Dump floors retain usable fuel; engines may spend it on a go-around.
+    "RecoveryFuelDump",lex("minimum_lf",1000,"minimum_ox",300,
+        "arrival_fraction",0.20,"stop_margin",100),
     "Geometry",lex(
         "direct_final_cross_track",3000,"direct_final_heading_error",35,"direct_final_min_along_track",2500,
         "wide_final_distance",14000,"wide_base_offset",350,"wide_downwind_extension",14000,
@@ -872,6 +875,11 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     ),
     "GoAround",lex(
         "enabled",true,"decision_distance",3500,"minimum_altitude",80,
+        // A low final with unarrested sink needs power before the landing gate.
+        "vertical_decision_distance",10000,"vertical_profile_error",75,
+        "vertical_sink_limit",-15,"vertical_tracking_error",10,
+        "vertical_persistence",3,"recovery_throttle",0.70,
+        "minimum_turn_climb_rate",2,
         "maximum_heading_error",22,"maximum_cross_track",900,
         "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"climb_aoa",20,
         "turn_altitude",350,"passed_threshold",0
@@ -1163,9 +1171,12 @@ function recovery_throttle {
     parameter requested, floor_ is 0.
     local command is max(requested,floor_).
     if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
-        // Recovery owns coast, alignment and energy decisions. Retain attitude
-        // and terrain steering protection; they cannot override burn timing.
-        set command to requested.
+        // Preserve deliberate coast/alignment burn timing, but give terminal
+        // flight and an active terrain escape their protective throttle floor.
+        local terminal_flight is defined step and (step = "TEAM" or step = "landing").
+        local terrain_escape is defined dap and dap:haskey("envelope") and
+            dap["envelope"]:haskey("terrain_state") and dap["envelope"]["terrain_state"] = "pullup".
+        if not(terminal_flight or terrain_escape) { set command to requested. }
         if ship:liquidfuel <= abort_state["lf_reserve"] { return 0. }
     }
     return max(0,min(1,command)).

@@ -45,7 +45,8 @@ global POS_LOG_EVENT_FILE is "".
 // Version 21 adds current-turn extra distance and brake-protected energy.
 // Version 22 adds below-glide-slope turn pitch and fast-turn diagnostics.
 // Version 25 adds entry recovery clocks and completed-solve timing.
-global POS_LOG_SCHEMA_VERSION is 25.
+// Version 26 adds final descent recovery, mass speed scaling and fuel dump floors.
+global POS_LOG_SCHEMA_VERSION is 26.
 global POS_LOG_ENTRY_BASIC_UT is -1.
 global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
@@ -141,17 +142,24 @@ function flight_log_terminal_energy_header {
         "terminal_turn_model_mode,terminal_turn_model_rate,terminal_turn_model_radius,"+
         "terminal_turn_model_loss,terminal_turn_model_required_radius,"+
         "terminal_turn_sample_age,terminal_turn_sample_altitude,"+
-        "terminal_turn_sample_speed,terminal_turn_sample_pending".
+        "terminal_turn_sample_speed,terminal_turn_sample_pending,"+
+        "terminal_descent_recovery_active,terminal_descent_recovery_elapsed,"+
+        "terminal_descent_tracking_error,terminal_recovery_throttle_floor,"+
+        "terminal_mass_speed_scale,terminal_dump_lf_floor,terminal_dump_ox_floor,terminal_fuel_dump_active".
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1".
+        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0".
     }
     local turn_pitch_active is 0.
     if terminal_route_debug["turn_pitch_limit_active"] { set turn_pitch_active to 1. }
     local fast_turn_active is 0.
     if terminal_route_debug["fast_turn_active"] { set fast_turn_active to 1. }
+    local descent_recovery_active is 0.
+    if terminal_route_debug["descent_recovery_active"] { set descent_recovery_active to 1. }
+    local fuel_dump_active is 0.
+    if terminal_route_debug["fuel_dump_active"] { set fuel_dump_active to 1. }
     return ","+terminal_route_debug["energy_capture"]+","+terminal_route_debug["energy_drag_work"]+","+
         terminal_route_debug["energy_turn_work"]+","+terminal_route_debug["energy_reserve"]+","+
         terminal_route_debug["energy_clean_loss"]+","+terminal_route_debug["energy_margin_rate"]+","+
@@ -163,7 +171,11 @@ function flight_log_terminal_energy_columns {
         terminal_route_debug["turn_model_rate"]+","+terminal_route_debug["turn_model_radius"]+","+
         terminal_route_debug["turn_model_loss"]+","+terminal_route_debug["turn_model_required_radius"]+","+
         terminal_route_debug["turn_sample_age"]+","+terminal_route_debug["turn_sample_altitude"]+","+
-        terminal_route_debug["turn_sample_speed"]+","+terminal_route_debug["turn_sample_pending"].
+        terminal_route_debug["turn_sample_speed"]+","+terminal_route_debug["turn_sample_pending"]+","+
+        descent_recovery_active+","+terminal_route_debug["descent_recovery_elapsed"]+","+
+        terminal_route_debug["descent_tracking_error"]+","+terminal_route_debug["recovery_throttle_floor"]+","+
+        terminal_route_debug["mass_speed_scale"]+","+terminal_route_debug["dump_lf_floor"]+","+
+        terminal_route_debug["dump_ox_floor"]+","+fuel_dump_active.
 }
 
 function flight_log_entry_predictive_header {
