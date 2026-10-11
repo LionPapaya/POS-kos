@@ -962,7 +962,8 @@ function flight_log_contingency_sample {
         "|mass="+ship:mass+"|lf="+ship:liquidfuel+"|ox="+ship:oxidizer+
         "|rapiers_out="+state["scenario"]["rapiers_out"]+
         "|nervs_out="+state["scenario"]["nervs_out"]+
-        "|throttle="+ship:control:mainthrottle+
+        "|throttle="+ship:control:mainthrottle+"|throttle_command="+dapthrottle+
+        "|aoa_actual="+calc_aoa()+
         "|gpws="+dap["envelope"]["terrain_state"]+
         "|bottom_height="+ship:bounds:bottomalt+"|bank="+roll_for().
     if state:haskey("recovery_reason") {
@@ -1011,6 +1012,19 @@ function flight_log_contingency_sample {
     }
     if state:haskey("ditch_aoa") {
         set detail to detail+"|ditch_aoa="+state["ditch_aoa"]+"|bottom_height="+ship:bounds:bottomalt.
+    }
+    if state:haskey("water_desired_vs") {
+        set detail to detail+"|water_desired_vs="+state["water_desired_vs"]+
+            "|water_throttle="+state["water_throttle"]+"|water_brakes="+state["water_brakes"]+
+            "|water_entry_height="+state["water_entry_height"]+
+            "|water_expected_settle_speed="+state["water_expected_settle_speed"].
+    }
+    if state:haskey("dump_lf_floor") {
+        set detail to detail+"|dump_lf_floor="+state["dump_lf_floor"]+
+            "|fuel_dump_active="+state["fuel_dump_active"].
+    }
+    if state:haskey("contact_observed") {
+        set detail to detail+"|contact_observed="+state["contact_observed"].
     }
     flight_log_event("contingency_sample",detail).
 }

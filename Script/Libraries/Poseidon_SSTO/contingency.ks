@@ -11,6 +11,9 @@ function contingency_config {
         "entry_timeout",1200,"emergency_search_seconds",1,"emergency_scan_range",6000,"emergency_replan_seconds",5,
         "emergency_aoa_rate",3,"emergency_land_max_aoa",15,"emergency_low_speed_aoa",10,
         "ditch_clearance",3,"ditch_commit_height",15,"ditch_max_aoa",25,
+        "water_approach_height",400,"water_flare_lead_seconds",10,"water_approach_max_aoa",20,
+        "water_approach_sink",2,"water_expected_settle_speed",110,
+        "dump_lf_fraction",0.10,
         "ditch_height_gain",0.4,"ditch_aoa_gain",1.5,"ditch_aoa_rate",3,
         "activate_nervs_for_recovery",true,"lf_tonnes_per_unit",0.005,"lf_reserve_fraction",0.1,
         "orbit_target_altitude",100000,"orbit_clearance",10000,"orbit_pe_tolerance",100,"orbit_raise_pitch",60,
@@ -264,10 +267,17 @@ function contingency_begin_emergency {
     contingency_degraded(state,reason).
     contingency_release_reserve(state,cfg,reason).
     // Establish a command before yielding to any terrain search.
+    local initial_aoa is max(0,min(cfg["emergency_low_speed_aoa"],calc_aoa())).
+    if ship:geoposition:terrainheight < -2 and
+       ship:bounds:bottomalt <= contingency_water_entry_height(ship:verticalspeed,cfg) {
+        // At water-approach height a search must not postpone the flare.
+        set quick to true.
+        set initial_aoa to contingency_water_initial_aoa(cfg).
+    }
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aoa".
     set dap["aoa"]["target_bank"] to 0.
-    set dap["aoa"]["target_aoa"] to max(0,min(cfg["emergency_low_speed_aoa"],calc_aoa())).
+    set dap["aoa"]["target_aoa"] to initial_aoa.
     set dapthrottle to contingency_recovery_throttle(ship:airspeed,0,state["nerv_power"]["usable"],"emergency_glide",cfg).
     contingency_phase(state,"emergency_glide").
     set state["target"] to contingency_select_emergency(cfg,state["assist_height"],quick).
@@ -291,7 +301,10 @@ function contingency_emergency_command {
     local rate is max(-cfg["emergency_aoa_rate"],min(cfg["emergency_aoa_rate"],
         (desired_vs-vertical_mps)*cfg["ditch_aoa_gain"])).
     local aoa_limit is cfg["emergency_land_max_aoa"].
-    if speed_mps < cfg["landing_speed"] { set aoa_limit to cfg["emergency_low_speed_aoa"]. }
+    // Do not remove lift at the speed boundary while sink is still excessive.
+    if speed_mps < cfg["landing_speed"] and vertical_mps >= desired_vs {
+        set aoa_limit to cfg["emergency_low_speed_aoa"].
+    }
     local dt is max(0,min(dt_seconds,0.2)).
     local desired_aoa is max(0,min(aoa_limit,last_aoa+rate*dt)).
     local aoa_cmd is max(last_aoa-cfg["emergency_aoa_rate"]*dt,
@@ -303,31 +316,108 @@ function contingency_emergency_command {
         "desired_vs",desired_vs).
 }
 
+// Begin flattening the descent with time for the attitude response. The old
+// 15 m gate allowed less than a second at the flight_341 sink rate.
+function contingency_water_entry_height {
+    parameter vertical_mps, cfg.
+    return max(cfg["water_approach_height"],max(0,-vertical_mps)*cfg["water_flare_lead_seconds"]).
+}
+
+// Transfer the existing lift command, including a GPWS pull-up, without a
+// downward AoA step when the dedicated water controller takes ownership.
+function contingency_water_initial_aoa {
+    parameter cfg.
+    local initial is max(0,calc_aoa()).
+    if dap["aoa"]:haskey("smooth_target_aoa") {
+        set initial to max(initial,dap["aoa"]["smooth_target_aoa"]).
+    } else if dap["aoa"]:haskey("target_aoa") {
+        set initial to max(initial,dap["aoa"]["target_aoa"]).
+    }
+    if dap["envelope"]["terrain_state"] = "pullup" and dap["envelope"]:haskey("max_aoa") {
+        set initial to max(initial,dap["envelope"]["max_aoa"]).
+        if AVES["Envelope"]:haskey("Terrain") {
+            // GPWS uses a horizontal/climbing base pitch, while normal AoA
+            // steering follows prograde. Transfer that pitch offset as well.
+            local terrain_cfg is AVES["Envelope"]["Terrain"].
+            set initial to max(initial,terrain_cfg["pullup_aoa"]+
+                max(0,terrain_cfg["pullup_min_base_pitch"]-pitch_for_prograde())).
+        }
+    }
+    return min(cfg["ditch_max_aoa"],initial).
+}
+
+// Pure water guidance: first arrest sink, then approach hull clearance at
+// bounded sink. Hold that clearance unpowered and let airbrakes reduce speed
+// until lift runs out. The expected settling speed is telemetry, not a dive
+// command or a forced contact gate. No low-speed AoA step removes lift.
+function contingency_water_command {
+    parameter bottom_height, speed_mps, vertical_mps, last_aoa, dt_seconds, power_usable, holding, cfg.
+    local desired_vs is max(-cfg["water_approach_sink"],min(1,
+        (cfg["ditch_clearance"]-bottom_height)*cfg["ditch_height_gain"])).
+    local rate is max(-cfg["ditch_aoa_rate"],min(cfg["ditch_aoa_rate"],
+        (desired_vs-vertical_mps)*cfg["ditch_aoa_gain"])).
+    local aoa_limit is cfg["water_approach_max_aoa"].
+    if holding { set aoa_limit to cfg["ditch_max_aoa"]. }
+    // An existing pull-up above the approach limit is retained until sink
+    // recovers, rather than clipping it on entry to this controller.
+    if vertical_mps < desired_vs { set aoa_limit to max(aoa_limit,last_aoa). }
+    local dt is max(0,min(dt_seconds,0.2)).
+    local desired_aoa is max(0,min(aoa_limit,last_aoa+rate*dt)).
+    local aoa_cmd is max(last_aoa-cfg["ditch_aoa_rate"]*dt,
+        min(last_aoa+cfg["ditch_aoa_rate"]*dt,desired_aoa)).
+    local thrust_cmd is 0.
+    if not holding and power_usable {
+        // Preserve approach lift without accelerating towards Vapp+20.
+        set thrust_cmd to max(0,min(1,(cfg["landing_speed"]-speed_mps)/cfg["assist_speed_band"])).
+    }
+    local drag_cmd is holding or
+        (speed_mps > cfg["landing_speed"] and vertical_mps >= -cfg["water_approach_sink"]).
+    return lex("aoa",aoa_cmd,"desired_vs",desired_vs,"throttle",thrust_cmd,"brakes",drag_cmd).
+}
+
 function contingency_water_hold {
     parameter state, cfg.
-    if state["phase"] <> "ocean_ditch" {
-        set state["ditch_aoa"] to max(0,min(cfg["ditch_max_aoa"],calc_aoa())).
+    if state["phase"] <> "ocean_ditch" and state["phase"] <> "ocean_approach" {
+        set state["ditch_aoa"] to contingency_water_initial_aoa(cfg).
+        // GPWS steers directly, bypassing the AoA smoother. Seed that smoother
+        // with the command being transferred, rather than its stale low value.
+        set dap["aoa"]["smooth_target_aoa"] to state["ditch_aoa"].
+        set dap["aoa"]["base_pitch"] to 0.
         set state["ditch_last_ut"] to time:seconds.
-        contingency_phase(state,"ocean_ditch").
+        flight_log_event("contingency_water_capture","bottom_height="+ship:bounds:bottomalt+
+            "|speed="+ship:airspeed+"|vs="+ship:verticalspeed+"|initial_aoa="+state["ditch_aoa"]+
+            "|entry_height="+contingency_water_entry_height(ship:verticalspeed,cfg)).
     }
-    set state["ditch_aoa"] to contingency_ditch_command(ship:bounds:bottomalt,
-        ship:verticalspeed,state["ditch_aoa"],time:seconds-state["ditch_last_ut"],cfg).
+    local holding is state["phase"] = "ocean_ditch" or ship:bounds:bottomalt <= cfg["ditch_commit_height"].
+    if holding { contingency_phase(state,"ocean_ditch"). }
+    else { contingency_phase(state,"ocean_approach"). }
+    local command is contingency_water_command(ship:bounds:bottomalt,ship:airspeed,
+        ship:verticalspeed,state["ditch_aoa"],time:seconds-state["ditch_last_ut"],
+        state["nerv_power"]["usable"],holding,cfg).
+    set state["ditch_aoa"] to command["aoa"].
+    set state["water_desired_vs"] to command["desired_vs"].
+    set state["water_throttle"] to command["throttle"].
+    set state["water_brakes"] to command["brakes"].
+    set state["water_entry_height"] to contingency_water_entry_height(ship:verticalspeed,cfg).
+    set state["water_expected_settle_speed"] to cfg["water_expected_settle_speed"].
     set state["ditch_last_ut"] to time:seconds.
     set dap["dap_mode"] to "auto".
     set dap["str_mode"] to "aoa".
     set dap["aoa"]["target_aoa"] to state["ditch_aoa"].
     set dap["aoa"]["target_bank"] to 0.
     gear off.
-    brakes on.
-    nervsoff().
-    set dapthrottle to 0.
+    if command["brakes"] { brakes on. } else { brakes off. }
+    if holding { nervsoff(). }
+    set dapthrottle to command["throttle"].
 }
 
 function contingency_emergency_update {
     parameter state, cfg.
     local selected is state["target"].
     local clearance is ship:altitude-max(0,ship:geoposition:terrainheight).
-    if ship:geoposition:terrainheight < -2 and ship:bounds:bottomalt <= cfg["ditch_commit_height"] {
+    if ship:geoposition:terrainheight < -2 and
+       (ship:bounds:bottomalt <= cfg["ditch_commit_height"] or
+        (selected["kind"] = "ocean" and ship:bounds:bottomalt <= contingency_water_entry_height(ship:verticalspeed,cfg))) {
         if selected["kind"] <> "ocean" {
             contingency_degraded(state,"emergency_touchdown_over_water").
             set selected["kind"] to "ocean".
@@ -386,9 +476,62 @@ function contingency_phase {
     }
 }
 
+// Cache the last airborne observation before the hull first reaches the
+// surface. KSP water drag can erase the impact speed before STATUS changes.
+function contingency_contact_observe {
+    parameter state.
+    if state:haskey("contact_observed") and state["contact_observed"] { return. }
+    local bottom_clearance is ship:bounds:bottomalt-max(0,ship:geoposition:terrainheight).
+    if ship:status = "LANDED" or ship:status = "SPLASHED" or bottom_clearance <= 0 {
+        if state:haskey("last_airborne") {
+            set state["contact_observed"] to true.
+            local before is state["last_airborne"].
+            flight_log_event("contingency_contact","status="+ship:status+"|phase="+state["phase"]+
+                "|precontact_ut="+before["ut"]+"|precontact_speed="+before["speed"]+
+                "|precontact_vs="+before["vs"]+"|precontact_bottom_clearance="+before["clearance"]+
+                "|precontact_aoa="+before["aoa"]+"|precontact_mass="+before["mass"]+
+                "|precontact_throttle_command="+before["throttle"]+"|mass_now="+ship:mass).
+        }
+        return.
+    }
+    set state["last_airborne"] to lex("ut",time:seconds,"speed",ship:airspeed,
+        "vs",ship:verticalspeed,"clearance",bottom_clearance,"aoa",calc_aoa(),
+        "mass",ship:mass,"throttle",dapthrottle).
+    set state["contact_observed"] to false.
+}
+
+// FTE-1 vessel mode drains both propellants. Only LF powers the remaining
+// NERVs. Keep a fixed 10% LF floor, available to engines rather than locked
+// behind the old protected reserve. Never dump during orbit preservation.
+function contingency_dump_decision {
+    parameter lf_remaining, lf_floor, atmospheric, landing_committed.
+    return atmospheric and landing_committed and lf_remaining > lf_floor.
+}
+
+function contingency_dump_update {
+    parameter state, cfg.
+    if not state:haskey("dump_lf_floor") {
+        set state["dump_lf_floor"] to ship:liquidfuel*cfg["dump_lf_fraction"].
+    }
+    local enabled is contingency_dump_decision(ship:liquidfuel,state["dump_lf_floor"],
+        ship:altitude < ship:body:atm:height,
+        not state["orbit_eligible"] or state["orbit_abandoned"]).
+    if enabled and state["lf_reserve"] > 0 {
+        contingency_release_reserve(state,cfg,"landing_fuel_dump").
+    }
+    if enabled <> state["fuel_dump_active"] {
+        flight_log_event("contingency_fuel_dump","active="+enabled+"|phase="+state["phase"]+
+            "|lf="+ship:liquidfuel+"|ox="+ship:oxidizer+"|lf_floor="+state["dump_lf_floor"]+
+            "|mass="+ship:mass).
+        abort_set_fuel_dump(enabled).
+    }
+    set state["fuel_dump_active"] to enabled.
+}
+
 function contingency_finish {
     parameter state, reason, success is false, pilot is false.
     abort_set_fuel_dump(false).
+    set state["fuel_dump_active"] to false.
     set dapthrottle to 0.
     set dap["envelope"]["min_throttle"] to 0.
     set state["result"] to lex("success",success,"reason",reason,"pilot_control",pilot).
@@ -397,6 +540,13 @@ function contingency_finish {
     flight_log_event("contingency_outcome","reason="+reason+"|success="+success+
         "|pilot_control="+pilot+"|status="+ship:status+"|speed="+ship:airspeed+"|vs="+ship:verticalspeed+
         "|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis).
+    // success means the requested terminal condition was reached; impact
+    // severity is carried separately instead of reporting post-impact zeros.
+    if state:haskey("last_airborne") and (ship:status = "LANDED" or ship:status = "SPLASHED") {
+        flight_log_event("contingency_touchdown_summary","precontact_speed="+state["last_airborne"]["speed"]+
+            "|precontact_vs="+state["last_airborne"]["vs"]+"|precontact_ut="+state["last_airborne"]["ut"]+
+            "|contact_observed="+state["contact_observed"]+"|mass_now="+ship:mass).
+    }
     if ship:status = "LANDED" or ship:status = "SPLASHED" { nervsoff(). }
     set ship:control:pilotmainthrottle to 0.
     dap:set_off().
@@ -718,9 +868,15 @@ function contingency_update {
     parameter state.
     if not state["active"] { return. }
     local cfg is contingency_config().
+    contingency_contact_observe(state).
     set warp to 0.
-    abort_set_fuel_dump(false).
-    set dapthrottle to 0.
+    if not state:haskey("fuel_dump_active") {
+        set state["fuel_dump_active"] to false.
+        abort_set_fuel_dump(false).
+    }
+    // Keep the previous accepted command while calculating its replacement.
+    // THROTTLE is a live lock: a temporary zero here could be applied on a
+    // scheduler yield even when the eventual guidance command requested power.
     rapiersoff().
     if defined recovery_engines { recovery_apply_limits(). }
     if not state:haskey("orbit_eligible") {
@@ -778,6 +934,7 @@ function contingency_update {
         return.
     }
     if ship:status = "LANDED" {
+        set dapthrottle to 0.
         brakes on.
         gear on.
         nervsoff().
@@ -798,13 +955,14 @@ function contingency_update {
         contingency_finish(state,"unsupported_body",false,true).
         return.
     }
-    brakes off.
+    if state["phase"] <> "ocean_approach" and state["phase"] <> "ocean_ditch" { brakes off. }
     local clearance is ship:altitude-max(0,ship:geoposition:terrainheight).
     if state["phase"] = "initialize" {
         set state["started_ut"] to time:seconds.
         contingency_phase(state,"energy_assessment").
     }
     if contingency_orbit_update(state,cfg) { return. }
+    contingency_dump_update(state,cfg).
     if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
         contingency_degraded(state,"recovery_timeout").
         if state["phase"] = "glide" or state["phase"] = "site_search" {
@@ -868,7 +1026,16 @@ function contingency_update {
     local height_m is ship:altitude-selected["altitude"].
     local captured is contingency_corridor_capture(calcdistance_m(selected["start"],ship:geoposition),
         heading_between(selected["start"],ship:geoposition),selected["heading"],cfg).
-    if state["phase"] <> "ocean_ditch" and height_m <= cfg["capture_height"] {
+    // A selected water corridor under the aircraft can capture the water
+    // approach before the normal 150 m final or a passed-target rescan.
+    if selected["kind"] = "ocean" and ship:geoposition:terrainheight < -2 and
+       (state["phase"] = "ocean_approach" or state["phase"] = "ocean_ditch" or
+        (captured and ship:bounds:bottomalt <= contingency_water_entry_height(ship:verticalspeed,cfg))) {
+        contingency_water_hold(state,cfg).
+        if time:seconds-state["started_ut"] > cfg["entry_timeout"] { contingency_degraded(state,"ditch_timeout"). }
+        return.
+    }
+    if state["phase"] <> "ocean_ditch" and state["phase"] <> "ocean_approach" and height_m <= cfg["capture_height"] {
         if not captured {
             contingency_begin_emergency(state,cfg,"landing_corridor_not_captured",true).
             contingency_emergency_update(state,cfg).
@@ -888,7 +1055,7 @@ function contingency_update {
         return.
     }
     if selected["kind"] = "ocean" and
-       (state["phase"] = "ocean_ditch" or ship:bounds:bottomalt <= cfg["ditch_commit_height"]) {
+       (state["phase"] = "ocean_ditch" or state["phase"] = "ocean_approach" or ship:bounds:bottomalt <= cfg["ditch_commit_height"]) {
         if ship:geoposition:terrainheight >= -2 {
             contingency_begin_emergency(state,cfg,"ditch_corridor_left_water",true).
             contingency_emergency_update(state,cfg).
@@ -912,6 +1079,7 @@ function contingency_update {
         contingency_degraded(state,"landing_target_energy_lost").
         set selected["selected"] to false.
         contingency_phase(state,"energy_assessment").
+        set dapthrottle to 0.
         return.
     }
     set dap["dap_mode"] to "auto".
