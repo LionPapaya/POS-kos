@@ -11,7 +11,7 @@ function contingency_config {
         "entry_timeout",1200,"emergency_search_seconds",1,"emergency_scan_range",6000,"emergency_replan_seconds",5,
         "emergency_aoa_rate",3,"emergency_land_max_aoa",15,"emergency_low_speed_aoa",10,
         "ditch_clearance",3,"ditch_commit_height",15,"ditch_max_aoa",25,
-        "water_approach_height",400,"water_flare_lead_seconds",10,"water_approach_max_aoa",20,
+        "water_approach_height",400,"water_flare_lead_seconds",10,"water_approach_max_aoa",25,
         "water_approach_sink",2,"water_expected_settle_speed",110,
         "sink_response_lead_seconds",3,
         "dump_lf_fraction",0.10,
@@ -364,13 +364,16 @@ function contingency_water_initial_aoa {
 }
 
 // Pure water guidance: first arrest sink, then approach hull clearance at
-// bounded sink. Hold that clearance unpowered and let airbrakes reduce speed
+// bounded sink. Anticipate clearance lost during the pitch response rather
+// than continuing to descend into the hold target. Hold unpowered and reduce speed
 // until lift runs out. The expected settling speed is telemetry, not a dive
 // command or a forced contact gate. No low-speed AoA step removes lift.
 function contingency_water_command {
     parameter bottom_height, speed_mps, vertical_mps, last_aoa, dt_seconds, power_usable, holding, cfg, vertical_accel is 0.
+    local response_s is cfg["sink_response_lead_seconds"].
+    local predicted_height is bottom_height+vertical_mps*response_s+0.5*vertical_accel*response_s^2.
     local desired_vs is max(-cfg["water_approach_sink"],min(1,
-        (cfg["ditch_clearance"]-bottom_height)*cfg["ditch_height_gain"])).
+        (cfg["ditch_clearance"]-predicted_height)*cfg["ditch_height_gain"])).
     local predicted_vs is vertical_mps+vertical_accel*cfg["sink_response_lead_seconds"].
     local rate is max(-cfg["ditch_aoa_rate"],min(cfg["ditch_aoa_rate"],
         (desired_vs-predicted_vs)*cfg["ditch_aoa_gain"])).
@@ -387,11 +390,19 @@ function contingency_water_command {
     if not holding and power_usable {
         // Preserve approach lift without accelerating towards Vapp+20.
         set thrust_cmd to max(0,min(1,(cfg["landing_speed"]-speed_mps)/cfg["assist_speed_band"])).
+        // Low-speed lift recovery must not wait for further deceleration.
+        // Do not add thrust to an already fast descending approach.
+        if speed_mps < cfg["landing_speed"]+cfg["assist_speed_reserve"] {
+            set thrust_cmd to max(thrust_cmd,max(0,min(1,
+                (desired_vs-predicted_vs)/cfg["water_approach_sink"]))).
+        }
     }
-    local drag_cmd is (holding or speed_mps > cfg["landing_speed"]) and
+    local drag_cmd is (holding or speed_mps > cfg["landing_speed"]+cfg["assist_speed_reserve"]) and
         vertical_mps >= -cfg["water_approach_sink"] and predicted_vs >= -cfg["water_approach_sink"].
     return lex("aoa",aoa_cmd,"desired_vs",desired_vs,"predicted_vs",predicted_vs,
-        "throttle",thrust_cmd,"brakes",drag_cmd).
+        "throttle",thrust_cmd,"brakes",drag_cmd,"clearance_target",cfg["ditch_clearance"],
+        "predicted_height",predicted_height,
+        "aoa_saturated",aoa_cmd >= aoa_limit).
 }
 
 function contingency_water_hold {
@@ -409,7 +420,14 @@ function contingency_water_hold {
             "|entry_height="+contingency_water_entry_height(ship:verticalspeed,cfg)+
             "|terrain_height="+ship:geoposition:terrainheight).
     }
-    local holding is state["phase"] = "ocean_ditch" or ship:bounds:bottomalt <= cfg["ditch_commit_height"].
+    local hold_gate is cfg["ditch_commit_height"]+
+        min(cfg["water_approach_sink"],max(0,-ship:verticalspeed))*cfg["sink_response_lead_seconds"].
+    local holding is state["phase"] = "ocean_ditch" or ship:bounds:bottomalt <= hold_gate.
+    if holding and state["phase"] <> "ocean_ditch" {
+        flight_log_event("contingency_water_hold","bottom_height="+ship:bounds:bottomalt+
+            "|clearance_target="+cfg["ditch_clearance"]+"|hold_gate="+hold_gate+
+            "|speed="+ship:airspeed+"|vs="+ship:verticalspeed).
+    }
     if holding { contingency_phase(state,"ocean_ditch"). }
     else { contingency_phase(state,"ocean_approach"). }
     if not state:haskey("ditch_last_vs") { set state["ditch_last_vs"] to ship:verticalspeed. }
@@ -423,6 +441,11 @@ function contingency_water_hold {
     set state["water_predicted_vs"] to command["predicted_vs"].
     set state["water_throttle"] to command["throttle"].
     set state["water_brakes"] to command["brakes"].
+    set state["water_clearance_target"] to command["clearance_target"].
+    set state["water_predicted_height"] to command["predicted_height"].
+    set state["water_hold_gate"] to hold_gate.
+    set state["water_aoa_saturated"] to command["aoa_saturated"].
+    set state["water_aoa_tracking_error"] to state["ditch_aoa"]-calc_aoa().
     set state["water_entry_height"] to contingency_water_entry_height(ship:verticalspeed,cfg).
     set state["water_expected_settle_speed"] to cfg["water_expected_settle_speed"].
     set state["ditch_last_ut"] to time:seconds.
@@ -541,7 +564,7 @@ function contingency_contact_observe {
     set state["contact_observed"] to false.
 }
 
-// FTE-1 vessel mode drains both propellants. Only LF powers the remaining
+// FTE-1 vessel mode drains its configured resources. Only LF powers the remaining
 // NERVs. Keep a fixed 10% LF floor, available to engines rather than locked
 // behind the old protected reserve. Never dump during orbit preservation.
 function contingency_dump_decision {

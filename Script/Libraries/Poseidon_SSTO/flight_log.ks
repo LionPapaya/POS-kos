@@ -1025,6 +1025,13 @@ function flight_log_contingency_sample {
             "|water_throttle="+state["water_throttle"]+"|water_brakes="+state["water_brakes"]+
             "|water_entry_height="+state["water_entry_height"]+
             "|water_expected_settle_speed="+state["water_expected_settle_speed"].
+        if state:haskey("water_clearance_target") {
+            set detail to detail+"|water_clearance_target="+state["water_clearance_target"]+
+                "|water_predicted_height="+state["water_predicted_height"]+
+                "|water_hold_gate="+state["water_hold_gate"]+
+                "|water_aoa_saturated="+state["water_aoa_saturated"]+
+                "|water_aoa_tracking_error="+state["water_aoa_tracking_error"].
+        }
     }
     if state:haskey("water_predicted_vs") {
         set detail to detail+"|water_predicted_vs="+state["water_predicted_vs"]+
