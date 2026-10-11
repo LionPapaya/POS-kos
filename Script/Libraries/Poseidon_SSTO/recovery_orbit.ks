@@ -1,4 +1,5 @@
-// Pure recovery-orbit mathematics. No controls, logger, or vessel reads.
+// Recovery-orbit mathematics and reused orbit/return services.
+// The prediction functions below have no controls, logger, or vessel reads.
 function recovery_orbit_config {
     return lex("target_ap",100000,"safe_clearance",10000,"reserve_fraction",0.1,
         "timeout",480,"progress_seconds",30,"minimum_gain",100,
@@ -133,4 +134,48 @@ function recovery_return_prediction {
         set elapsed to elapsed+tick_seconds.
     }
     return lex("possible",false,"reason","return_crossing_timeout").
+}
+
+// Reused orbit rejection policy and bounded return-target selection.
+function recovery_ato_reject {
+    parameter state, reason.
+    set state["orbit_abandoned"] to true.
+    set state["suppress_orbit"] to true.
+    flight_log_event("recovery_orbit_rejected","reason="+reason+"|phase="+state["phase"]).
+    local layout is recovery_rapier_layout().
+    if state["nominal_cutoff"] or ship:periapsis >= ship:body:atm:height {
+        recovery_transition(state,"edr",reason).
+    } else if layout["healthy"] > 0 {
+        recovery_transition(state,"aed",reason).
+    } else {
+        recovery_transition(state,"contingency_abort",reason).
+    }
+}
+
+function recovery_edr_select_target {
+    parameter footprint, cfg.
+    local selected is lex("selected",false,"score",1e12).
+    local search_started is time:seconds.
+    for runway_key in location_constants["kerbin"]:keys {
+        if runway_key:endswith("_start") and runway_key:contains("_runway_") {
+            local parts is runway_key:split("_runway_").
+            local site_name is parts[0].
+            local runway_num is parts[1]:split("_")[0].
+            local finish_key is site_name+"_runway_"+runway_num+"_end".
+            if location_constants["kerbin"]:haskey(finish_key) and KerbinRunwayalt:haskey(site_name+"_runway") {
+                local start_site is location_constants["kerbin"][runway_key].
+                local range_m is calcdistance_m(footprint,start_site).
+                if range_m < 400000 and range_m < selected["score"] {
+                    local finish_site is location_constants["kerbin"][finish_key].
+                    set selected to lex("selected",true,"location",site_name,"runway_num",runway_num,
+                        "start",start_site,"end",finish_site,"heading",heading_between(start_site,finish_site),
+                        "altitude",KerbinRunwayalt[site_name+"_runway"],"score",range_m,"distance_m",range_m).
+                }
+            }
+        }
+        dap:update().
+        wait 0.
+        if time:seconds-search_started > 3 { break. }
+    }
+    return selected.
 }

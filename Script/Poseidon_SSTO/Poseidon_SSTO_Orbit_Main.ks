@@ -1,686 +1,6 @@
-
 // Poseidon_SSTO/Poseidon_SSTO_Orbit_Main.ks
 // Purpose: ascent and orbital insertion script for Poseidon SSTO.
-// - Loads the Poseidon libraries and runs the aircraft-style ascent/circularization flow.
-// Recovery executives stay in Orbit Main; libraries provide observations and
-// pure prediction services only. Exactly one mode writes commands per tick.
-function recovery_phase {
-    parameter state, next_phase.
-    if state["phase"] <> next_phase {
-        flight_log_event("recovery_phase","mode="+state["mode"]+"|from="+state["phase"]+
-            "|to="+next_phase+"|source="+state["source_step"]).
-        set state["phase"] to next_phase.
-        set state["phase_entered"] to time:seconds.
-    }
-}
-
-function recovery_transition {
-    parameter state, next_mode, reason.
-    if state["mode"] = next_mode { return. }
-    flight_log_event("recovery_mode","from="+state["mode"]+"|to="+next_mode+"|reason="+reason+
-        "|source="+state["source_step"]+"|rapiers_out="+state["scenario"]["rapiers_out"]+
-        "|nervs_out="+state["scenario"]["nervs_out"]).
-    set state["mode"] to next_mode.
-    set state["phase"] to "initialize".
-    set state["phase_entered"] to time:seconds.
-    set state["handoff_ready"] to false.
-    set state["handoff"]["started"] to false.
-    if next_mode <> "ato" {
-        set state["orbit_abandoned"] to true.
-        set state["suppress_orbit"] to true.
-    }
-    if next_mode = "contingency_abort" {
-        recovery_set_isolated("nerv",false).
-        // Allow the fallback to initialize its caches, but carry the original
-        // reserves and the rejected-attempt history into that initialization.
-        if state:haskey("orbit_eligible") { state:remove("orbit_eligible"). }
-        set state["target"]["selected"] to false.
-    }
-    set step to next_mode.
-}
-
-function recovery_finish {
-    parameter state, reason, success is false, pilot is true.
-    abort_set_fuel_dump(false).
-    set dapthrottle to 0.
-    set dap["envelope"]["min_throttle"] to 0.
-    set state["result"] to lex("success",success,"reason",reason,"pilot_control",pilot).
-    set state["active"] to false.
-    set state["controls_released"] to true.
-    recovery_phase(state,"complete").
-    flight_log_event("recovery_outcome","mode="+state["mode"]+"|reason="+reason+
-        "|success="+success+"|pilot_control="+pilot+"|apoapsis="+ship:apoapsis+
-        "|periapsis="+ship:periapsis+"|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
-    recovery_apply_limits().
-    set ship:control:pilotmainthrottle to 0.
-    dap:set_off().
-    unlock throttle.
-    set ship:control:neutralize to true.
-    if pilot { print "RECOVERY: PILOT CONTROL - "+reason. }
-    set step to "end".
-}
-
-function recovery_ato_reject {
-    parameter state, reason.
-    set state["orbit_abandoned"] to true.
-    set state["suppress_orbit"] to true.
-    flight_log_event("recovery_orbit_rejected","reason="+reason+"|phase="+state["phase"]).
-    local layout is recovery_rapier_layout().
-    if state["nominal_cutoff"] or ship:periapsis >= ship:body:atm:height {
-        recovery_transition(state,"edr",reason).
-    } else if layout["healthy"] > 0 {
-        recovery_transition(state,"aed",reason).
-    } else {
-        recovery_transition(state,"contingency_abort",reason).
-    }
-}
-
-function recovery_ato_assess {
-    parameter state, cfg.
-    if state["scenario"]["nervs_out"] > 0 {
-        recovery_ato_reject(state,"nerv_failure").
-        return.
-    }
-    local layout is recovery_rapier_layout().
-    local rapier_continue is state["scenario"]["rapiers_out"] = 1 or
-        (state["scenario"]["rapiers_out"] = 2 and layout["opposite_pair"]).
-    if state["nominal_cutoff"] { set rapier_continue to false. }
-    // A same-side pair and an uncalibrated single survivor are isolated. Their
-    // identities stay healthy so a later diversion can deliberately reuse them.
-    recovery_set_isolated("rapier",not rapier_continue).
-    recovery_set_isolated("nerv",false).
-    nervson().
-    if rapier_continue {
-        rapierson().
-        if state["current_ascent_phase"] = "closed_cycle_climb" { togglerapiermode("CLOSED"). }
-    }
-    set state["power"] to recovery_power(state,rapier_continue,true).
-    local power is state["power"].
-    if not power["usable"] or power["acceleration"] < cfg["minimum_acceleration"] {
-        recovery_ato_reject(state,"insufficient_permitted_thrust").
-        return.
-    }
-    local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
-    local tangent_mps is (ship:velocity:orbit-ship:up:vector*radial_mps):mag.
-    if rapier_continue {
-        set state["orbit_budget"] to contingency_orbit_budget(ship:body:mu,ship:body:radius,
-            ship:altitude,ship:velocity:orbit:mag,radial_mps,cfg["target_ap"],power["vacuum_dv"],
-            power["acceleration"],contingency_config()).
-        if not state["orbit_budget"]["possible"] {
-            recovery_ato_reject(state,"nominal_orbit_fuel_budget").
-            return.
-        }
-        set state["rapier_continue"] to true.
-        recovery_phase(state,"nominal_continue").
-    } else {
-        if ship:altitude < cfg["minimum_escape_height"] or tangent_mps < cfg["minimum_escape_horizontal_speed"] {
-            recovery_ato_reject(state,"nerv_escape_too_early").
-            return.
-        }
-        local best_prediction is lex("possible",false,"reason","no_pitch_candidate").
-        local prediction_started is time:seconds.
-        // Current measured drag is pessimistically held through the remaining
-        // atmosphere. Fuel is reserved for a 200 m/s model-error allowance.
-        local drag_bound is 0.
-        if ship:altitude < ship:body:atm:height {
-            local aero_live is cur_aeroaccel_ld().
-            set drag_bound to max(0,-vdot(aero_live["load"],ship:velocity:surface:normalized)).
-        }
-        local fuel_seconds is min(power["burn_time"],cfg["timeout"])-
-            cfg["loss_allowance"]/max(0.01,power["acceleration"]).
-        for candidate_pitch in list(30,45,60) {
-            dap:update().
-            local predicted is recovery_escape_prediction(ship:body:mu,ship:body:radius,
-                ship:body:atm:height,ship:altitude,radial_mps,tangent_mps,ship:mass,
-                power["thrust"],power["mass_flow"],max(0,fuel_seconds),candidate_pitch,drag_bound,cfg).
-            if predicted["possible"] {
-                if not best_prediction["possible"] or predicted["burn_seconds"] < best_prediction["burn_seconds"] {
-                    set best_prediction to predicted.
-                }
-            }
-            wait 0.
-            if time:seconds-prediction_started > 6 { break. }
-        }
-        set state["orbit_prediction"] to best_prediction.
-        flight_log_event("recovery_orbit_prediction","possible="+best_prediction["possible"]+
-            "|reason="+best_prediction["reason"]+"|duration="+(time:seconds-prediction_started)).
-        if not best_prediction["possible"] {
-            recovery_ato_reject(state,best_prediction["reason"]).
-            return.
-        }
-        set state["rapier_continue"] to false.
-        set state["escape_pitch"] to best_prediction["pitch"].
-        recovery_phase(state,"nerv_only_escape").
-    }
-    set state["orbit_attempted"] to true.
-    set state["orbit_started_ut"] to time:seconds.
-    set state["progress_ut"] to time:seconds.
-    set state["progress_value"] to ship:apoapsis.
-    set state["pitch"] to pitch_for().
-    set state["last_update_ut"] to time:seconds.
-    set state["assist_speed_ut"] to time:seconds.
-    set state["assist_speed"] to ship:airspeed.
-    set state["assist_acceleration"] to 1e9.
-    flight_log_event("recovery_orbit_attempt","rapier_continue="+state["rapier_continue"]+
-        "|goal_ap="+cfg["target_ap"]+"|goal_pe="+(ship:body:atm:height+cfg["safe_clearance"])+
-        "|dv_available="+power["dv"]+"|burn_time="+power["burn_time"]).
-}
-
-function recovery_ato_update {
-    parameter state.
-    local cfg is recovery_orbit_config().
-    if state:haskey("nominal_insertion") and state["nominal_insertion"] {
-        set cfg["target_ap"] to TargetApoapsis.
-    }
-    set warp to 0.
-    abort_set_fuel_dump(false).
-    if state["phase"] = "initialize" { recovery_ato_assess(state,cfg). return. }
-    local safe_height is ship:body:atm:height+cfg["safe_clearance"].
-    if state:haskey("nominal_insertion") and state["nominal_insertion"] {
-        set safe_height to max(ship:body:atm:height+5000,TargetPeriapsis-300).
-    }
-    if ship:orbit:eccentricity < 1 and ship:periapsis >= safe_height {
-        recovery_phase(state,"orbital_hold").
-        recovery_finish(state,"ato_orbit_complete",true,false).
-        return.
-    }
-    local rapier_continue is state["rapier_continue"] and not state["nominal_cutoff"].
-    set state["power"] to recovery_power(state,rapier_continue,true).
-    local power is state["power"].
-    local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
-    if not power["usable"] or ship:liquidfuel <= state["lf_reserve"] or
-       time:seconds-state["orbit_started_ut"] > cfg["timeout"] or
-       ship:orbit:eccentricity >= 1 or (radial_mps < -100 and ship:altitude < safe_height) {
-        recovery_ato_reject(state,"fuel_thrust_time_or_descent").
-        return.
-    }
-    local dt_seconds is max(0,min(1,time:seconds-state["last_update_ut"])).
-    set state["last_update_ut"] to time:seconds.
-    set dap["dap_mode"] to "auto".
-    brakes off.
-    gear off.
-    if state["phase"] = "nominal_continue" or state["phase"] = "nerv_only_escape" or
-       state["phase"] = "apoapsis_build" {
-        local desired_pitch is AVES["Ascent"]["nerv_pitch"].
-        if state["phase"] = "nominal_continue" {
-            if state["current_ascent_phase"] = "nerv_assist" {
-                // Measure acceleration over elapsed time, independent of IPU
-                // and prediction work, before giving up air-breathing thrust.
-                if time:seconds-state["assist_speed_ut"] >= 1 {
-                    set state["assist_acceleration"] to (ship:airspeed-state["assist_speed"])/
-                        (time:seconds-state["assist_speed_ut"]).
-                    set state["assist_speed"] to ship:airspeed.
-                    set state["assist_speed_ut"] to time:seconds.
-                }
-                if ship:altitude >= AVES["Ascent"]["closed_cycle_min_altitude"] and
-                   state["assist_acceleration"] <= cfg["assist_min_acceleration"] {
-                    set state["current_ascent_phase"] to "closed_cycle_climb".
-                    togglerapiermode("CLOSED").
-                    flight_log_event("recovery_ascent_phase","to=closed_cycle_climb|acceleration="+
-                        state["assist_acceleration"]+"|altitude="+ship:altitude).
-                }
-            }
-            if state["current_ascent_phase"] = "closed_cycle_climb" {
-                set desired_pitch to AVES["Ascent"]["closed_cycle_pitch_max"].
-            }
-            if ship:apoapsis >= AVES["Ascent"]["rapier_cutoff_apoapsis"] {
-                set state["nominal_cutoff"] to true.
-                set recovery_nominal_cutoff to true.
-                recovery_set_isolated("rapier",true).
-                set state["current_ascent_phase"] to "apoapsis_build".
-                recovery_phase(state,"apoapsis_build").
-            }
-        }
-        if state["phase"] = "apoapsis_build" { set desired_pitch to AVES["Ascent"]["apoapsis_build_pitch"]. }
-        if state["phase"] = "nerv_only_escape" { set desired_pitch to state["escape_pitch"]. }
-        if ship:altitude < ship:body:atm:height {
-            set desired_pitch to min(desired_pitch,pitch_for_prograde()+cfg["pullup_aoa"]).
-        }
-        set state["pitch"] to state["pitch"]+max(-cfg["pitch_rate"]*dt_seconds,
-            min(cfg["pitch_rate"]*dt_seconds,desired_pitch-state["pitch"])).
-        set dap["str_mode"] to "aerostr".
-        set dap["aerostr"]["turn_heading"] to compass_for_prograde().
-        set dap["aerostr"]["turn_pitch"] to state["pitch"].
-        set dap["aerostr"]["turn_roll"] to 0.
-        set dapthrottle to 1.
-        if ship:apoapsis >= cfg["target_ap"] {
-            recovery_set_isolated("rapier",true).
-            set state["nominal_cutoff"] to true.
-            set recovery_nominal_cutoff to true.
-            set state["current_ascent_phase"] to "circ".
-            set dapthrottle to 0.
-            recovery_phase(state,"coast_align").
-            set state["progress_ut"] to time:seconds.
-            set state["progress_value"] to ship:periapsis.
-        }
-    } else {
-        local tangent is ship:velocity:orbit-ship:up:vector*radial_mps.
-        if tangent:mag < 1 { recovery_ato_reject(state,"no_orbital_tangent"). return. }
-        set dap["str_mode"] to "vector".
-        set dap["vector"]["targetVector"] to tangent:normalized.
-        set state["alignment"] to vang(ship:facing:vector,tangent).
-        local radius_now is ship:body:radius+ship:altitude.
-        local target_speed is sqrt(max(0,ship:body:mu*(2/radius_now-
-            2/(radius_now+ship:body:radius+safe_height+100)))).
-        local remaining_dv is max(0,target_speed-tangent:mag).
-        set state["burn_seconds"] to remaining_dv/max(0.01,power["acceleration"]).
-        set dapthrottle to 0.
-        if state["phase"] = "coast_align" and ship:altitude >= safe_height and
-           ship:orbit:eta:apoapsis <= state["burn_seconds"]/2+15 {
-            recovery_phase(state,"insert").
-        }
-        if state["phase"] = "insert" and state["alignment"] <= cfg["alignment"] {
-            set dapthrottle to min(1,remaining_dv/max(0.01,power["acceleration"]*5)).
-        }
-    }
-    if time:seconds-state["progress_ut"] >= cfg["progress_seconds"] {
-        local actual_progress is ship:apoapsis.
-        if state["phase"] = "coast_align" or state["phase"] = "insert" { set actual_progress to ship:periapsis. }
-        if state["phase"] <> "coast_align" and actual_progress-state["progress_value"] < cfg["minimum_gain"] {
-            recovery_ato_reject(state,"orbit_not_progressing").
-            return.
-        }
-        set state["progress_ut"] to time:seconds.
-        set state["progress_value"] to actual_progress.
-    }
-}
-
-function recovery_edr_select_target {
-    parameter footprint, cfg.
-    local selected is lex("selected",false,"score",1e12).
-    local search_started is time:seconds.
-    for runway_key in location_constants["kerbin"]:keys {
-        if runway_key:endswith("_start") and runway_key:contains("_runway_") {
-            local parts is runway_key:split("_runway_").
-            local site_name is parts[0].
-            local runway_num is parts[1]:split("_")[0].
-            local finish_key is site_name+"_runway_"+runway_num+"_end".
-            if location_constants["kerbin"]:haskey(finish_key) and KerbinRunwayalt:haskey(site_name+"_runway") {
-                local start_site is location_constants["kerbin"][runway_key].
-                local range_m is calcdistance_m(footprint,start_site).
-                if range_m < 400000 and range_m < selected["score"] {
-                    local finish_site is location_constants["kerbin"][finish_key].
-                    set selected to lex("selected",true,"location",site_name,"runway_num",runway_num,
-                        "start",start_site,"end",finish_site,"heading",heading_between(start_site,finish_site),
-                        "altitude",KerbinRunwayalt[site_name+"_runway"],"score",range_m,"distance_m",range_m).
-                }
-            }
-        }
-        dap:update().
-        wait 0.
-        if time:seconds-search_started > 3 { break. }
-    }
-    return selected.
-}
-
-function recovery_edr_update {
-    parameter state.
-    local cfg is recovery_orbit_config().
-    set warp to 0.
-    abort_set_fuel_dump(false).
-    set dapthrottle to 0.
-    if state["phase"] = "initialize" {
-        set state["return_started_ut"] to time:seconds.
-        set state["suppress_orbit"] to true.
-        set state["orbit_abandoned"] to true.
-        set state["entry_verified"] to false.
-        set state["return_attempted"] to false.
-        // An already-suborbital trajectory needs no automatic retrograde burn.
-        if ship:periapsis < ship:body:atm:height {
-            recovery_set_isolated("rapier",true).
-            recovery_set_isolated("nerv",true).
-            recovery_phase(state,"passive_return").
-        } else {
-            recovery_set_isolated("rapier",false).
-            recovery_set_isolated("nerv",false).
-            local layout is recovery_rapier_layout().
-            if layout["healthy"] < 3 and not layout["opposite_pair"] { recovery_set_isolated("rapier",true). }
-            togglerapiermode("CLOSED").
-            rapierson().
-            nervson().
-            recovery_apply_limits().
-            set state["power"] to recovery_power(state,true,true).
-            local power is state["power"].
-            local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
-            local tangent_mps is (ship:velocity:orbit-ship:up:vector*radial_mps):mag.
-            set state["return_plan"] to recovery_return_burn(ship:body:mu,ship:body:radius,
-                ship:altitude,tangent_mps,cfg["deorbit_pe"],power["acceleration"],power["dv"]).
-            // Long weak burns require a separate finite-duration margin. Reject
-            // a burn that cannot fit the available propellant or recovery time.
-            if not state["return_plan"]["possible"] or
-               state["return_plan"]["burn_seconds"] > min(180,power["burn_time"]*0.8) {
-                recovery_finish(state,"edr_deorbit_unavailable_orbit_hold",false,true).
-                return.
-            }
-            local predicted is recovery_return_prediction(ship:body:mu,ship:body:radius,
-                ship:body:atm:height,ship:altitude,radial_mps,
-                max(0,tangent_mps-state["return_plan"]["dv"]),ship:body:angularvel:mag,1800).
-            if not predicted["possible"] {
-                recovery_finish(state,"edr_entry_prediction_rejected_orbit_hold",false,true).
-                return.
-            }
-            local footprint is get_geoposition_along_heading(ship:geoposition,compass_for_prograde(),predicted["downrange"]).
-            set state["target"] to recovery_edr_select_target(footprint,cfg).
-            if not state["target"]["selected"] {
-                recovery_finish(state,"edr_no_return_runway_orbit_hold",false,true).
-                return.
-            }
-            set state["return_plan"]["footprint"] to footprint.
-            set state["return_plan"]["entry_speed"] to predicted["entry_speed"].
-            set state["return_plan"]["entry_slope"] to predicted["entry_slope"].
-            set state["burn_started_ut"] to -1.
-            recovery_phase(state,"align_return").
-            flight_log_event("recovery_return_plan","dv="+state["return_plan"]["dv"]+
-                "|burn_seconds="+state["return_plan"]["burn_seconds"]+
-                "|runway="+state["target"]["location"]+"_"+state["target"]["runway_num"]+
-                "|entry_slope="+predicted["entry_slope"]+"|model=ballistic_geometric_screen").
-        }
-        return.
-    }
-    if time:seconds-state["return_started_ut"] > cfg["return_timeout"] {
-        recovery_finish(state,"edr_return_timeout",false,true).
-        return.
-    }
-    local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
-    local tangent is ship:velocity:orbit-ship:up:vector*radial_mps.
-    if state["phase"] = "align_return" or state["phase"] = "return_burn" {
-        if tangent:mag < 1 { recovery_finish(state,"edr_no_orbital_tangent",false,true). return. }
-        set dap["str_mode"] to "vector".
-        set dap["vector"]["targetVector"] to -tangent:normalized.
-        set state["alignment"] to vang(ship:facing:vector,-tangent).
-        set state["power"] to recovery_power(state,true,true).
-        if ship:periapsis <= cfg["deorbit_pe"] {
-            set dapthrottle to 0.
-            recovery_set_isolated("rapier",true).
-            recovery_set_isolated("nerv",true).
-            recovery_phase(state,"verify_return").
-        } else if state["alignment"] <= cfg["return_alignment"] and state["power"]["usable"] {
-            if state["burn_started_ut"] < 0 { set state["burn_started_ut"] to time:seconds. }
-            set state["return_attempted"] to true.
-            recovery_phase(state,"return_burn").
-            set dapthrottle to min(1,max(0.05,(ship:periapsis-cfg["deorbit_pe"])/10000)).
-            if time:seconds-state["burn_started_ut"] > state["return_plan"]["burn_seconds"]*1.5+10 {
-                set dapthrottle to 0.
-                if ship:periapsis < ship:body:atm:height { recovery_phase(state,"verify_return"). }
-                else { recovery_finish(state,"edr_burn_not_progressing_orbit_hold",false,true). }
-            }
-        } else if time:seconds-state["phase_entered"] > 60 {
-            recovery_finish(state,"edr_alignment_or_thrust_unavailable",false,true).
-        }
-        return.
-    }
-    if ship:periapsis >= ship:body:atm:height {
-        recovery_finish(state,"edr_return_trajectory_not_verified",false,true).
-        return.
-    }
-    if not state["entry_verified"] or
-       (state:haskey("entry_check_ut") and time:seconds-state["entry_check_ut"] > 30) {
-        local actual_return is recovery_return_prediction(ship:body:mu,ship:body:radius,
-            ship:body:atm:height,ship:altitude,radial_mps,tangent:mag,
-            ship:body:angularvel:mag,1800).
-        if not actual_return["possible"] {
-            recovery_transition(state,"contingency_abort","edr_actual_entry_geometry_rejected").
-            return.
-        }
-        local actual_footprint is get_geoposition_along_heading(ship:geoposition,
-            compass_for_prograde(),actual_return["downrange"]).
-        if ADDONS:TR:available and ADDONS:TR:hasimpact { set actual_footprint to ADDONS:TR:impactpos. }
-        set state["target"] to recovery_edr_select_target(actual_footprint,cfg).
-        set state["entry_verified"] to true.
-        set state["entry_check_ut"] to time:seconds.
-        set state["actual_return"] to actual_return.
-        flight_log_event("recovery_return_verified","periapsis="+ship:periapsis+
-            "|entry_slope="+actual_return["entry_slope"]+"|entry_speed="+actual_return["entry_speed"]+
-            "|runway_available="+state["target"]["selected"]).
-    }
-    set dap["str_mode"] to "vector".
-    set dap["vector"]["targetVector"] to ship:velocity:orbit:normalized.
-    if ship:altitude <= ship:body:atm:height and radial_mps < 0 {
-        if not state["target"]["selected"] {
-            local footprint is ship:geoposition.
-            if ADDONS:TR:available and ADDONS:TR:hasimpact { set footprint to ADDONS:TR:impactpos. }
-            set state["target"] to recovery_edr_select_target(footprint,cfg).
-        }
-        if state["target"]["selected"] {
-            // Normal entry starts only after a real descending atmosphere
-            // crossing; it skips its deorbit setup and retains all restrictions.
-            recovery_set_isolated("rapier",false).
-            recovery_set_isolated("nerv",false).
-            togglerapiermode("AIR").
-            rapierson().
-            nervsoff().
-            recovery_apply_limits().
-            set state["handoff_ready"] to true.
-            set state["handoff_phase"] to "reentry_low".
-            recovery_phase(state,"entry_handoff").
-        } else { recovery_transition(state,"contingency_abort","edr_no_reachable_runway"). }
-    }
-}
-
-// The airborne AED executive owns commands until TEAM.
-function recovery_aed_update {
-    parameter state.
-    local cfg is recovery_aed_config().
-    if state["phase"] = "initialize" {
-        set kuniverse:timewarp:warp to 0.
-        abort_set_fuel_dump(false).
-        set state["orbit_abandoned"] to true.
-        set state["suppress_orbit"] to true.
-        set state["aed_started"] to time:seconds.
-        set state["aed_last_update"] to time:seconds.
-        set state["aed_aoa"] to dap["aoa"]["smooth_target_aoa"].
-        set state["aed_bank"] to dap["aoa"]["smooth_target_bank"].
-        set state["aed_throttle"] to dapthrottle.
-        set state["aed_capture_since"] to -1.
-        set state["aed_assist_time"] to 0.
-        set state["aed_assist_dv"] to 0.
-        set state["aed_assist_lf"] to 0.
-        set state["aed_assist_ox"] to 0.
-        set state["aed_last_lf"] to ship:liquidfuel.
-        set state["aed_last_ox"] to ship:oxidizer.
-        set state["aed_last_search"] to time:seconds.
-        set state["aed_intent"] to "ascending_coast".
-        set state["aed_committed"] to false.
-        recovery_set_isolated("rapier",false).
-        recovery_set_isolated("nerv",true).
-        togglerapiermode("CLOSED").
-        rapierson().
-        nervsoff().
-        recovery_apply_limits().
-        local power is recovery_power(state,true,false).
-        local assist is recovery_aed_assist(power,ship:liquidfuel,ship:oxidizer,
-            state["lf_reserve"],state["ox_reserve"],cfg).
-        set state["aed_assist_budget"] to assist.
-        set state["aed_search"] to recovery_aed_search(current_simstate(),state["rejected_targets"],assist,cfg).
-        recovery_phase(state,"select_runway").
-    }
-    local dt_aed is max(0,min(0.25,time:seconds-state["aed_last_update"])).
-    set state["aed_last_update"] to time:seconds.
-    set state["aed_assist_lf"] to state["aed_assist_lf"]+max(0,state["aed_last_lf"]-ship:liquidfuel).
-    set state["aed_assist_ox"] to state["aed_assist_ox"]+max(0,state["aed_last_ox"]-ship:oxidizer).
-    set state["aed_last_lf"] to ship:liquidfuel.
-    set state["aed_last_ox"] to ship:oxidizer.
-    local power is recovery_power(state,true,false).
-    if state["aed_throttle"] > 0 {
-        set state["aed_assist_time"] to state["aed_assist_time"]+dt_aed.
-        set state["aed_assist_dv"] to state["aed_assist_dv"]+
-            power["acceleration"]*state["aed_throttle"]*dt_aed.
-    }
-    if power["healthy_rapiers"] = 0 or power["thrust"] <= 0 {
-        recovery_transition(state,"edr","aed_rapier_unavailable"). return state.
-    }
-    if time:seconds-state["aed_started"] > cfg["maximum_duration"] {
-        recovery_transition(state,"contingency_abort","aed_timeout"). return state.
-    }
-    local desired_aoa is cfg["low_drag_aoa"].
-    local desired_bank is 0.
-    local throttle_aed is 0.
-    set dap["dap_mode"] to "auto".
-    set dap["str_mode"] to "aoa".
-    set dap["aoa"]["base_pitch"] to 0.
-    // During a search preserve range and a climbing flight path. The predictor
-    // advances only a small number of bounded steps after these live commands.
-    if ship:verticalspeed > 5 { set desired_aoa to max(0,min(10,state["aed_aoa"])). }
-    if state["target"]["selected"] {
-        local target is state["target"].
-        local intake is target["capture_interface"].
-        local distance_aed is calcdistance_m(ship:geoposition,intake["target_latlng"]).
-        local course_error is normalized_heading_error(heading_to_target(intake["target_latlng"]),compass_for_prograde()).
-        set desired_bank to max(-cfg["maximum_bank"],min(cfg["maximum_bank"],-0.6*course_error)).
-        local gravity_aed is ship:body:mu/ship:body:radius^2.
-        local energy_aed is recovery_aed_energy(ship:altitude,ship:airspeed,
-            intake["target_altitude"],cfg["capture_speed"],gravity_aed).
-        local terminal_actual is ship:altitude-target["altitude"]+ship:airspeed^2/(2*gravity_aed).
-        local terminal_margin is terminal_actual-intake["terminal_required"].
-        set state["aed_energy"] to energy_aed.
-        set state["aed_energy_margin"] to terminal_margin.
-        set state["aed_distance"] to distance_aed.
-        set state["aed_heading_error"] to course_error.
-        local intent is state["aed_intent"].
-        if ship:verticalspeed > 5 {
-            set intent to "ascending_coast".
-        } else if energy_aed > 2200 and ship:altitude < 35000 and ship:q > 0.1 {
-            set intent to "energy_dissipation".
-        } else if energy_aed < -500 or terminal_margin < -500 {
-            set intent to "powered_extension".
-        } else if intent <> "energy_dissipation" or energy_aed < 1200 {
-            set intent to "descending_capture".
-        }
-        if intent <> state["aed_intent"] {
-            set state["aed_intent"] to intent.
-            flight_log_event("aed_intent","intent="+intent+"|energy="+round(energy_aed,1)).
-        }
-        if intent = "energy_dissipation" { set desired_aoa to cfg["drag_aoa"]. }
-        if intent = "powered_extension" {
-            set desired_aoa to 4.
-            local assist is state["aed_assist_budget"].
-            local assist_available is state["aed_assist_time"] < assist["time"] and
-                state["aed_assist_dv"] < assist["dv"] and
-                state["aed_assist_lf"] < assist["lf"] and
-                (assist["ox"] <= 0 or state["aed_assist_ox"] < assist["ox"]) and
-                ship:liquidfuel > state["lf_reserve"] and ship:oxidizer > state["ox_reserve"].
-            if assist_available {
-                set throttle_aed to cfg["assist_throttle"].
-            } else {
-                set state["rejected_targets"][target["location"]+"_"+target["runway_num"]] to "assist_budget_exhausted".
-                set state["target"] to lex("selected",false).
-                recovery_phase(state,"select_runway").
-                set state["aed_search"] to recovery_aed_search(current_simstate(),state["rejected_targets"],
-                    lex("time",0,"dv",0),cfg).
-                set state["aed_last_search"] to time:seconds.
-                flight_log_event("aed_target_rejected","reason=assist_budget_exhausted").
-            }
-        }
-        // No high-speed TEAM holding turn: all capture conditions must hold
-        // continuously before control leaves Orbit Main.
-        local clearance_aed is ship:altitude-max(0,ship:geoposition:terrainheight).
-        local gate is recovery_aed_capture_gate(distance_aed,ship:altitude-intake["target_altitude"],
-            ship:airspeed,ship:verticalspeed,
-            normalized_heading_error(target["heading"],compass_for_prograde()),roll_for(),
-            clearance_aed,terminal_margin,0,cfg).
-        if gate["valid"] {
-            if state["aed_capture_since"] < 0 { set state["aed_capture_since"] to time:seconds. }
-            recovery_phase(state,"capture").
-            if time:seconds-state["aed_capture_since"] >= cfg["capture_settle"] {
-                set state["aed_committed"] to true.
-                set state["capture_interface"] to intake.
-                set state["handoff_phase"] to "TEAM".
-                set state["handoff_ready"] to true.
-                recovery_phase(state,"TEAM").
-            }
-        } else {
-            set state["aed_capture_since"] to -1.
-            if state["phase"] = "capture" { recovery_phase(state,"energy_transit"). }
-        }
-        // Refresh forecasts in transit without interrupting the continuous
-        // control law or replacing a target until the prior one is rejected.
-        if not state["aed_committed"] and state["phase"] <> "capture" and time:seconds-state["aed_last_search"] > cfg["prediction_refresh"] and
-            state["aed_search"]["complete"] {
-            set state["aed_search"] to recovery_aed_search(current_simstate(),state["rejected_targets"],
-                lex("time",max(0,state["aed_assist_budget"]["time"]-state["aed_assist_time"]),
-                    "dv",max(0,state["aed_assist_budget"]["dv"]-state["aed_assist_dv"])),cfg,state["target"]).
-            set state["aed_last_search"] to time:seconds.
-        }
-    }
-    // Envelope DAP still owns q/thermal/terrain/stall protection. AED command
-    // continuity uses actual/smoothed entry values instead of an abrupt reset.
-    if ship:altitude > 35000 { set desired_aoa to min(desired_aoa,cfg["thin_aoa"]). }
-    set state["aed_aoa"] to state["aed_aoa"]+max(-3*dt_aed,min(3*dt_aed,desired_aoa-state["aed_aoa"])).
-    set state["aed_bank"] to state["aed_bank"]+max(-10*dt_aed,min(10*dt_aed,desired_bank-state["aed_bank"])).
-    set dap["aoa"]["target_aoa"] to state["aed_aoa"].
-    set dap["aoa"]["target_bank"] to state["aed_bank"].
-    set state["aed_throttle"] to state["aed_throttle"]+
-        max(-0.5*dt_aed,min(0.5*dt_aed,throttle_aed-state["aed_throttle"])).
-    if ship:liquidfuel <= state["lf_reserve"] or ship:oxidizer <= state["ox_reserve"] or
-        state["aed_assist_time"] >= state["aed_assist_budget"]["time"] or
-        state["aed_assist_dv"] >= state["aed_assist_budget"]["dv"] { set state["aed_throttle"] to 0. }
-    set dapthrottle to state["aed_throttle"].
-    recovery_apply_limits().
-    if not state["aed_search"]["complete"] {
-        set state["aed_search"] to recovery_aed_search_step(state["aed_search"],cfg).
-        if state["aed_search"]["complete"] {
-            for rejected_key in state["aed_search"]["rejections"]:keys {
-                flight_log_event("aed_candidate_rejected","target="+rejected_key+
-                    "|reason="+state["aed_search"]["rejections"][rejected_key]).
-            }
-            if state["target"]["selected"] and not state["aed_committed"] and state["phase"] <> "capture" {
-                local target_key is state["target"]["location"]+"_"+state["target"]["runway_num"].
-                local retained_feasible is false.
-                for reevaluated in state["aed_search"]["candidates"] {
-                    if reevaluated:haskey("screen") and reevaluated["location"]+"_"+reevaluated["runway_num"] = target_key and
-                        reevaluated["screen"]["feasible"] { set retained_feasible to true. }
-                }
-                if not retained_feasible and state["aed_search"]["rejections"]:haskey(target_key) {
-                    set state["rejected_targets"][target_key] to "live_prediction_rejected".
-                    flight_log_event("aed_target_rejected","target="+target_key+"|reason=live_prediction_rejected").
-                    set state["target"] to lex("selected",false).
-                    set state["aed_capture_since"] to -1.
-                }
-            }
-            if not state["target"]["selected"] {
-                if state["aed_search"]["best"]["selected"] {
-                    set state["target"] to state["aed_search"]["best"].
-                    recovery_phase(state,"energy_transit").
-                    flight_log_event("aed_runway_selected","location="+state["target"]["location"]+
-                        "|runway="+state["target"]["runway_num"]+
-                        "|altitude="+state["target"]["capture_interface"]["target_altitude"]+
-                        "|energy_margin="+state["target"]["screen"]["energy_margin"]).
-                } else {
-                    recovery_transition(state,"contingency_abort","aed_no_converged_runway").
-                }
-            }
-        }
-    }
-    return state.
-}
-
-function recovery_update {
-    parameter state.
-        local failures_before is state["scenario"]["rapiers_out"]+state["scenario"]["nervs_out"].
-        set state to abort_refresh_state(state).
-        recovery_apply_limits().
-        local failures_after is state["scenario"]["rapiers_out"]+state["scenario"]["nervs_out"].
-        if failures_after > failures_before {
-            // An engine failure abandons the original mission orbit and rendezvous.
-            if state:haskey("nominal_insertion") { state:remove("nominal_insertion"). }
-            local selected_mode is recovery_select_mode(state,state["current_ascent_phase"]).
-            if selected_mode <> state["mode"] {
-                recovery_transition(state,selected_mode,"new_engine_failure").
-            }
-        }
-        // Snapshot ownership: a transfer never executes the old controller
-        // afterward, and a same-mode failure gets one explicit reassessment.
-        local active_recovery_mode is state["mode"].
-        if active_recovery_mode = "ato" {
-            if failures_after > failures_before and state["mode"] = "ato" {
-                recovery_phase(state,"initialize").
-            }
-            recovery_ato_update(state).
-        } else if active_recovery_mode = "aed" { recovery_aed_update(state). }
-        else if active_recovery_mode = "edr" { recovery_edr_update(state). }
-    return state.
-}
-
+// Guidance executes directly in flight steps; libraries hold reusable services.
 set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
@@ -1300,7 +620,671 @@ until running = false{
         }
     }
     if step = "ato" or step = "aed" or step = "edr" {
-        set abort_state to recovery_update(abort_state).
+        // BEGIN MANAGED ABORT TICK
+        local failures_before is abort_state["scenario"]["rapiers_out"]+abort_state["scenario"]["nervs_out"].
+        set abort_state to abort_refresh_state(abort_state).
+        recovery_apply_limits().
+        local failures_after is abort_state["scenario"]["rapiers_out"]+abort_state["scenario"]["nervs_out"].
+        if failures_after > failures_before {
+            // An engine failure abandons the original mission orbit and rendezvous.
+            if abort_state:haskey("nominal_insertion") {
+                abort_state:remove("nominal_insertion").
+            }
+            local selected_mode is recovery_select_mode(abort_state,abort_state["current_ascent_phase"]).
+            if selected_mode <> abort_state["mode"] {
+                recovery_transition(abort_state,selected_mode,"new_engine_failure").
+            }
+        }
+        // Capture ownership after observation; a transfer inside guidance waits for
+        // the next loop tick instead of also running the destination controller.
+        local recovery_tick_mode is abort_state["mode"].
+        if failures_after > failures_before and recovery_tick_mode = "ato" {
+            recovery_phase(abort_state,"initialize").
+        }
+        // BEGIN ATO STEP
+        if step = "ato" and recovery_tick_mode = "ato" {
+            local abort_tick_complete is false.
+            local cfg is recovery_orbit_config().
+            if abort_state:haskey("nominal_insertion") and abort_state["nominal_insertion"] {
+                set cfg["target_ap"] to TargetApoapsis.
+            }
+            set warp to 0.
+            abort_set_fuel_dump(false).
+            if abort_state["phase"] = "initialize" {
+                if abort_state["scenario"]["nervs_out"] > 0 {
+                    recovery_ato_reject(abort_state,"nerv_failure").
+                    set abort_tick_complete to true.
+                }
+                if not abort_tick_complete {
+                    local layout is recovery_rapier_layout().
+                    local rapier_continue is abort_state["scenario"]["rapiers_out"] = 1 or
+                        (abort_state["scenario"]["rapiers_out"] = 2 and layout["opposite_pair"]).
+                    if abort_state["nominal_cutoff"] {
+                        set rapier_continue to false.
+                    }
+                    // A same-side pair and an uncalibrated single survivor are isolated. Their
+                    // identities stay healthy so a later diversion can deliberately reuse them.
+                    recovery_set_isolated("rapier",not rapier_continue).
+                    recovery_set_isolated("nerv",false).
+                    nervson().
+                    if rapier_continue {
+                        rapierson().
+                        if abort_state["current_ascent_phase"] = "closed_cycle_climb" {
+                            togglerapiermode("CLOSED").
+                        }
+                    }
+                    set abort_state["power"] to recovery_power(abort_state,rapier_continue,true).
+                    local power is abort_state["power"].
+                    if not power["usable"] or power["acceleration"] < cfg["minimum_acceleration"] {
+                        recovery_ato_reject(abort_state,"insufficient_permitted_thrust").
+                        set abort_tick_complete to true.
+                    }
+                    if not abort_tick_complete {
+                        local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
+                        local tangent_mps is (ship:velocity:orbit-ship:up:vector*radial_mps):mag.
+                        if rapier_continue {
+                            set abort_state["orbit_budget"] to contingency_orbit_budget(ship:body:mu,ship:body:radius,
+                                ship:altitude,ship:velocity:orbit:mag,radial_mps,cfg["target_ap"],power["vacuum_dv"],
+                                power["acceleration"],contingency_config()).
+                            if not abort_state["orbit_budget"]["possible"] {
+                                recovery_ato_reject(abort_state,"nominal_orbit_fuel_budget").
+                                set abort_tick_complete to true.
+                            }
+                            if not abort_tick_complete {
+                                set abort_state["rapier_continue"] to true.
+                                recovery_phase(abort_state,"nominal_continue").
+                            }
+                        } else {
+                            if ship:altitude < cfg["minimum_escape_height"] or tangent_mps < cfg["minimum_escape_horizontal_speed"] {
+                                recovery_ato_reject(abort_state,"nerv_escape_too_early").
+                                set abort_tick_complete to true.
+                            }
+                            if not abort_tick_complete {
+                                local best_prediction is lex("possible",false,"reason","no_pitch_candidate").
+                                local prediction_started is time:seconds.
+                                // Current measured drag is pessimistically held through the remaining
+                                // atmosphere. Fuel is reserved for a 200 m/s model-error allowance.
+                                local drag_bound is 0.
+                                if ship:altitude < ship:body:atm:height {
+                                    local aero_live is cur_aeroaccel_ld().
+                                    set drag_bound to max(0,-vdot(aero_live["load"],ship:velocity:surface:normalized)).
+                                }
+                                local fuel_seconds is min(power["burn_time"],cfg["timeout"])-
+                                    cfg["loss_allowance"]/max(0.01,power["acceleration"]).
+                                for candidate_pitch in list(30,45,60) {
+                                    dap:update().
+                                    local predicted is recovery_escape_prediction(ship:body:mu,ship:body:radius,
+                                        ship:body:atm:height,ship:altitude,radial_mps,tangent_mps,ship:mass,
+                                        power["thrust"],power["mass_flow"],max(0,fuel_seconds),candidate_pitch,drag_bound,cfg).
+                                    if predicted["possible"] {
+                                        if not best_prediction["possible"] or predicted["burn_seconds"] < best_prediction["burn_seconds"] {
+                                            set best_prediction to predicted.
+                                        }
+                                    }
+                                    wait 0.
+                                    if time:seconds-prediction_started > 6 {
+                                        break.
+                                    }
+                                }
+                                set abort_state["orbit_prediction"] to best_prediction.
+                                flight_log_event("recovery_orbit_prediction","possible="+best_prediction["possible"]+
+                                    "|reason="+best_prediction["reason"]+"|duration="+(time:seconds-prediction_started)).
+                                if not best_prediction["possible"] {
+                                    recovery_ato_reject(abort_state,best_prediction["reason"]).
+                                    set abort_tick_complete to true.
+                                }
+                                if not abort_tick_complete {
+                                    set abort_state["rapier_continue"] to false.
+                                    set abort_state["escape_pitch"] to best_prediction["pitch"].
+                                    recovery_phase(abort_state,"nerv_only_escape").
+                                }
+                            }
+                        }
+                        if not abort_tick_complete {
+                            set abort_state["orbit_attempted"] to true.
+                            set abort_state["orbit_started_ut"] to time:seconds.
+                            set abort_state["progress_ut"] to time:seconds.
+                            set abort_state["progress_value"] to ship:apoapsis.
+                            set abort_state["pitch"] to pitch_for().
+                            set abort_state["last_update_ut"] to time:seconds.
+                            set abort_state["assist_speed_ut"] to time:seconds.
+                            set abort_state["assist_speed"] to ship:airspeed.
+                            set abort_state["assist_acceleration"] to 1e9.
+                            flight_log_event("recovery_orbit_attempt","rapier_continue="+abort_state["rapier_continue"]+
+                                "|goal_ap="+cfg["target_ap"]+"|goal_pe="+(ship:body:atm:height+cfg["safe_clearance"])+
+                                "|dv_available="+power["dv"]+"|burn_time="+power["burn_time"]).
+                            set abort_tick_complete to true.
+                        }
+                    }
+                }
+            }
+            if not abort_tick_complete {
+                local safe_height is ship:body:atm:height+cfg["safe_clearance"].
+                if abort_state:haskey("nominal_insertion") and abort_state["nominal_insertion"] {
+                    set safe_height to max(ship:body:atm:height+5000,TargetPeriapsis-300).
+                }
+                if ship:orbit:eccentricity < 1 and ship:periapsis >= safe_height {
+                    recovery_phase(abort_state,"orbital_hold").
+                    recovery_finish(abort_state,"ato_orbit_complete",true,false).
+                    set abort_tick_complete to true.
+                }
+                if not abort_tick_complete {
+                    local rapier_continue is abort_state["rapier_continue"] and not abort_state["nominal_cutoff"].
+                    set abort_state["power"] to recovery_power(abort_state,rapier_continue,true).
+                    local power is abort_state["power"].
+                    local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
+                    if not power["usable"] or ship:liquidfuel <= abort_state["lf_reserve"] or
+                        time:seconds-abort_state["orbit_started_ut"] > cfg["timeout"] or
+                        ship:orbit:eccentricity >= 1 or (radial_mps < -100 and ship:altitude < safe_height) {
+                        recovery_ato_reject(abort_state,"fuel_thrust_time_or_descent").
+                        set abort_tick_complete to true.
+                    }
+                    if not abort_tick_complete {
+                        local dt_seconds is max(0,min(1,time:seconds-abort_state["last_update_ut"])).
+                        set abort_state["last_update_ut"] to time:seconds.
+                        set dap["dap_mode"] to "auto".
+                        brakes off.
+                        gear off.
+                        if abort_state["phase"] = "nominal_continue" or abort_state["phase"] = "nerv_only_escape" or
+                            abort_state["phase"] = "apoapsis_build" {
+                            local desired_pitch is AVES["Ascent"]["nerv_pitch"].
+                            if abort_state["phase"] = "nominal_continue" {
+                                if abort_state["current_ascent_phase"] = "nerv_assist" {
+                                    // Measure acceleration over elapsed time, independent of IPU
+                                    // and prediction work, before giving up air-breathing thrust.
+                                    if time:seconds-abort_state["assist_speed_ut"] >= 1 {
+                                        set abort_state["assist_acceleration"] to (ship:airspeed-abort_state["assist_speed"])/
+                                            (time:seconds-abort_state["assist_speed_ut"]).
+                                        set abort_state["assist_speed"] to ship:airspeed.
+                                        set abort_state["assist_speed_ut"] to time:seconds.
+                                    }
+                                    if ship:altitude >= AVES["Ascent"]["closed_cycle_min_altitude"] and
+                                        abort_state["assist_acceleration"] <= cfg["assist_min_acceleration"] {
+                                        set abort_state["current_ascent_phase"] to "closed_cycle_climb".
+                                        togglerapiermode("CLOSED").
+                                        flight_log_event("recovery_ascent_phase","to=closed_cycle_climb|acceleration="+
+                                            abort_state["assist_acceleration"]+"|altitude="+ship:altitude).
+                                    }
+                                }
+                                if abort_state["current_ascent_phase"] = "closed_cycle_climb" {
+                                    set desired_pitch to AVES["Ascent"]["closed_cycle_pitch_max"].
+                                }
+                                if ship:apoapsis >= AVES["Ascent"]["rapier_cutoff_apoapsis"] {
+                                    set abort_state["nominal_cutoff"] to true.
+                                    set recovery_nominal_cutoff to true.
+                                    recovery_set_isolated("rapier",true).
+                                    set abort_state["current_ascent_phase"] to "apoapsis_build".
+                                    recovery_phase(abort_state,"apoapsis_build").
+                                }
+                            }
+                            if abort_state["phase"] = "apoapsis_build" {
+                                set desired_pitch to AVES["Ascent"]["apoapsis_build_pitch"].
+                            }
+                            if abort_state["phase"] = "nerv_only_escape" {
+                                set desired_pitch to abort_state["escape_pitch"].
+                            }
+                            if ship:altitude < ship:body:atm:height {
+                                set desired_pitch to min(desired_pitch,pitch_for_prograde()+cfg["pullup_aoa"]).
+                            }
+                            set abort_state["pitch"] to abort_state["pitch"]+max(-cfg["pitch_rate"]*dt_seconds,
+                                min(cfg["pitch_rate"]*dt_seconds,desired_pitch-abort_state["pitch"])).
+                            set dap["str_mode"] to "aerostr".
+                            set dap["aerostr"]["turn_heading"] to compass_for_prograde().
+                            set dap["aerostr"]["turn_pitch"] to abort_state["pitch"].
+                            set dap["aerostr"]["turn_roll"] to 0.
+                            set dapthrottle to 1.
+                            if ship:apoapsis >= cfg["target_ap"] {
+                                recovery_set_isolated("rapier",true).
+                                set abort_state["nominal_cutoff"] to true.
+                                set recovery_nominal_cutoff to true.
+                                set abort_state["current_ascent_phase"] to "circ".
+                                set dapthrottle to 0.
+                                recovery_phase(abort_state,"coast_align").
+                                set abort_state["progress_ut"] to time:seconds.
+                                set abort_state["progress_value"] to ship:periapsis.
+                            }
+                        } else {
+                            local tangent is ship:velocity:orbit-ship:up:vector*radial_mps.
+                            if tangent:mag < 1 {
+                                recovery_ato_reject(abort_state,"no_orbital_tangent"). set abort_tick_complete to true.
+                            }
+                            if not abort_tick_complete {
+                                set dap["str_mode"] to "vector".
+                                set dap["vector"]["targetVector"] to tangent:normalized.
+                                set abort_state["alignment"] to vang(ship:facing:vector,tangent).
+                                local radius_now is ship:body:radius+ship:altitude.
+                                local target_speed is sqrt(max(0,ship:body:mu*(2/radius_now-
+                                    2/(radius_now+ship:body:radius+safe_height+100)))).
+                                local remaining_dv is max(0,target_speed-tangent:mag).
+                                set abort_state["burn_seconds"] to remaining_dv/max(0.01,power["acceleration"]).
+                                set dapthrottle to 0.
+                                if abort_state["phase"] = "coast_align" and ship:altitude >= safe_height and
+                                    ship:orbit:eta:apoapsis <= abort_state["burn_seconds"]/2+15 {
+                                    recovery_phase(abort_state,"insert").
+                                }
+                                if abort_state["phase"] = "insert" and abort_state["alignment"] <= cfg["alignment"] {
+                                    set dapthrottle to min(1,remaining_dv/max(0.01,power["acceleration"]*5)).
+                                }
+                            }
+                        }
+                        if not abort_tick_complete {
+                            if time:seconds-abort_state["progress_ut"] >= cfg["progress_seconds"] {
+                                local actual_progress is ship:apoapsis.
+                                if abort_state["phase"] = "coast_align" or abort_state["phase"] = "insert" {
+                                    set actual_progress to ship:periapsis.
+                                }
+                                if abort_state["phase"] <> "coast_align" and actual_progress-abort_state["progress_value"] < cfg["minimum_gain"] {
+                                    recovery_ato_reject(abort_state,"orbit_not_progressing").
+                                    set abort_tick_complete to true.
+                                }
+                                if not abort_tick_complete {
+                                    set abort_state["progress_ut"] to time:seconds.
+                                    set abort_state["progress_value"] to actual_progress.
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // END ATO STEP
+        // BEGIN AED STEP
+        if step = "aed" and recovery_tick_mode = "aed" {
+            local abort_tick_complete is false.
+            local cfg is recovery_aed_config().
+            if abort_state["phase"] = "initialize" {
+                set kuniverse:timewarp:warp to 0.
+                abort_set_fuel_dump(false).
+                set abort_state["orbit_abandoned"] to true.
+                set abort_state["suppress_orbit"] to true.
+                set abort_state["aed_started"] to time:seconds.
+                set abort_state["aed_last_update"] to time:seconds.
+                set abort_state["aed_aoa"] to dap["aoa"]["smooth_target_aoa"].
+                set abort_state["aed_bank"] to dap["aoa"]["smooth_target_bank"].
+                set abort_state["aed_throttle"] to dapthrottle.
+                set abort_state["aed_capture_since"] to -1.
+                set abort_state["aed_assist_time"] to 0.
+                set abort_state["aed_assist_dv"] to 0.
+                set abort_state["aed_assist_lf"] to 0.
+                set abort_state["aed_assist_ox"] to 0.
+                set abort_state["aed_last_lf"] to ship:liquidfuel.
+                set abort_state["aed_last_ox"] to ship:oxidizer.
+                set abort_state["aed_last_search"] to time:seconds.
+                set abort_state["aed_intent"] to "ascending_coast".
+                set abort_state["aed_committed"] to false.
+                recovery_set_isolated("rapier",false).
+                recovery_set_isolated("nerv",true).
+                togglerapiermode("CLOSED").
+                rapierson().
+                nervsoff().
+                recovery_apply_limits().
+                local power is recovery_power(abort_state,true,false).
+                local assist is recovery_aed_assist(power,ship:liquidfuel,ship:oxidizer,
+                    abort_state["lf_reserve"],abort_state["ox_reserve"],cfg).
+                set abort_state["aed_assist_budget"] to assist.
+                set abort_state["aed_search"] to recovery_aed_search(current_simstate(),abort_state["rejected_targets"],assist,cfg).
+                recovery_phase(abort_state,"select_runway").
+            }
+            local dt_aed is max(0,min(0.25,time:seconds-abort_state["aed_last_update"])).
+            set abort_state["aed_last_update"] to time:seconds.
+            set abort_state["aed_assist_lf"] to abort_state["aed_assist_lf"]+max(0,abort_state["aed_last_lf"]-ship:liquidfuel).
+            set abort_state["aed_assist_ox"] to abort_state["aed_assist_ox"]+max(0,abort_state["aed_last_ox"]-ship:oxidizer).
+            set abort_state["aed_last_lf"] to ship:liquidfuel.
+            set abort_state["aed_last_ox"] to ship:oxidizer.
+            local power is recovery_power(abort_state,true,false).
+            if abort_state["aed_throttle"] > 0 {
+                set abort_state["aed_assist_time"] to abort_state["aed_assist_time"]+dt_aed.
+                set abort_state["aed_assist_dv"] to abort_state["aed_assist_dv"]+
+                    power["acceleration"]*abort_state["aed_throttle"]*dt_aed.
+            }
+            if power["healthy_rapiers"] = 0 or power["thrust"] <= 0 {
+                recovery_transition(abort_state,"edr","aed_rapier_unavailable"). set abort_tick_complete to true.
+            }
+            if not abort_tick_complete {
+                if time:seconds-abort_state["aed_started"] > cfg["maximum_duration"] {
+                    recovery_transition(abort_state,"contingency_abort","aed_timeout"). set abort_tick_complete to true.
+                }
+                if not abort_tick_complete {
+                    local desired_aoa is cfg["low_drag_aoa"].
+                    local desired_bank is 0.
+                    local throttle_aed is 0.
+                    set dap["dap_mode"] to "auto".
+                    set dap["str_mode"] to "aoa".
+                    set dap["aoa"]["base_pitch"] to 0.
+                    // During a search preserve range and a climbing flight path. The predictor
+                    // advances only a small number of bounded steps after these live commands.
+                    if ship:verticalspeed > 5 {
+                        set desired_aoa to max(0,min(10,abort_state["aed_aoa"])).
+                    }
+                    if abort_state["target"]["selected"] {
+                        local target is abort_state["target"].
+                        local intake is target["capture_interface"].
+                        local distance_aed is calcdistance_m(ship:geoposition,intake["target_latlng"]).
+                        local course_error is normalized_heading_error(heading_to_target(intake["target_latlng"]),compass_for_prograde()).
+                        set desired_bank to max(-cfg["maximum_bank"],min(cfg["maximum_bank"],-0.6*course_error)).
+                        local gravity_aed is ship:body:mu/ship:body:radius^2.
+                        local energy_aed is recovery_aed_energy(ship:altitude,ship:airspeed,
+                            intake["target_altitude"],cfg["capture_speed"],gravity_aed).
+                        local terminal_actual is ship:altitude-target["altitude"]+ship:airspeed^2/(2*gravity_aed).
+                        local terminal_margin is terminal_actual-intake["terminal_required"].
+                        set abort_state["aed_energy"] to energy_aed.
+                        set abort_state["aed_energy_margin"] to terminal_margin.
+                        set abort_state["aed_distance"] to distance_aed.
+                        set abort_state["aed_heading_error"] to course_error.
+                        local intent is abort_state["aed_intent"].
+                        if ship:verticalspeed > 5 {
+                            set intent to "ascending_coast".
+                        } else if energy_aed > 2200 and ship:altitude < 35000 and ship:q > 0.1 {
+                            set intent to "energy_dissipation".
+                        } else if energy_aed < -500 or terminal_margin < -500 {
+                            set intent to "powered_extension".
+                        } else if intent <> "energy_dissipation" or energy_aed < 1200 {
+                            set intent to "descending_capture".
+                        }
+                        if intent <> abort_state["aed_intent"] {
+                            set abort_state["aed_intent"] to intent.
+                            flight_log_event("aed_intent","intent="+intent+"|energy="+round(energy_aed,1)).
+                        }
+                        if intent = "energy_dissipation" {
+                            set desired_aoa to cfg["drag_aoa"].
+                        }
+                        if intent = "powered_extension" {
+                            set desired_aoa to 4.
+                            local assist is abort_state["aed_assist_budget"].
+                            local assist_available is abort_state["aed_assist_time"] < assist["time"] and
+                                abort_state["aed_assist_dv"] < assist["dv"] and
+                                abort_state["aed_assist_lf"] < assist["lf"] and
+                                (assist["ox"] <= 0 or abort_state["aed_assist_ox"] < assist["ox"]) and
+                                ship:liquidfuel > abort_state["lf_reserve"] and ship:oxidizer > abort_state["ox_reserve"].
+                            if assist_available {
+                                set throttle_aed to cfg["assist_throttle"].
+                            } else {
+                                set abort_state["rejected_targets"][target["location"]+"_"+target["runway_num"]] to "assist_budget_exhausted".
+                                set abort_state["target"] to lex("selected",false).
+                                recovery_phase(abort_state,"select_runway").
+                                set abort_state["aed_search"] to recovery_aed_search(current_simstate(),abort_state["rejected_targets"],
+                                    lex("time",0,"dv",0),cfg).
+                                set abort_state["aed_last_search"] to time:seconds.
+                                flight_log_event("aed_target_rejected","reason=assist_budget_exhausted").
+                            }
+                        }
+                        // No high-speed TEAM holding turn: all capture conditions must hold
+                        // continuously before control leaves Orbit Main.
+                        local clearance_aed is ship:altitude-max(0,ship:geoposition:terrainheight).
+                        local gate is recovery_aed_capture_gate(distance_aed,ship:altitude-intake["target_altitude"],
+                            ship:airspeed,ship:verticalspeed,
+                            normalized_heading_error(target["heading"],compass_for_prograde()),roll_for(),
+                            clearance_aed,terminal_margin,0,cfg).
+                        if gate["valid"] {
+                            if abort_state["aed_capture_since"] < 0 {
+                                set abort_state["aed_capture_since"] to time:seconds.
+                            }
+                            recovery_phase(abort_state,"capture").
+                            if time:seconds-abort_state["aed_capture_since"] >= cfg["capture_settle"] {
+                                set abort_state["aed_committed"] to true.
+                                set abort_state["capture_interface"] to intake.
+                                set abort_state["handoff_phase"] to "TEAM".
+                                set abort_state["handoff_ready"] to true.
+                                recovery_phase(abort_state,"TEAM").
+                            }
+                        } else {
+                            set abort_state["aed_capture_since"] to -1.
+                            if abort_state["phase"] = "capture" {
+                                recovery_phase(abort_state,"energy_transit").
+                            }
+                        }
+                        // Refresh forecasts in transit without interrupting the continuous
+                        // control law or replacing a target until the prior one is rejected.
+                        if not abort_state["aed_committed"] and abort_state["phase"] <> "capture" and time:seconds-abort_state["aed_last_search"] > cfg["prediction_refresh"] and
+                            abort_state["aed_search"]["complete"] {
+                            set abort_state["aed_search"] to recovery_aed_search(current_simstate(),abort_state["rejected_targets"],
+                                lex("time",max(0,abort_state["aed_assist_budget"]["time"]-abort_state["aed_assist_time"]),
+                                "dv",max(0,abort_state["aed_assist_budget"]["dv"]-abort_state["aed_assist_dv"])),cfg,abort_state["target"]).
+                            set abort_state["aed_last_search"] to time:seconds.
+                        }
+                    }
+                    // Envelope DAP still owns q/thermal/terrain/stall protection. AED command
+                    // continuity uses actual/smoothed entry values instead of an abrupt reset.
+                    if ship:altitude > 35000 {
+                        set desired_aoa to min(desired_aoa,cfg["thin_aoa"]).
+                    }
+                    set abort_state["aed_aoa"] to abort_state["aed_aoa"]+max(-3*dt_aed,min(3*dt_aed,desired_aoa-abort_state["aed_aoa"])).
+                    set abort_state["aed_bank"] to abort_state["aed_bank"]+max(-10*dt_aed,min(10*dt_aed,desired_bank-abort_state["aed_bank"])).
+                    set dap["aoa"]["target_aoa"] to abort_state["aed_aoa"].
+                    set dap["aoa"]["target_bank"] to abort_state["aed_bank"].
+                    set abort_state["aed_throttle"] to abort_state["aed_throttle"]+
+                        max(-0.5*dt_aed,min(0.5*dt_aed,throttle_aed-abort_state["aed_throttle"])).
+                    if ship:liquidfuel <= abort_state["lf_reserve"] or ship:oxidizer <= abort_state["ox_reserve"] or
+                        abort_state["aed_assist_time"] >= abort_state["aed_assist_budget"]["time"] or
+                        abort_state["aed_assist_dv"] >= abort_state["aed_assist_budget"]["dv"] {
+                        set abort_state["aed_throttle"] to 0.
+                    }
+                    set dapthrottle to abort_state["aed_throttle"].
+                    recovery_apply_limits().
+                    if not abort_state["aed_search"]["complete"] {
+                        set abort_state["aed_search"] to recovery_aed_search_step(abort_state["aed_search"],cfg).
+                        if abort_state["aed_search"]["complete"] {
+                            for rejected_key in abort_state["aed_search"]["rejections"]:keys {
+                                flight_log_event("aed_candidate_rejected","target="+rejected_key+
+                                    "|reason="+abort_state["aed_search"]["rejections"][rejected_key]).
+                            }
+                            if abort_state["target"]["selected"] and not abort_state["aed_committed"] and abort_state["phase"] <> "capture" {
+                                local target_key is abort_state["target"]["location"]+"_"+abort_state["target"]["runway_num"].
+                                local retained_feasible is false.
+                                for reevaluated in abort_state["aed_search"]["candidates"] {
+                                    if reevaluated:haskey("screen") and reevaluated["location"]+"_"+reevaluated["runway_num"] = target_key and
+                                        reevaluated["screen"]["feasible"] {
+                                        set retained_feasible to true.
+                                    }
+                                }
+                                if not retained_feasible and abort_state["aed_search"]["rejections"]:haskey(target_key) {
+                                    set abort_state["rejected_targets"][target_key] to "live_prediction_rejected".
+                                    flight_log_event("aed_target_rejected","target="+target_key+"|reason=live_prediction_rejected").
+                                    set abort_state["target"] to lex("selected",false).
+                                    set abort_state["aed_capture_since"] to -1.
+                                }
+                            }
+                            if not abort_state["target"]["selected"] {
+                                if abort_state["aed_search"]["best"]["selected"] {
+                                    set abort_state["target"] to abort_state["aed_search"]["best"].
+                                    recovery_phase(abort_state,"energy_transit").
+                                    flight_log_event("aed_runway_selected","location="+abort_state["target"]["location"]+
+                                        "|runway="+abort_state["target"]["runway_num"]+
+                                        "|altitude="+abort_state["target"]["capture_interface"]["target_altitude"]+
+                                        "|energy_margin="+abort_state["target"]["screen"]["energy_margin"]).
+                                } else {
+                                    recovery_transition(abort_state,"contingency_abort","aed_no_converged_runway").
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // END AED STEP
+        // BEGIN EDR STEP
+        if step = "edr" and recovery_tick_mode = "edr" {
+            local abort_tick_complete is false.
+            local cfg is recovery_orbit_config().
+            set warp to 0.
+            abort_set_fuel_dump(false).
+            set dapthrottle to 0.
+            if abort_state["phase"] = "initialize" {
+                set abort_state["return_started_ut"] to time:seconds.
+                set abort_state["suppress_orbit"] to true.
+                set abort_state["orbit_abandoned"] to true.
+                set abort_state["entry_verified"] to false.
+                set abort_state["return_attempted"] to false.
+                // An already-suborbital trajectory needs no automatic retrograde burn.
+                if ship:periapsis < ship:body:atm:height {
+                    recovery_set_isolated("rapier",true).
+                    recovery_set_isolated("nerv",true).
+                    recovery_phase(abort_state,"passive_return").
+                } else {
+                    recovery_set_isolated("rapier",false).
+                    recovery_set_isolated("nerv",false).
+                    local layout is recovery_rapier_layout().
+                    if layout["healthy"] < 3 and not layout["opposite_pair"] {
+                        recovery_set_isolated("rapier",true).
+                    }
+                    togglerapiermode("CLOSED").
+                    rapierson().
+                    nervson().
+                    recovery_apply_limits().
+                    set abort_state["power"] to recovery_power(abort_state,true,true).
+                    local power is abort_state["power"].
+                    local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
+                    local tangent_mps is (ship:velocity:orbit-ship:up:vector*radial_mps):mag.
+                    set abort_state["return_plan"] to recovery_return_burn(ship:body:mu,ship:body:radius,
+                        ship:altitude,tangent_mps,cfg["deorbit_pe"],power["acceleration"],power["dv"]).
+                    // Long weak burns require a separate finite-duration margin. Reject
+                    // a burn that cannot fit the available propellant or recovery time.
+                    if not abort_state["return_plan"]["possible"] or
+                        abort_state["return_plan"]["burn_seconds"] > min(180,power["burn_time"]*0.8) {
+                        recovery_finish(abort_state,"edr_deorbit_unavailable_orbit_hold",false,true).
+                        set abort_tick_complete to true.
+                    }
+                    if not abort_tick_complete {
+                        local predicted is recovery_return_prediction(ship:body:mu,ship:body:radius,
+                            ship:body:atm:height,ship:altitude,radial_mps,
+                            max(0,tangent_mps-abort_state["return_plan"]["dv"]),ship:body:angularvel:mag,1800).
+                        if not predicted["possible"] {
+                            recovery_finish(abort_state,"edr_entry_prediction_rejected_orbit_hold",false,true).
+                            set abort_tick_complete to true.
+                        }
+                        if not abort_tick_complete {
+                            local footprint is get_geoposition_along_heading(ship:geoposition,compass_for_prograde(),predicted["downrange"]).
+                            set abort_state["target"] to recovery_edr_select_target(footprint,cfg).
+                            if not abort_state["target"]["selected"] {
+                                recovery_finish(abort_state,"edr_no_return_runway_orbit_hold",false,true).
+                                set abort_tick_complete to true.
+                            }
+                            if not abort_tick_complete {
+                                set abort_state["return_plan"]["footprint"] to footprint.
+                                set abort_state["return_plan"]["entry_speed"] to predicted["entry_speed"].
+                                set abort_state["return_plan"]["entry_slope"] to predicted["entry_slope"].
+                                set abort_state["burn_started_ut"] to -1.
+                                recovery_phase(abort_state,"align_return").
+                                flight_log_event("recovery_return_plan","dv="+abort_state["return_plan"]["dv"]+
+                                    "|burn_seconds="+abort_state["return_plan"]["burn_seconds"]+
+                                    "|runway="+abort_state["target"]["location"]+"_"+abort_state["target"]["runway_num"]+
+                                    "|entry_slope="+predicted["entry_slope"]+"|model=ballistic_geometric_screen").
+                            }
+                        }
+                    }
+                }
+                if not abort_tick_complete {
+                    set abort_tick_complete to true.
+                }
+            }
+            if not abort_tick_complete {
+                if time:seconds-abort_state["return_started_ut"] > cfg["return_timeout"] {
+                    recovery_finish(abort_state,"edr_return_timeout",false,true).
+                    set abort_tick_complete to true.
+                }
+                if not abort_tick_complete {
+                    local radial_mps is vdot(ship:velocity:orbit,ship:up:vector).
+                    local tangent is ship:velocity:orbit-ship:up:vector*radial_mps.
+                    if abort_state["phase"] = "align_return" or abort_state["phase"] = "return_burn" {
+                        if tangent:mag < 1 {
+                            recovery_finish(abort_state,"edr_no_orbital_tangent",false,true). set abort_tick_complete to true.
+                        }
+                        if not abort_tick_complete {
+                            set dap["str_mode"] to "vector".
+                            set dap["vector"]["targetVector"] to -tangent:normalized.
+                            set abort_state["alignment"] to vang(ship:facing:vector,-tangent).
+                            set abort_state["power"] to recovery_power(abort_state,true,true).
+                            if ship:periapsis <= cfg["deorbit_pe"] {
+                                set dapthrottle to 0.
+                                recovery_set_isolated("rapier",true).
+                                recovery_set_isolated("nerv",true).
+                                recovery_phase(abort_state,"verify_return").
+                            } else if abort_state["alignment"] <= cfg["return_alignment"] and abort_state["power"]["usable"] {
+                                if abort_state["burn_started_ut"] < 0 {
+                                    set abort_state["burn_started_ut"] to time:seconds.
+                                }
+                                set abort_state["return_attempted"] to true.
+                                recovery_phase(abort_state,"return_burn").
+                                set dapthrottle to min(1,max(0.05,(ship:periapsis-cfg["deorbit_pe"])/10000)).
+                                if time:seconds-abort_state["burn_started_ut"] > abort_state["return_plan"]["burn_seconds"]*1.5+10 {
+                                    set dapthrottle to 0.
+                                    if ship:periapsis < ship:body:atm:height {
+                                        recovery_phase(abort_state,"verify_return").
+                                    } else {
+                                        recovery_finish(abort_state,"edr_burn_not_progressing_orbit_hold",false,true).
+                                    }
+                                }
+                            } else if time:seconds-abort_state["phase_entered"] > 60 {
+                                recovery_finish(abort_state,"edr_alignment_or_thrust_unavailable",false,true).
+                            }
+                            set abort_tick_complete to true.
+                        }
+                    }
+                    if not abort_tick_complete {
+                        if ship:periapsis >= ship:body:atm:height {
+                            recovery_finish(abort_state,"edr_return_trajectory_not_verified",false,true).
+                            set abort_tick_complete to true.
+                        }
+                        if not abort_tick_complete {
+                            if not abort_state["entry_verified"] or
+                                (abort_state:haskey("entry_check_ut") and time:seconds-abort_state["entry_check_ut"] > 30) {
+                                local actual_return is recovery_return_prediction(ship:body:mu,ship:body:radius,
+                                    ship:body:atm:height,ship:altitude,radial_mps,tangent:mag,
+                                    ship:body:angularvel:mag,1800).
+                                if not actual_return["possible"] {
+                                    recovery_transition(abort_state,"contingency_abort","edr_actual_entry_geometry_rejected").
+                                    set abort_tick_complete to true.
+                                }
+                                if not abort_tick_complete {
+                                    local actual_footprint is get_geoposition_along_heading(ship:geoposition,
+                                        compass_for_prograde(),actual_return["downrange"]).
+                                    if ADDONS:TR:available and ADDONS:TR:hasimpact {
+                                        set actual_footprint to ADDONS:TR:impactpos.
+                                    }
+                                    set abort_state["target"] to recovery_edr_select_target(actual_footprint,cfg).
+                                    set abort_state["entry_verified"] to true.
+                                    set abort_state["entry_check_ut"] to time:seconds.
+                                    set abort_state["actual_return"] to actual_return.
+                                    flight_log_event("recovery_return_verified","periapsis="+ship:periapsis+
+                                        "|entry_slope="+actual_return["entry_slope"]+"|entry_speed="+actual_return["entry_speed"]+
+                                        "|runway_available="+abort_state["target"]["selected"]).
+                                }
+                            }
+                            if not abort_tick_complete {
+                                set dap["str_mode"] to "vector".
+                                set dap["vector"]["targetVector"] to ship:velocity:orbit:normalized.
+                                if ship:altitude <= ship:body:atm:height and radial_mps < 0 {
+                                    if not abort_state["target"]["selected"] {
+                                        local footprint is ship:geoposition.
+                                        if ADDONS:TR:available and ADDONS:TR:hasimpact {
+                                            set footprint to ADDONS:TR:impactpos.
+                                        }
+                                        set abort_state["target"] to recovery_edr_select_target(footprint,cfg).
+                                    }
+                                    if abort_state["target"]["selected"] {
+                                        // Normal entry starts only after a real descending atmosphere
+                                        // crossing; it skips its deorbit setup and retains all restrictions.
+                                        recovery_set_isolated("rapier",false).
+                                        recovery_set_isolated("nerv",false).
+                                        togglerapiermode("AIR").
+                                        rapierson().
+                                        nervsoff().
+                                        recovery_apply_limits().
+                                        set abort_state["handoff_ready"] to true.
+                                        set abort_state["handoff_phase"] to "reentry_low".
+                                        recovery_phase(abort_state,"entry_handoff").
+                                    } else {
+                                        recovery_transition(abort_state,"contingency_abort","edr_no_reachable_runway").
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // END EDR STEP
+        // BEGIN ABORT HANDOFF
         set Lastest_status to abort_state["mode"]+": "+abort_state["phase"].
         if abort_state["active"] and abort_state:haskey("handoff_ready") and abort_state["handoff_ready"] {
             set abort_state["handoff"]["started"] to true.
@@ -1320,9 +1304,10 @@ until running = false{
                 not recovery_result["success"]).
         }
         if not abort_state["active"] and abort_state["result"]["success"] and
-           abort_state["mode"] = "ato" and abort_state:haskey("nominal_insertion") {
+            abort_state["mode"] = "ato" and abort_state:haskey("nominal_insertion") {
             set ascent_orbit_complete to true.
         }
+        // END MANAGED ABORT TICK
     }
     if step = "contingency_abort"{
         set abort_state to abort_refresh_state(abort_state).

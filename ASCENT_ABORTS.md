@@ -1,6 +1,6 @@
 # AED, ATO and EDR ascent recovery
 
-Implemented source behavior, 2026-10-11. These modes replace ATI. Their flight executives remain in `Poseidon_SSTO_Orbit_Main.ks` until a deliberate handoff to `Poseidon_SSTO_Reentry.ks`; libraries provide engine policy, prediction and mathematics. Atmospheric and asymmetric-engine authority still require Poseidon KSP/FAR flight validation.
+Implemented source behavior, 2026-10-11. These modes replace ATI. AED, ATO and EDR each execute directly in their own steps in `Poseidon_SSTO_Orbit_Main.ks`, which defines no functions. Reused lifecycle and engine policy live in the craft library; the two recovery libraries provide prediction, mathematics and return-target services. Orbit Main retains guidance ownership until the deliberate handoff to `Poseidon_SSTO_Reentry.ks`. Atmospheric and asymmetric-engine authority still require Poseidon KSP/FAR flight validation.
 
 ## Selection
 

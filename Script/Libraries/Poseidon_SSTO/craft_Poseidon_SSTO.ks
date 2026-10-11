@@ -253,11 +253,11 @@ function check_abort {
     local engines is abort_engine_snapshot().
     // Intentionally shut-down engines are not failures.  During ascent all
     // commanded RAPIERs are expected; NERVs become expected after activation.
-    if not rapiers and not defined recovery_engines {
+    if not rapiers and not(defined recovery_engines){
         set engines["rapier"]["failed"] to 0.
         set engines["rapier"]["failed_ids"] to lex().
     }
-    if not nervs and not defined recovery_engines {
+    if not nervs and not(defined recovery_engines){
         set engines["nerv"]["failed"] to 0.
         set engines["nerv"]["failed_ids"] to lex().
     }
@@ -976,7 +976,7 @@ function recovery_register_engines {
 
 function recovery_set_command {
     parameter engine_part, desired.
-    if not defined recovery_engines { return. }
+    if not(defined recovery_engines) { return. }
     local identity is "part_"+engine_part:uid.
     if not recovery_engines:haskey(identity) { return. }
     local entry is recovery_engines[identity].
@@ -987,7 +987,7 @@ function recovery_set_command {
 
 function recovery_set_isolated {
     parameter kind, isolated.
-    if not defined recovery_engines { return. }
+    if not(defined recovery_engines){ return. }
     for identity in recovery_engines:keys {
         local entry is recovery_engines[identity].
         if entry["kind"] = kind and not entry["failed"] {
@@ -1186,4 +1186,61 @@ function recovery_select_mode {
         return "edr".
     }
     return selected.
+}
+
+// Shared ascent recovery lifecycle; guidance executes in Orbit Main steps.
+function recovery_phase {
+    parameter state, next_phase.
+    if state["phase"] <> next_phase {
+        flight_log_event("recovery_phase","mode="+state["mode"]+"|from="+state["phase"]+
+            "|to="+next_phase+"|source="+state["source_step"]).
+        set state["phase"] to next_phase.
+        set state["phase_entered"] to time:seconds.
+    }
+}
+
+function recovery_transition {
+    parameter state, next_mode, reason.
+    if state["mode"] = next_mode { return. }
+    flight_log_event("recovery_mode","from="+state["mode"]+"|to="+next_mode+"|reason="+reason+
+        "|source="+state["source_step"]+"|rapiers_out="+state["scenario"]["rapiers_out"]+
+        "|nervs_out="+state["scenario"]["nervs_out"]).
+    set state["mode"] to next_mode.
+    set state["phase"] to "initialize".
+    set state["phase_entered"] to time:seconds.
+    set state["handoff_ready"] to false.
+    set state["handoff"]["started"] to false.
+    if next_mode <> "ato" {
+        set state["orbit_abandoned"] to true.
+        set state["suppress_orbit"] to true.
+    }
+    if next_mode = "contingency_abort" {
+        recovery_set_isolated("nerv",false).
+        // Allow the fallback to initialize its caches, but carry the original
+        // reserves and the rejected-attempt history into that initialization.
+        if state:haskey("orbit_eligible") { state:remove("orbit_eligible"). }
+        set state["target"]["selected"] to false.
+    }
+    set step to next_mode.
+}
+
+function recovery_finish {
+    parameter state, reason, success is false, pilot is true.
+    abort_set_fuel_dump(false).
+    set dapthrottle to 0.
+    set dap["envelope"]["min_throttle"] to 0.
+    set state["result"] to lex("success",success,"reason",reason,"pilot_control",pilot).
+    set state["active"] to false.
+    set state["controls_released"] to true.
+    recovery_phase(state,"complete").
+    flight_log_event("recovery_outcome","mode="+state["mode"]+"|reason="+reason+
+        "|success="+success+"|pilot_control="+pilot+"|apoapsis="+ship:apoapsis+
+        "|periapsis="+ship:periapsis+"|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
+    recovery_apply_limits().
+    set ship:control:pilotmainthrottle to 0.
+    dap:set_off().
+    unlock throttle.
+    set ship:control:neutralize to true.
+    if pilot { print "RECOVERY: PILOT CONTROL - "+reason. }
+    set step to "end".
 }
