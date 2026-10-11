@@ -914,6 +914,9 @@ until running = false{
                 set abort_state["aed_committed"] to false.
                 set abort_state["aed_powered"] to false.
                 set abort_state["aed_search_cycles"] to 0.
+                set abort_state["aed_propulsion_mode"] to "ClosedCycle".
+                set abort_state["aed_power_retry_until"] to -1.
+                set abort_state["aed_air_retry_after"] to -1.
                 recovery_set_isolated("rapier",false).
                 recovery_set_isolated("nerv",true).
                 togglerapiermode("CLOSED").
@@ -944,20 +947,55 @@ until running = false{
             set abort_state["aed_assist_ox"] to abort_state["aed_assist_ox"]+max(0,abort_state["aed_last_ox"]-ship:oxidizer).
             set abort_state["aed_last_lf"] to ship:liquidfuel.
             set abort_state["aed_last_ox"] to ship:oxidizer.
+            // Prefer LF-only jet flight after descending into the atmosphere.
+            // Mode changes have a short settling window before loss assessment.
+            local aed_engine_mode is abort_state["aed_propulsion_mode"].
+            if ship:altitude <= cfg["airbreathing_height"] and ship:airspeed <= 600 and
+               time:seconds >= abort_state["aed_air_retry_after"] {
+                set aed_engine_mode to "AirBreathing".
+            } else if ship:altitude >= cfg["rocket_height"] {
+                set aed_engine_mode to "ClosedCycle".
+            }
+            if aed_engine_mode <> abort_state["aed_propulsion_mode"] {
+                local mode_command is "CLOSED".
+                if aed_engine_mode = "AirBreathing" { set mode_command to "AIR". }
+                togglerapiermode(mode_command).
+                rapierson().
+                set abort_state["aed_propulsion_mode"] to aed_engine_mode.
+                set abort_state["aed_power_retry_until"] to time:seconds+1.
+                flight_log_event("aed_propulsion_mode","mode="+aed_engine_mode+"|reason=altitude_speed"+
+                    "|altitude="+ship:altitude+"|speed="+ship:airspeed).
+            }
+            if time:seconds <= abort_state["aed_power_retry_until"] { rapierson(). }
             local power is recovery_power(abort_state,true,false).
             // Reserves protect the orbit budget, not a compulsory engine cut
             // during an airborne diversion. Release them before declaring loss.
             if not recovery_aed_power_available(power) and
                (abort_state["lf_reserve"] > 0 or abort_state["ox_reserve"] > 0) and
-               ship:liquidfuel > 0 and ship:oxidizer > 0 {
+               ship:liquidfuel > 0 and
+               (aed_engine_mode = "AirBreathing" or ship:oxidizer > 0) {
                 local layout is recovery_rapier_layout().
                 if layout["healthy"] > 0 {
                     flight_log_event("aed_reserve_released","lf_reserve="+abort_state["lf_reserve"]+
                         "|ox_reserve="+abort_state["ox_reserve"]+"|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
                     set abort_state["lf_reserve"] to 0.
                     set abort_state["ox_reserve"] to 0.
+                    rapierson().
+                    set abort_state["aed_power_retry_until"] to time:seconds+1.
                     set power to recovery_power(abort_state,true,false).
+                    flight_log_event("aed_propulsion_restart","reason=reserve_released|mode="+aed_engine_mode).
                 }
+            }
+            if not recovery_aed_power_available(power) and aed_engine_mode = "AirBreathing" and
+               time:seconds > abort_state["aed_power_retry_until"] and ship:oxidizer > 0 and
+               recovery_rapier_layout()["healthy"] > 0 {
+                togglerapiermode("CLOSED").
+                rapierson().
+                set abort_state["aed_propulsion_mode"] to "ClosedCycle".
+                set abort_state["aed_air_retry_after"] to time:seconds+30.
+                set abort_state["aed_power_retry_until"] to time:seconds+1.
+                set power to recovery_power(abort_state,true,false).
+                flight_log_event("aed_propulsion_mode","mode=ClosedCycle|reason=jet_power_unavailable").
             }
             set abort_state["power"] to power.
             if abort_state["aed_throttle"] > 0 {
@@ -966,7 +1004,13 @@ until running = false{
                     power["acceleration"]*abort_state["aed_throttle"]*dt_aed.
             }
             if not recovery_aed_power_available(power) {
-                recovery_transition(abort_state,"edr","aed_rapier_unavailable"). set abort_tick_complete to true.
+                if time:seconds <= abort_state["aed_power_retry_until"] and ship:liquidfuel > 0 and
+                   recovery_rapier_layout()["healthy"] > 0 {
+                    set dapthrottle to 0.
+                    set abort_tick_complete to true.
+                } else {
+                    recovery_transition(abort_state,"edr","aed_rapier_unavailable"). set abort_tick_complete to true.
+                }
             }
             if not abort_tick_complete {
                 if time:seconds-abort_state["aed_started"] > cfg["maximum_duration"] and
@@ -1044,16 +1088,41 @@ until running = false{
                             normalized_heading_error(target["heading"],compass_for_prograde()),roll_for(),
                             clearance_aed,terminal_margin,0,cfg).
                         local provisional is target:haskey("provisional") and target["provisional"].
-                        if gate["valid"] and not provisional {
+                        local settle_aed is cfg["capture_settle"].
+                        set abort_state["aed_capture_reason"] to "forecast_capture".
+                        if provisional or abort_state["aed_powered"] {
+                            local runway_range is calcdistance_m(ship:geoposition,target["start"]).
+                            local live_intake is recovery_aed_terminal_intake(runway_range,target["altitude"],cfg).
+                            local live_margin is terminal_actual-live_intake["required"].
+                            local runway_course_error is normalized_heading_error(
+                                heading_to_target(target["start"]),compass_for_prograde()).
+                            set gate to recovery_aed_team_gate(distance_aed,ship:altitude-intake["target_altitude"],
+                                ship:airspeed,ship:verticalspeed,runway_course_error,roll_for(),clearance_aed,
+                                live_margin,cfg,runway_range).
+                            set abort_state["aed_runway_distance"] to runway_range.
+                            set abort_state["aed_terminal_required"] to live_intake["required"].
+                            set abort_state["aed_energy_margin"] to live_margin.
+                            set settle_aed to cfg["team_settle"].
+                            set abort_state["aed_capture_reason"] to gate["reason"].
+                        }
+                        set abort_state["aed_capture_valid"] to gate["valid"].
+                        if gate["valid"] {
                             if abort_state["aed_capture_since"] < 0 {
                                 set abort_state["aed_capture_since"] to time:seconds.
                             }
                             recovery_phase(abort_state,"capture").
-                            if time:seconds-abort_state["aed_capture_since"] >= cfg["capture_settle"] {
+                            if time:seconds-abort_state["aed_capture_since"] >= settle_aed {
                                 set abort_state["aed_committed"] to true.
                                 set abort_state["capture_interface"] to intake.
                                 set abort_state["handoff_phase"] to "TEAM".
                                 set abort_state["handoff_ready"] to true.
+                                brakes off.
+                                flight_log_event("aed_TEAM_capture","reason="+abort_state["aed_capture_reason"]+
+                                    "|provisional="+provisional+"|distance="+distance_aed+
+                                    "|height_error="+(ship:altitude-intake["target_altitude"])+
+                                    "|speed="+ship:airspeed+"|vs="+ship:verticalspeed+
+                                    "|runway_distance="+calcdistance_m(ship:geoposition,target["start"])+
+                                    "|energy_margin="+abort_state["aed_energy_margin"]).
                                 recovery_phase(abort_state,"TEAM").
                             }
                         } else {
@@ -1073,23 +1142,42 @@ until running = false{
                             set abort_state["aed_last_search"] to time:seconds.
                         }
                     }
-                    if abort_state["aed_powered"] {
+                    if abort_state["aed_powered"] and not abort_state["aed_committed"] {
                         local diversion_distance is cfg["capture_distance"].
                         local diversion_error is 0.
+                        local diversion_height is ship:altitude.
                         if abort_state["target"]["selected"] {
-                            set diversion_distance to calcdistance_m(ship:geoposition,
-                                abort_state["target"]["capture_interface"]["target_latlng"]).
-                            set diversion_error to normalized_heading_error(heading_to_target(
-                                abort_state["target"]["capture_interface"]["target_latlng"]),compass_for_prograde()).
+                            // Approach the actual airfield; chasing its far upstream
+                            // predictor point produced flight 333's shallow intercept.
+                            local diversion_target is abort_state["target"]["start"].
+                            set diversion_distance to calcdistance_m(ship:geoposition,diversion_target).
+                            local diversion_intake is recovery_aed_terminal_intake(diversion_distance,
+                                abort_state["target"]["altitude"],cfg).
+                            set diversion_height to diversion_intake["target_altitude"].
+                            set diversion_error to normalized_heading_error(heading_to_target(diversion_target),compass_for_prograde()).
                         }
                         local powered_command is recovery_aed_powered_command(ship:airspeed,ship:verticalspeed,
                             ship:altitude-max(0,ship:geoposition:terrainheight),diversion_distance,diversion_error,
-                            ship:body:mu/ship:body:radius^2,ship:q,cfg).
+                            ship:body:mu/ship:body:radius^2,ship:q,cfg,
+                            diversion_height-max(0,ship:geoposition:terrainheight)).
                         set desired_aoa to powered_command["aoa"].
                         set desired_bank to powered_command["bank"].
                         set throttle_aed to powered_command["throttle"].
                         set abort_state["aed_turn_distance"] to powered_command["turn_distance"].
                         set abort_state["aed_turn_ready"] to powered_command["turn_ready"].
+                        set abort_state["aed_desired_vs"] to powered_command["desired_vs"].
+                        set abort_state["aed_airbrake"] to powered_command["airbrake"].
+                        set abort_state["aed_bank_limit"] to powered_command["bank_limit"].
+                        set abort_state["aed_heading_error"] to diversion_error.
+                        set abort_state["aed_capture_height"] to diversion_height.
+                        local steep_bank_now is abs(desired_bank) > 90.
+                        if not abort_state:haskey("aed_steep_bank") or abort_state["aed_steep_bank"] <> steep_bank_now {
+                            set abort_state["aed_steep_bank"] to steep_bank_now.
+                            flight_log_event("aed_bank_authority","steep="+steep_bank_now+"|bank="+desired_bank+
+                                "|limit="+powered_command["bank_limit"]+"|clearance="+(ship:altitude-max(0,ship:geoposition:terrainheight))+
+                                "|speed="+ship:airspeed+"|vs="+ship:verticalspeed+"|q="+ship:q).
+                        }
+                        if powered_command["airbrake"] { brakes on. } else { brakes off. }
                         if abort_state["aed_intent"] <> powered_command["intent"] {
                             set abort_state["aed_intent"] to powered_command["intent"].
                             flight_log_event("aed_intent","intent="+abort_state["aed_intent"]+
@@ -1109,7 +1197,8 @@ until running = false{
                         max(-0.5*dt_aed,min(0.5*dt_aed,throttle_aed-abort_state["aed_throttle"])).
                     set dapthrottle to abort_state["aed_throttle"].
                     recovery_apply_limits().
-                    if not abort_state["aed_search"]["complete"] {
+                    if not abort_state["aed_search"]["complete"] and not abort_state["aed_committed"] and
+                       abort_state["phase"] <> "capture" {
                         local pending_search is abort_state["aed_search"].
                         if pending_search:haskey("index") and pending_search["index"] < pending_search["candidates"]:length and
                            pending_search["prediction"] = 0 and pending_search["family"] = "low" {

@@ -1044,7 +1044,10 @@ function flight_log_recovery_sample {
         "aed_intent","aed_energy","aed_energy_margin","aed_distance","aed_heading_error",
         "aed_assist_time","aed_assist_dv","aed_assist_lf","aed_assist_ox",
         "aed_capture_since","aed_committed","aed_powered","aed_candidate","aed_search_cycles",
-        "aed_turn_distance","aed_turn_ready","aed_deadline_logged" )).
+        "aed_turn_distance","aed_turn_ready","aed_deadline_logged","aed_desired_vs","aed_airbrake",
+        "aed_capture_valid","aed_capture_reason","aed_propulsion_mode","aed_power_retry_until",
+        "aed_air_retry_after","aed_bank_limit","aed_steep_bank","aed_runway_distance",
+        "aed_terminal_required","aed_capture_height" )).
     if state:haskey("aed_search") {
         set detail to detail+flight_log_recovery_fields(state["aed_search"],"aed_search_",list(
             "index","family","started","complete","reason" )).

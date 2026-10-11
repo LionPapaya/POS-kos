@@ -13,7 +13,13 @@ function recovery_aed_config {
         "assist_time",30,"assist_dv",180,"assist_throttle",0.6,
         "assist_fuel_fraction",0.08,"capture_energy_tolerance",1800,
         "maximum_duration",1200,"powered_speed_band",60,"turn_room_fraction",0.8,
-        "maximum_prediction_age",60).
+        "maximum_prediction_age",60,"diversion_bank_gain",4,
+        "diversion_minimum_q",0.03,"flight_path_gain",0.8,
+        "team_distance",20000,"team_height_tolerance",2500,"team_heading",45,
+        "team_energy_minimum",-500,"team_energy_maximum",5000,
+        "team_settle",0.5,"airbreathing_height",10000,"rocket_height",14000,
+        "maximum_diversion_bank",120,"upright_diversion_bank",70,"steep_bank_height",7000,
+        "steep_bank_speed",800,"steep_bank_height_margin",2500,"team_runway_distance",60000).
 }
 function recovery_aed_turn_distance {
     parameter speed_value, heading_error, gravity_value, config_AED.
@@ -52,32 +58,95 @@ function recovery_aed_powered_target {
     }
     return preferred.
 }
-// Delay a large turn until its arc fits the available approach room. Power
-// holds capture speed / protects low-altitude sink, never the old ascent speed.
+// Steer immediately while decelerating. The arc estimate is diagnostic: a
+// shrinking distance must not level the wings and force an overshoot.
 function recovery_aed_powered_command {
     parameter speed_value, sink_value, clearance, distance_value, course_error,
         gravity_value, dynamic_pressure, config_AED.
+    parameter capture_clearance is clearance.
     local arc_m is recovery_aed_turn_distance(speed_value,course_error,gravity_value,config_AED).
-    local can_turn is clearance >= config_AED["minimum_clearance"] and dynamic_pressure > 0.1 and
-        speed_value >= 120 and arc_m <= max(config_AED["capture_distance"],
-            distance_value*config_AED["turn_room_fraction"]).
+    local can_turn is clearance >= config_AED["minimum_clearance"] and
+        dynamic_pressure > config_AED["diversion_minimum_q"] and speed_value >= 120.
     local bank_value is 0.
-    local aoa_value is config_AED["low_drag_aoa"].
+    local bank_limit is config_AED["maximum_bank"].
+    if clearance >= config_AED["minimum_capture_height"] and speed_value >= 200 and
+       sink_value >= -config_AED["capture_sink"] {
+        set bank_limit to config_AED["upright_diversion_bank"].
+    }
+    if clearance >= config_AED["steep_bank_height"] and speed_value >= config_AED["steep_bank_speed"] and
+       clearance-capture_clearance >= config_AED["steep_bank_height_margin"] and
+       sink_value >= -config_AED["capture_sink"] and dynamic_pressure > 0.1 {
+        set bank_limit to config_AED["maximum_diversion_bank"].
+    }
     local intent_value is "powered_diversion".
     if can_turn {
-        set bank_value to max(-config_AED["maximum_bank"],min(config_AED["maximum_bank"],-0.6*course_error)).
+        set bank_value to max(-bank_limit,min(bank_limit,
+            -config_AED["diversion_bank_gain"]*course_error)).
     } else if abs(course_error) > config_AED["capture_heading"] {
-        set intent_value to "turn_deceleration".
-        if clearance > config_AED["minimum_capture_height"] and dynamic_pressure > 0.1 {
-            set aoa_value to config_AED["drag_aoa"].
-        }
+        set intent_value to "turn_authority_limited".
     }
+    local time_to_capture is max(30,distance_value/max(120,speed_value)).
+    local desired_vs is max(-config_AED["capture_sink"],min(10,
+        (capture_clearance-clearance)/time_to_capture)).
+    local actual_gamma is arcsin(max(-1,min(1,sink_value/max(1,speed_value)))).
+    local desired_gamma is arcsin(max(-1,min(1,desired_vs/max(1,speed_value)))).
+    local aoa_value is max(0,min(config_AED["drag_aoa"],config_AED["low_drag_aoa"]+
+        config_AED["flight_path_gain"]*(desired_gamma-actual_gamma)+
+        2*(1/cos(min(70,abs(bank_value)))-1))).
+    if abs(bank_value) > 90 {
+        // Inverted lift lowers the flight path. Do not divide by cos(bank)
+        // across 90 degrees or use the upright feedback sign here.
+        set aoa_value to max(4,min(12,config_AED["low_drag_aoa"]-
+            config_AED["flight_path_gain"]*(desired_gamma-actual_gamma))).
+    }
+    // Brakes shed excess energy without commanding a lofting 20-degree AoA.
+    local brake_value is dynamic_pressure > 0.1 and
+        speed_value > config_AED["maximum_capture_speed"] and clearance > config_AED["minimum_clearance"] and
+        (clearance > config_AED["minimum_capture_height"]+config_AED["minimum_clearance"] or
+         sink_value >= -config_AED["capture_sink"]).
     local throttle_value is max(0,min(1,(config_AED["capture_speed"]-speed_value)/config_AED["powered_speed_band"])).
     if clearance < config_AED["minimum_capture_height"]+config_AED["minimum_clearance"] and sink_value < -5 {
         set throttle_value to max(throttle_value,config_AED["assist_throttle"]).
     }
     return lex("aoa",aoa_value,"bank",bank_value,"throttle",throttle_value,
-        "intent",intent_value,"turn_distance",arc_m,"turn_ready",can_turn).
+        "intent",intent_value,"turn_distance",arc_m,"turn_ready",can_turn,
+        "desired_vs",desired_vs,"airbrake",brake_value,"bank_limit",bank_limit).
+}
+function recovery_aed_terminal_intake {
+    parameter runway_distance,runway_height,config_AED.
+    local energy_config is AVES["TerminalRoute"]["EnergyPlan"].
+    local final_distance is AVES["TerminalRoute"]["final_distance"].
+    local gravity_value is ship:body:mu/ship:body:radius^2.
+    local final_height is calculate_glideslope_alt(final_distance,runway_height)-runway_height.
+    // Include room for TEAM's circuit and the configured drag uncertainty.
+    local route_distance is runway_distance+2*final_distance.
+    local budget is terminal_energy_budget(route_distance,final_distance,final_height,
+        min(200,AVES["TerminalRoute"]["EnergyPlan"]["circuit_turn_speed"]),gravity_value,
+        max(0.05,energy_config["initial_clean_loss"]),0,energy_config).
+    local required_energy is budget["required"]+budget["reserve"].
+    local route_height is runway_height+max(config_AED["minimum_capture_height"],
+        min(config_AED["maximum_capture_height"],required_energy+1000-
+            config_AED["capture_speed"]^2/(2*gravity_value))).
+    return lex("required",required_energy,"target_altitude",route_height).
+}
+// TEAM can build its own intercept/pattern. A live intake check may approve
+// a provisional destination without requiring an unpowered forecast to pass.
+function recovery_aed_team_gate {
+    parameter range_error,height_error,speed_value,sink_rate,course_error,bank_angle,
+        clearance,energy_margin,config_AED.
+    parameter runway_range is 1e12.
+    local ready_now is (range_error <= config_AED["team_distance"] or
+        runway_range <= config_AED["team_runway_distance"]) and
+        clearance <= config_AED["maximum_capture_height"]+config_AED["team_height_tolerance"] and
+        speed_value <= config_AED["maximum_capture_speed"] and speed_value >= 120 and
+        sink_rate >= -config_AED["capture_sink"] and sink_rate <= 10 and
+        abs(course_error) <= config_AED["team_heading"] and
+        abs(bank_angle) <= config_AED["maximum_bank"] and
+        clearance >= config_AED["minimum_clearance"] and
+        energy_margin >= config_AED["team_energy_minimum"] and
+        energy_margin <= config_AED["team_energy_maximum"].
+    return lex("valid",ready_now,"reason","live_TEAM_intake","distance",range_error,
+        "height_error",height_error,"heading",course_error,"energy_margin",energy_margin).
 }
 function recovery_aed_energy {
     parameter current_height,current_speed,capture_height,capture_speed,gravity_value.
