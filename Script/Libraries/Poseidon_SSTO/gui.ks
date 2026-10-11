@@ -537,9 +537,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     // kOS popup menus can begin without a selected value. Select a valid
     // entry before the runway callback indexes the location table.
     if location_to_runways:keys:length > 0 {
-        if not wait_for_confirm and location_to_runways:haskey(force_loaction) {
-            set location_popup:value to force_loaction.
-        } else { set location_popup:index to 0. }
+        set location_popup:index to 0.
     }
     location_box:show().
 
