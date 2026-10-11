@@ -969,6 +969,9 @@ function flight_log_contingency_sample {
     if state:haskey("recovery_reason") {
         set detail to detail+"|recovery_reason="+state["recovery_reason"].
     }
+    if state:haskey("local_terrain_height") {
+        set detail to detail+"|local_terrain_height="+state["local_terrain_height"].
+    }
     if state:haskey("released_lf_reserve") {
         set detail to detail+"|released_lf_reserve="+state["released_lf_reserve"].
     }
@@ -977,6 +980,10 @@ function flight_log_contingency_sample {
         if state:haskey("emergency_desired_vs") {
             set detail to detail+"|emergency_desired_vs="+state["emergency_desired_vs"]+
                 "|emergency_bottom_clearance="+state["emergency_bottom_clearance"].
+        }
+        if state:haskey("emergency_predicted_vs") {
+            set detail to detail+"|emergency_predicted_vs="+state["emergency_predicted_vs"]+
+                "|emergency_vertical_acceleration="+state["emergency_vertical_acceleration"].
         }
         set detail to detail+"|emergency_replan_ut="+state["emergency_replan_ut"].
     }
@@ -1018,6 +1025,10 @@ function flight_log_contingency_sample {
             "|water_throttle="+state["water_throttle"]+"|water_brakes="+state["water_brakes"]+
             "|water_entry_height="+state["water_entry_height"]+
             "|water_expected_settle_speed="+state["water_expected_settle_speed"].
+    }
+    if state:haskey("water_predicted_vs") {
+        set detail to detail+"|water_predicted_vs="+state["water_predicted_vs"]+
+            "|water_vertical_acceleration="+state["water_vertical_acceleration"].
     }
     if state:haskey("dump_lf_floor") {
         set detail to detail+"|dump_lf_floor="+state["dump_lf_floor"]+
