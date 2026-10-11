@@ -648,7 +648,7 @@ if not (dap:haskey("update")) {
     }
     set dap["dt"] to time:seconds - dap["l_t"].
     set dap["l_t"] to time:seconds.
-    if defined recovery_apply_limits and defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
+    if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
         recovery_apply_limits().
     }
     envelope_refresh().

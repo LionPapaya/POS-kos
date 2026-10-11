@@ -213,7 +213,7 @@ function abort_engine_snapshot {
                     } else { set entry["fault_since"] to -1. }
                 } else { set entry["fault_since"] to -1. }
             }
-            if entry["failed"] and not was_failed and defined flight_log_event {
+            if entry["failed"] and not was_failed {
                 flight_log_event("recovery_engine_failure","id="+identity+"|kind="+kind+"|reason="+entry["failure_reason"]).
             }
             if entry["failed"] { snapshot[kind]["failed_ids"]:add(identity,true). }
@@ -490,7 +490,7 @@ function abort_refresh_state {
     set state["submode"] to state["scenario"]["rapiers_out"]+"RO".
     set state["failure_summary"] to state["submode"]+","+state["scenario"]["nervs_out"]+"NO".
     set state["last_failure_refresh"] to time:seconds.
-    if defined recovery_apply_limits { recovery_apply_limits(). }
+    recovery_apply_limits().
     if not (state:haskey("managed") and state["managed"]) and
        state["scenario"]["rapiers_out"] >= AVES["Abort"]["contingency_rapiers_out"] and
        state["mode"] <> "contingency_abort" {
@@ -991,7 +991,7 @@ function recovery_set_isolated {
     for identity in recovery_engines:keys {
         local entry is recovery_engines[identity].
         if entry["kind"] = kind and not entry["failed"] {
-            if entry["isolated"] <> isolated and defined flight_log_event {
+            if entry["isolated"] <> isolated {
                 flight_log_event("recovery_engine_isolation","id="+identity+"|kind="+kind+"|isolated="+isolated).
             }
             set entry["isolated"] to isolated.
@@ -1038,7 +1038,7 @@ function recovery_apply_limits {
                 if entry["kind"] = "rapier" and entry["part"]:mode = "ClosedCycle" and
                    ship:oxidizer <= abort_state["ox_reserve"] { set reserve_stop to true. }
                 if reserve_stop {
-                    if (entry["desired"] or entry["part"]:ignition) and defined flight_log_event {
+                    if (entry["desired"] or entry["part"]:ignition) {
                         flight_log_event("recovery_engine_reserve_stop","id="+identity+"|kind="+entry["kind"]+
                             "|lf="+ship:liquidfuel+"|ox="+ship:oxidizer).
                     }
@@ -1051,7 +1051,7 @@ function recovery_apply_limits {
                 local limit_pct is min(entry["original_limit"],entry["part"]:thrustlimit).
                 if nerv_failures > 0 { set limit_pct to min(limit_pct,20). }
                 if nerv_failures >= 2 or entry["failed"] { set limit_pct to 0. }
-                if limit_pct <> entry["limit"] and defined flight_log_event {
+                if limit_pct <> entry["limit"] {
                     flight_log_event("recovery_engine_limit","id="+identity+"|kind=nerv|limit="+limit_pct+"|nervs_out="+nerv_failures).
                 }
                 set entry["part"]:thrustlimit to limit_pct.
