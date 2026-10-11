@@ -5,10 +5,11 @@ function contingency_config {
         "capture_height",150,"bank",15,"maximum_range",60000,
         "maximum_descent_angle",30,"maximum_final_speed",175,
         "maximum_glide_altitude",15000,"maximum_glide_speed",550,
-        "handoff_clearance",250,"minimum_search_clearance",400,
+        "minimum_search_clearance",400,
         "corridor_length",1800,"corridor_half_width",100,
         "maximum_relief",8,"maximum_search_seconds",8,
-        "entry_timeout",1200,"automatic_touchdown",true,
+        "entry_timeout",1200,"emergency_search_seconds",1,"emergency_scan_range",6000,"emergency_replan_seconds",5,
+        "emergency_aoa_rate",3,"emergency_land_max_aoa",15,"emergency_low_speed_aoa",10,
         "ditch_clearance",3,"ditch_commit_height",15,"ditch_max_aoa",25,
         "ditch_height_gain",0.4,"ditch_aoa_gain",1.5,"ditch_aoa_rate",3,
         "activate_nervs_for_recovery",true,"lf_tonnes_per_unit",0.005,"lf_reserve_fraction",0.1,
@@ -95,6 +96,8 @@ function contingency_select {
     local search_started is time:seconds.
     // Runways always outrank water and land, but must pass the energy gate.
     for key_name in location_constants["kerbin"]:keys {
+        if time:seconds-search_started >= cfg["maximum_search_seconds"] or
+           ship:altitude-max(0,ship:geoposition:terrainheight) < cfg["minimum_search_clearance"] { return best. }
         if key_name:endswith("_start") and key_name:split("_runway_"):length > 1 {
             local parts is key_name:split("_runway_").
             local place is parts[0].
@@ -122,7 +125,8 @@ function contingency_select {
     for kind in list("ocean","land") {
         for fraction in list(0.25,0.5,0.75) {
             for offset_deg in list(0,-15,15,-30,30,-60,60) {
-                if time:seconds-search_started > cfg["maximum_search_seconds"] { return best. }
+                if time:seconds-search_started >= cfg["maximum_search_seconds"] or
+                   ship:altitude-max(0,ship:geoposition:terrainheight) < cfg["minimum_search_clearance"] { return best. }
                 local course is compass_for_prograde()+offset_deg.
                 local site is get_geoposition_along_heading(ship:geoposition,course,scan_range*fraction).
                 local corridor is contingency_corridor(site,course,kind,cfg).
@@ -139,6 +143,238 @@ function contingency_select {
         if best["selected"] { return best. }
     }
     return best.
+}
+
+// Record each escalation once; a failed plan changes strategy, never releases
+// the controls. Cached reasons also explain the subsequent medium/high samples.
+function contingency_degraded {
+    parameter state, reason.
+    if not state:haskey("degraded_reasons") { set state["degraded_reasons"] to lex(). }
+    set state["recovery_reason"] to reason.
+    if not state["degraded_reasons"]:haskey(reason) {
+        set state["degraded_reasons"][reason] to true.
+        flight_log_event("contingency_degraded","reason="+reason+"|phase="+state["phase"]+
+            "|clearance="+(ship:altitude-max(0,ship:geoposition:terrainheight))+
+            "|bottom_height="+ship:bounds:bottomalt+"|speed="+ship:airspeed+
+            "|vs="+ship:verticalspeed+"|bank="+roll_for()+"|lf="+ship:liquidfuel).
+    }
+}
+
+function contingency_release_reserve {
+    parameter state, cfg, reason.
+    if state["lf_reserve"] <= 0 { return. }
+    set state["released_lf_reserve"] to state["lf_reserve"].
+    set state["lf_reserve"] to 0.
+    flight_log_event("contingency_reserve_released","reason="+reason+
+        "|reserve="+state["released_lf_reserve"]+"|lf="+ship:liquidfuel).
+    if ship:status <> "LANDED" and ship:status <> "SPLASHED" and state["phase"] <> "ocean_ditch" {
+        nervson().
+    }
+    set state["nerv_power"] to contingency_nerv_power(state,cfg).
+    local g is ship:body:mu/(ship:body:radius+ship:altitude)^2.
+    set state["assist_height"] to contingency_assist_height(ship:airspeed,g,
+        state["nerv_power"]["acceleration"],state["nerv_power"]["dv"],cfg).
+}
+
+// Survival ranking rather than certification. Ridge/energy penalties outweigh
+// a preference for water; a distant ocean must not beat attainable nearby land.
+function contingency_emergency_score {
+    parameter distance_m, turn_deg, relief_m, ridge_m, energy_margin, water_fraction.
+    return max(0,ridge_m)*10000+max(0,-energy_margin)*1000+
+        relief_m*100+abs(turn_deg)*100+distance_m+(1-water_fraction)*2000+
+        min(water_fraction,1-water_fraction)*10000.
+}
+
+function contingency_emergency_candidate {
+    parameter site, course, cfg, assist_height.
+    local distance_m is calcdistance_m(ship:geoposition,site).
+    local turn_deg is normalized_heading_error(course,compass_for_prograde()).
+    local site_h is max(0,site:terrainheight).
+    local low_h is site_h.
+    local high_h is site_h.
+    local water_count is 0.
+    if site:terrainheight < -2 { set water_count to 1. }
+    local ridge_m is 0.
+    // A short landing strip and approach samples keep the emergency scan cheap.
+    local strip_m is min(cfg["corridor_length"],max(100,ship:airspeed*4)).
+    for fraction in list(0.25,0.5,0.75,1) {
+        local probe is get_geoposition_along_heading(ship:geoposition,course,distance_m*fraction).
+        local predicted_h is ship:altitude*(1-fraction)+site_h*fraction.
+        set ridge_m to max(ridge_m,max(0,probe:terrainheight)-predicted_h).
+        local strip_probe is get_geoposition_along_heading(site,course,strip_m*fraction).
+        set low_h to min(low_h,max(0,strip_probe:terrainheight)).
+        set high_h to max(high_h,max(0,strip_probe:terrainheight)).
+        if strip_probe:terrainheight < -2 { set water_count to water_count+1. }
+    }
+    local water_fraction is water_count/5.
+    local kind is "land".
+    if water_count = 5 { set kind to "ocean". }
+    local g is ship:body:mu/(ship:body:radius+ship:altitude)^2.
+    local energy is contingency_energy(ship:altitude-site_h,ship:airspeed,g,
+        distance_m,turn_deg,cfg,assist_height).
+    return lex("selected",true,"emergency",true,"kind",kind,"start",site,
+        "end",get_geoposition_along_heading(site,course,strip_m),"heading",course,
+        "altitude",site_h,"distance_m",distance_m,"margin",energy["margin"],
+        "relief",high_h-low_h,"ridge",ridge_m,"water_fraction",water_fraction,
+        "score",contingency_emergency_score(distance_m,turn_deg,high_h-low_h,
+            ridge_m,energy["margin"],water_fraction),"location","emergency","runway_num","").
+}
+
+function contingency_select_emergency {
+    parameter cfg, assist_height, quick is false.
+    local clearance is ship:altitude-max(0,ship:geoposition:terrainheight).
+    local course is compass_for_prograde().
+    // Below capture height there is no time or bank authority for a new search.
+    // Settle along the current track on the local surface, even without a pass.
+    if quick or clearance <= cfg["capture_height"] {
+        local kind is "land".
+        local water_fraction is 0.
+        if ship:geoposition:terrainheight < -2 { set kind to "ocean". set water_fraction to 1. }
+        return lex("selected",true,"emergency",true,"kind",kind,"start",ship:geoposition,
+            "end",ship:geoposition,"heading",course,"altitude",max(0,ship:geoposition:terrainheight),
+            "distance_m",0,"margin",0,"score",0,"relief",0,"ridge",0,
+            "water_fraction",water_fraction,"location","local_surface","runway_num","").
+    }
+    local scan_range is min(cfg["emergency_scan_range"],min(max(100,clearance*cfg["glide_ratio"]),
+        max(100,ship:airspeed*clearance/max(4,-ship:verticalspeed)))).
+    local search_start is time:seconds.
+    local search_limit is min(cfg["emergency_search_seconds"],clearance/max(1,-ship:verticalspeed)*0.1).
+    local best is contingency_emergency_candidate(
+        get_geoposition_along_heading(ship:geoposition,course,scan_range*0.5),course,cfg,assist_height).
+    dap:update().
+    wait 0.
+    for fraction in list(0.25,0.5,0.75) {
+        for offset_deg in list(0,-15,15) {
+            local live_clearance is ship:altitude-max(0,ship:geoposition:terrainheight).
+            if live_clearance <= cfg["capture_height"] { return contingency_select_emergency(cfg,assist_height,true). }
+            if time:seconds-search_start >= search_limit { return best. }
+            local candidate is contingency_emergency_candidate(
+                get_geoposition_along_heading(ship:geoposition,course+offset_deg,scan_range*fraction),
+                course+offset_deg,cfg,assist_height).
+            if candidate["score"] < best["score"] { set best to candidate. }
+            dap:update().
+            wait 0.
+        }
+    }
+    return best.
+}
+
+function contingency_begin_emergency {
+    parameter state, cfg, reason, quick is false.
+    contingency_degraded(state,reason).
+    contingency_release_reserve(state,cfg,reason).
+    // Establish a command before yielding to any terrain search.
+    set dap["dap_mode"] to "auto".
+    set dap["str_mode"] to "aoa".
+    set dap["aoa"]["target_bank"] to 0.
+    set dap["aoa"]["target_aoa"] to max(0,min(cfg["emergency_low_speed_aoa"],calc_aoa())).
+    set dapthrottle to contingency_recovery_throttle(ship:airspeed,0,state["nerv_power"]["usable"],"emergency_glide",cfg).
+    contingency_phase(state,"emergency_glide").
+    set state["target"] to contingency_select_emergency(cfg,state["assist_height"],quick).
+    set state["emergency_aoa"] to max(0,min(cfg["emergency_land_max_aoa"],calc_aoa())).
+    set state["emergency_last_ut"] to time:seconds.
+    set state["emergency_replan_ut"] to time:seconds+cfg["emergency_replan_seconds"].
+    local selected is state["target"].
+    flight_log_event("contingency_emergency_target","reason="+reason+"|kind="+selected["kind"]+
+        "|lat="+selected["start"]:lat+"|lng="+selected["start"]:lng+"|heading="+selected["heading"]+
+        "|range="+selected["distance_m"]+"|energy_margin="+selected["margin"]+
+        "|risk_score="+selected["score"]+"|relief="+selected["relief"]+
+        "|ridge="+selected["ridge"]+"|water_fraction="+selected["water_fraction"]).
+}
+
+// Bounded AoA changes reduce sink without the old low-speed nose-down command
+// close to impact. Power rescues low speed above the engine-cutoff clearance;
+// brakes are used only with a speed margin. Wings level owns the final.
+function contingency_emergency_command {
+    parameter clearance, speed_mps, vertical_mps, last_aoa, dt_seconds, power_usable, cfg.
+    local desired_vs is -max(0.7,min(4,clearance*0.1)).
+    local rate is max(-cfg["emergency_aoa_rate"],min(cfg["emergency_aoa_rate"],
+        (desired_vs-vertical_mps)*cfg["ditch_aoa_gain"])).
+    local aoa_limit is cfg["emergency_land_max_aoa"].
+    if speed_mps < cfg["landing_speed"] { set aoa_limit to cfg["emergency_low_speed_aoa"]. }
+    local dt is max(0,min(dt_seconds,0.2)).
+    local desired_aoa is max(0,min(aoa_limit,last_aoa+rate*dt)).
+    local aoa_cmd is max(last_aoa-cfg["emergency_aoa_rate"]*dt,
+        min(last_aoa+cfg["emergency_aoa_rate"]*dt,desired_aoa)).
+    local thrust_cmd is contingency_recovery_throttle(speed_mps,cfg["assist_energy_reserve"],
+        power_usable,"emergency_glide",cfg).
+    if clearance <= cfg["ditch_commit_height"] { set thrust_cmd to 0. }
+    return lex("aoa",aoa_cmd,"throttle",thrust_cmd,"brakes",speed_mps > cfg["landing_speed"]+30,
+        "desired_vs",desired_vs).
+}
+
+function contingency_water_hold {
+    parameter state, cfg.
+    if state["phase"] <> "ocean_ditch" {
+        set state["ditch_aoa"] to max(0,min(cfg["ditch_max_aoa"],calc_aoa())).
+        set state["ditch_last_ut"] to time:seconds.
+        contingency_phase(state,"ocean_ditch").
+    }
+    set state["ditch_aoa"] to contingency_ditch_command(ship:bounds:bottomalt,
+        ship:verticalspeed,state["ditch_aoa"],time:seconds-state["ditch_last_ut"],cfg).
+    set state["ditch_last_ut"] to time:seconds.
+    set dap["dap_mode"] to "auto".
+    set dap["str_mode"] to "aoa".
+    set dap["aoa"]["target_aoa"] to state["ditch_aoa"].
+    set dap["aoa"]["target_bank"] to 0.
+    gear off.
+    brakes on.
+    nervsoff().
+    set dapthrottle to 0.
+}
+
+function contingency_emergency_update {
+    parameter state, cfg.
+    local selected is state["target"].
+    local clearance is ship:altitude-max(0,ship:geoposition:terrainheight).
+    if ship:geoposition:terrainheight < -2 and ship:bounds:bottomalt <= cfg["ditch_commit_height"] {
+        if selected["kind"] <> "ocean" {
+            contingency_degraded(state,"emergency_touchdown_over_water").
+            set selected["kind"] to "ocean".
+        }
+        contingency_water_hold(state,cfg).
+        return.
+    }
+    local turn_error is normalized_heading_error(heading_to_target(selected["start"]),compass_for_prograde()).
+    local g is ship:body:mu/(ship:body:radius+ship:altitude)^2.
+    local range_m is calcdistance_m(ship:geoposition,selected["start"]).
+    local energy is contingency_energy(ship:altitude-selected["altitude"],ship:airspeed,g,
+        range_m,turn_error,cfg,state["assist_height"]).
+    set selected["margin"] to energy["margin"].
+    local unpowered is contingency_energy(ship:altitude-selected["altitude"],ship:airspeed,g,range_m,turn_error,cfg).
+    set selected["unpowered_margin"] to unpowered["margin"].
+    local bank_cmd is max(-cfg["bank"],min(cfg["bank"],-turn_error*0.5)).
+    if abs(turn_error) > 60 { set bank_cmd to 0. }
+    if state["phase"] = "emergency_glide" and clearance >= cfg["minimum_search_clearance"] and
+       time:seconds >= state["emergency_replan_ut"] and
+       (abs(turn_error) > 60 or energy["margin"] < -100) {
+        contingency_begin_emergency(state,cfg,"emergency_target_lost").
+        contingency_emergency_update(state,cfg).
+        return.
+    }
+    // Approach sampling stays active through emergency_glide. Once close to
+    // either local terrain or the target, choose minimum-sink touchdown ahead.
+    if state["phase"] = "emergency_final" or clearance <= cfg["capture_height"] or
+       ship:altitude-selected["altitude"] <= cfg["capture_height"] {
+        contingency_phase(state,"emergency_final").
+        set bank_cmd to 0.
+    }
+    local bottom_clearance is ship:bounds:bottomalt-max(0,ship:geoposition:terrainheight).
+    set state["emergency_bottom_clearance"] to bottom_clearance.
+    local command is contingency_emergency_command(bottom_clearance,ship:airspeed,
+        ship:verticalspeed,state["emergency_aoa"],time:seconds-state["emergency_last_ut"],
+        state["nerv_power"]["usable"],cfg).
+    set state["emergency_aoa"] to command["aoa"].
+    set state["emergency_desired_vs"] to command["desired_vs"].
+    set state["emergency_last_ut"] to time:seconds.
+    set dap["dap_mode"] to "auto".
+    set dap["str_mode"] to "aoa".
+    set dap["aoa"]["target_aoa"] to command["aoa"].
+    set dap["aoa"]["target_bank"] to bank_cmd.
+    set dapthrottle to command["throttle"].
+    if command["brakes"] { brakes on. } else { brakes off. }
+    if ship:geoposition:terrainheight < 0 { gear off. } else if clearance < 500 { gear on. }
+    set selected["distance_m"] to calcdistance_m(ship:geoposition,selected["start"]).
 }
 
 function contingency_phase {
@@ -159,7 +395,8 @@ function contingency_finish {
     set state["active"] to false.
     contingency_phase(state,"complete").
     flight_log_event("contingency_outcome","reason="+reason+"|success="+success+
-        "|pilot_control="+pilot+"|status="+ship:status+"|speed="+ship:airspeed+"|vs="+ship:verticalspeed).
+        "|pilot_control="+pilot+"|status="+ship:status+"|speed="+ship:airspeed+"|vs="+ship:verticalspeed+
+        "|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis).
     if ship:status = "LANDED" or ship:status = "SPLASHED" { nervsoff(). }
     set ship:control:pilotmainthrottle to 0.
     dap:set_off().
@@ -295,6 +532,13 @@ function contingency_orbit_update {
         ship:altitude,ship:velocity:orbit:mag,radial_mps,goal_height,
         power["vacuum_dv"],power["acceleration"],cfg).
     if not power["usable"] or not state["orbit_budget"]["possible"] {
+        contingency_release_reserve(state,cfg,"orbit_budget").
+        set power to state["nerv_power"].
+        set state["orbit_budget"] to contingency_orbit_budget(ship:body:mu,ship:body:radius,
+            ship:altitude,ship:velocity:orbit:mag,radial_mps,goal_height,
+            power["vacuum_dv"],power["acceleration"],cfg).
+    }
+    if not power["usable"] or not state["orbit_budget"]["possible"] {
         contingency_abandon_orbit(state,"fuel_or_thrust_budget").
         return false.
     }
@@ -394,11 +638,13 @@ function contingency_orbit_update {
 function contingency_select_entry {
     parameter state, cfg.
     local best is lex("selected",false,"score",999999999).
+    local search_started is time:seconds.
     local entry_cfg is lex().
     for config_key in cfg:keys { entry_cfg:add(config_key,cfg[config_key]). }
     set entry_cfg["maximum_range"] to cfg["entry_maximum_range"].
     set entry_cfg["capture_height"] to cfg["entry_capture_reserve"].
     for key_name in location_constants["kerbin"]:keys {
+        if time:seconds-search_started >= cfg["maximum_search_seconds"] { return best. }
         if key_name:endswith("_start") and key_name:split("_runway_"):length > 1 {
             local parts is key_name:split("_runway_").
             local place is parts[0].
@@ -439,6 +685,7 @@ function contingency_entry_update {
     if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
         set state["entry_target"]["selected"] to false.
         flight_log_event("contingency_entry_rejected","reason=entry_timeout").
+        contingency_degraded(state,"entry_timeout").
         return false.
     }
     local target_site is state["entry_target"].
@@ -469,6 +716,7 @@ function contingency_entry_update {
 
 function contingency_update {
     parameter state.
+    if not state["active"] { return. }
     local cfg is contingency_config().
     set warp to 0.
     abort_set_fuel_dump(false).
@@ -491,6 +739,22 @@ function contingency_update {
         set state["entry_target"] to lex("selected",false).
         flight_log_event("contingency_nerv_policy","orbit_first="+were_active+
             "|activate_for_recovery="+cfg["activate_nervs_for_recovery"]+"|lf_reserve="+state["lf_reserve"]).
+    }
+    // A bound atmosphere-clear orbit is already a successful recovery. Cut
+    // thrust and finish without deorbiting or depending on orbit eligibility.
+    if ship:body:name = "Kerbin" and ship:status <> "LANDED" and ship:status <> "SPLASHED" and
+       ship:altitude >= ship:body:atm:height and ship:periapsis >= ship:body:atm:height and
+       ship:orbit:eccentricity < 1 and
+       (not state["orbit_eligible"] or state["orbit_abandoned"] or
+        ship:periapsis >= ship:body:atm:height+cfg["orbit_clearance"]-cfg["orbit_pe_tolerance"]) {
+        local reason is "stable_orbit_preserved".
+        if state["orbit_attempted"] and not state["orbit_abandoned"] { set reason to "nerv_orbit_complete". }
+        contingency_finish(state,reason,true).
+        return.
+    }
+    if ship:body:name = "Kerbin" and ship:status <> "LANDED" and ship:status <> "SPLASHED" and
+       state["phase"] <> "ocean_ditch" and ship:liquidfuel <= state["lf_reserve"] {
+        contingency_release_reserve(state,cfg,"reserve_needed_for_recovery").
     }
     // Only healthy parts may be activated; failed engine IDs remain blocked.
     if ship:status <> "LANDED" and ship:status <> "SPLASHED" and state["phase"] <> "ocean_ditch" and
@@ -526,7 +790,7 @@ function contingency_update {
         set dap["aerostr"]["distance_pitch"] to 0.
         if ship:groundspeed < 1 { contingency_finish(state,"ground_stop",true). }
         else if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
-            contingency_finish(state,"ground_stop_timeout",false,true).
+            contingency_degraded(state,"ground_stop_timeout").
         }
         return.
     }
@@ -541,8 +805,18 @@ function contingency_update {
         contingency_phase(state,"energy_assessment").
     }
     if contingency_orbit_update(state,cfg) { return. }
-    if ship:periapsis >= ship:body:atm:height {
-        contingency_finish(state,"stable_orbit_requires_deorbit_plan",false,true).
+    if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
+        contingency_degraded(state,"recovery_timeout").
+        if state["phase"] = "glide" or state["phase"] = "site_search" {
+            contingency_begin_emergency(state,cfg,"recovery_timeout").
+        }
+    }
+    if state["phase"] = "ground_stop" {
+        // Retain terminal ownership through a wheel-contact bounce.
+        contingency_begin_emergency(state,cfg,"ground_contact_bounce",true).
+    }
+    if state["phase"] = "emergency_glide" or state["phase"] = "emergency_final" {
+        contingency_emergency_update(state,cfg).
         return.
     }
     if ship:altitude > cfg["maximum_glide_altitude"] or ship:airspeed > cfg["maximum_glide_speed"] {
@@ -552,15 +826,19 @@ function contingency_update {
         set dap["str_mode"] to "aoa".
         set dap["aoa"]["target_aoa"] to 30.
         set dap["aoa"]["target_bank"] to 0.
-        set dapthrottle to contingency_recovery_throttle(ship:airspeed,0,state["nerv_power"]["usable"],"entry_coast",cfg).
+        // Coast preserves fuel at adequate speed; an arbitrary range deficit
+        // must not command a continuous burn while waiting for the atmosphere.
+        set dapthrottle to contingency_recovery_throttle(ship:airspeed,cfg["assist_energy_reserve"],
+            state["nerv_power"]["usable"],"entry_coast",cfg).
         if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
-            contingency_finish(state,"entry_timeout",false,true).
+            contingency_degraded(state,"entry_timeout").
         }
         return.
     }
     if not state["target"]["selected"] {
-        if clearance <= cfg["handoff_clearance"] {
-            contingency_finish(state,"insufficient_height_to_search",false,true).
+        if clearance < cfg["minimum_search_clearance"] {
+            contingency_begin_emergency(state,cfg,"insufficient_height_to_search").
+            contingency_emergency_update(state,cfg).
             return.
         }
         // Establish a glide command before a scan that consumes live time.
@@ -574,7 +852,8 @@ function contingency_update {
         set dapthrottle to contingency_recovery_throttle(ship:airspeed,0,state["nerv_power"]["usable"],"site_search",cfg).
         set state["target"] to contingency_select(cfg,state["assist_height"]).
         if not state["target"]["selected"] {
-            contingency_finish(state,"no_reachable_verified_corridor",false,true).
+            contingency_begin_emergency(state,cfg,"no_reachable_verified_corridor").
+            contingency_emergency_update(state,cfg).
             return.
         }
         local target_site is state["target"].
@@ -591,38 +870,33 @@ function contingency_update {
         heading_between(selected["start"],ship:geoposition),selected["heading"],cfg).
     if state["phase"] <> "ocean_ditch" and height_m <= cfg["capture_height"] {
         if not captured {
-            contingency_finish(state,"landing_corridor_not_captured",false,true).
+            contingency_begin_emergency(state,cfg,"landing_corridor_not_captured",true).
+            contingency_emergency_update(state,cfg).
             return.
         }
-        if ship:airspeed > cfg["maximum_final_speed"] or abs(roll_for()) > cfg["bank"] {
-            contingency_finish(state,"final_energy_or_bank_unsafe",false,true).
+        if ship:airspeed > cfg["maximum_final_speed"] or abs(roll_for()) > cfg["bank"] or
+           ship:airspeed < AVES["Envelope"]["minimum_safe_speed"] {
+            contingency_begin_emergency(state,cfg,"final_energy_or_bank_unsafe",true).
+            contingency_emergency_update(state,cfg).
             return.
         }
+    }
+    if selected["kind"] <> "ocean" and ship:geoposition:terrainheight < -2 and
+       ship:bounds:bottomalt <= cfg["ditch_commit_height"] {
+        contingency_begin_emergency(state,cfg,"emergency_touchdown_over_water",true).
+        contingency_emergency_update(state,cfg).
+        return.
     }
     if selected["kind"] = "ocean" and
        (state["phase"] = "ocean_ditch" or ship:bounds:bottomalt <= cfg["ditch_commit_height"]) {
         if ship:geoposition:terrainheight >= -2 {
-            contingency_finish(state,"ditch_corridor_left_water",false,true).
+            contingency_begin_emergency(state,cfg,"ditch_corridor_left_water",true).
+            contingency_emergency_update(state,cfg).
             return.
         }
-        if state["phase"] <> "ocean_ditch" {
-            set state["ditch_aoa"] to max(0,min(cfg["ditch_max_aoa"],calc_aoa())).
-            set state["ditch_last_ut"] to time:seconds.
-            contingency_phase(state,"ocean_ditch").
-        }
-        set state["ditch_aoa"] to contingency_ditch_command(ship:bounds:bottomalt,
-            ship:verticalspeed,state["ditch_aoa"],time:seconds-state["ditch_last_ut"],cfg).
-        set state["ditch_last_ut"] to time:seconds.
-        set dap["dap_mode"] to "auto".
-        set dap["str_mode"] to "aoa".
-        set dap["aoa"]["target_aoa"] to state["ditch_aoa"].
-        set dap["aoa"]["target_bank"] to 0.
-        gear off.
-        brakes on.
-        nervsoff().
-        set dapthrottle to 0.
+        contingency_water_hold(state,cfg).
         if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
-            contingency_finish(state,"ditch_timeout",false,true).
+            contingency_degraded(state,"ditch_timeout").
         }
         return.
     }
@@ -635,12 +909,9 @@ function contingency_update {
     set selected["distance_m"] to distance_m.
     // Once committed close to the surface, stop chasing the touchdown point.
     if state["phase"] = "glide" and height_m > 150 and energy["margin"] < -100 {
+        contingency_degraded(state,"landing_target_energy_lost").
         set selected["selected"] to false.
         contingency_phase(state,"energy_assessment").
-        return.
-    }
-    if not cfg["automatic_touchdown"] and clearance <= cfg["handoff_clearance"] {
-        contingency_finish(state,"final_landing_pilot_handoff",false,true).
         return.
     }
     set dap["dap_mode"] to "auto".
@@ -656,7 +927,8 @@ function contingency_update {
         set dap["aerostr"]["turn_roll"] to 0.
         set dap["aerostr"]["turn_heading"] to selected["heading"].
         if state["phase"] = "final" and abs(normalized_heading_error(selected["heading"],compass_for_prograde())) > 30 {
-            contingency_finish(state,"final_alignment_unsafe",false,true).
+            contingency_begin_emergency(state,cfg,"final_alignment_unsafe",true).
+            contingency_emergency_update(state,cfg).
             return.
         }
         local landing_cfg is AVES["Landing"].
@@ -666,14 +938,15 @@ function contingency_update {
             (landing_cfg["touchdown_vertical_speed"]-landing_cfg["approach_vertical_speed"])*fraction.
         set pitch_cmd to max(-12,min(landing_cfg["maximum_turn_pitch"],
             (desired_vs-ship:verticalspeed)*landing_cfg["pitch_gain"])).
-        if ship:airspeed < AVES["Envelope"]["minimum_safe_speed"] { set pitch_cmd to min(pitch_cmd,-5). }
+        if ship:airspeed < AVES["Envelope"]["minimum_safe_speed"] {
+            contingency_begin_emergency(state,cfg,"final_low_speed",true).
+            contingency_emergency_update(state,cfg).
+            return.
+        }
     }
     set dapthrottle to contingency_recovery_throttle(ship:airspeed,unpowered["margin"],
         state["nerv_power"]["usable"],state["phase"],cfg).
     if ship:airspeed > cfg["landing_speed"]+30 and energy["margin"] > 250 { brakes on. }
     if selected["kind"] = "ocean" { gear off. } else if height_m < 500 { gear on. }
     set dap["aerostr"]["turn_pitch"] to pitch_cmd.
-    if time:seconds-state["started_ut"] > cfg["entry_timeout"] {
-        contingency_finish(state,"recovery_timeout",false,true).
-    }
 }

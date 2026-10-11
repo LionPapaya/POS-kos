@@ -84,7 +84,11 @@ When this abort is active, POS-kOS:
 3. Climbs and makes a controlled turn toward the reciprocal runway heading after reaching the minimum turn speed.
 4. Stabilizes on the reciprocal heading at the required altitude, then hands the vehicle to the normal re-entry and landing program for the departure runway. The recovery landing permits a go-around.
 
-The abort-mode dispatcher is kept separate from the main flight phases so additional abort modes can be added later without restructuring the mission flow. They are not documented here until implemented and tested.
+The abort-mode dispatcher is kept separate from the main flight phases so additional abort modes can be added later without restructuring the mission flow. Additional modes should be documented only after implementation and flight testing.
+
+#### Flight-test status
+
+The maintainer reports successful in-game testing of both `runway_abort` and `rtls`; these modes are considered working on the Poseidon craft. The supplied `flight_145` log set contains one useful abort decision trace (`flight_24/events.csv`): the launch-phase runway-stop check rejected the stop because 472 m remained against 617 m required, then selected `rtls`. This supports the runway-stop feasibility rejection and RTLS selection path, but it does not capture a completed runway stop or the subsequent RTLS return and landing. Treat the maintainer's successful testing as the evidence for those outcomes; the supplied logs do not independently demonstrate them.
 
 ## Mission flow
 
@@ -197,20 +201,55 @@ For compatibility, setting the old `POS_LOGGING_ENABLED` flag to `true` before l
 
 For a same-body orbital rendezvous, choose **Rendezvous** in Orbital Maneuvering and select the other vessel. The routine plans and executes a two-burn Lambert intercept, matches the target velocity, and retains that vessel as the KSP target. It reports success only inside the docking gate (within 1 km and below 5 m/s), at which point start Docking to select ports and perform the close-range approach. In Ascent, selecting a vessel in the **RENDEZVOUS** menu first waits for its predicted launch corridor, inserts into that vessel's orbit, then runs the same final rendezvous routine. The docking-control window provides Pause/Resume and Abort buttons.
 
+Reentry started below 72 km automatically chooses an initial runway from the Trajectories impact prediction, or from the current position if no impact prediction is available. If the entry solver fails, basic guidance continues updating while other runway candidates are tried. Coarse predictions rank actual TEAM targets without rejecting candidates; failed alternatives do not displace the best available approach unless their entry plan converges. If none converges, the craft continues toward that approach until the normal TEAM handoff gates allow terminal guidance. The TEAM lateral offset has a **100 km maximum**.
+
+Recovery telemetry records candidate searches and rejections, solver durations, retry times, and the age of the last basic guidance update. Live DAP steering and protection continue during lengthy calculations; trajectory predictors remain independent of the logger.
+
+## Takeoff performance estimate
+
+Ascent prints an advisory runway assessment before launch and records it again at brake release. It uses the selected departure direction and the craft's position along the runway, rejecting off-runway or misaligned positions. `required_runway_m` and `runway_margin_m` now refer only to liftoff with the 15% distance allowance. `required_departure_m` separately estimates distance to 35 m height; the aircraft may climb beyond the pavement end, so `screen_fits` is diagnostic and does not veto a takeoff.
+
+`departure_status` distinguishes `estimated_feasible`, `demonstrated_departure`, and `unknown`. A negative generic runway margin means the conservative estimate does not confirm pavement margin; it does not prove the takeoff impossible. For Nye-Island runway 15, flights 20/22 plus the maintainer's confirmation support `demonstrated_departure` at 68.72565–68.82 tonnes, with the normal profile and a start within 5 m of the threshold. That evidence permits `sufficient` even when the conservative distance model does not fit the mapped pavement. It adds no invented pavement or terrain clearance and does not extend the demonstrated mass limit to heavier loads or the reciprocal direction. Other runways, including Sandy-Island, Hazard-Shallows and Island, receive no such evidence override. Lighter loads may be estimated feasible while remaining unvalidated extrapolations.
+
+The pure Poseidon model and assessment are in `Script/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks`; generic runway projection is in `Script/Libraries/lib_navigation.ks`. Tune the craft-specific values under `AVES["Takeoff"]`:
+
+```kerboscript
+local estimate is takeoff_performance(ship:mass,2500,AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"]).
+```
+
+It returns rotation and liftoff distances, liftoff speed, initial climb distance, required distance, runway margin, and validity/result flags. The current profile rotates at **110 m/s** and commands 20 degrees. The model includes acceleration between rotation and actual liftoff, a minimum pitch-response time, and the measured slow initial climb. The live wrapper `assess_takeoff_runway(selected_runway)` calculates remaining runway from the current position.
+
+Calibration uses 26 confirmed liftoffs and 24 completed initial climbs in the supplied `flight_145` collection. Supported initial mass is 68.72565–70.04567 tonnes, with nominal Poseidon propulsion, the current rotation profile, and Kerbin launch altitudes of 70–325 m. Weight, density, and thrust scaling outside that envelope is explicitly heuristic: numeric estimates are returned, but `model_valid` and `sufficient` remain false. Changes to wing geometry, payload balance, engines, FAR settings, runway slope, or obstacles require new flight validation even inside the mass range. The 15% allowance is an engineering margin, not a statistical confidence interval.
+
+At 69.5 tonnes the conservative estimate is about 1,893 m to liftoff, 2,177 m with the runway margin, and 3,591 m to reach 35 m including the departure margin. This is deliberately above the recorded distances. The 12 supplied stopping runs also bound a separate reference stopping curve; their mass was not recorded, so it is diagnostic only and does not replace the existing V1/abort model. The assessment does not block takeoff or change the ascent commands.
+
+`events.csv` records takeoff predictions, brake release, rotation, confirmed liftoff, and reaching the screen height. Low logging records transitions; medium adds 1 Hz takeoff samples; high samples each physics tick. Predictions remain independent of logging.
+
+Rebuild the local evidence report with:
+
+```sh
+python3 -m tools.pos_sim.takeoff_calibration /path/to/flight_145 \
+  --output tools/pos_sim/results/takeoff_calibration.json
+```
+
+Generated reports stay local. KSP/FAR remains the final validation of takeoff and climb behavior.
+
 ## Known limitations
 
 - Tuning is specific to the Poseidon SSTO and may fail on other craft.
 - Interplanetary or very high-altitude re-entry is not yet reliable.
 - Vacuum landing begins from a stable orbit and needs LV-N thrust-to-weight greater than 1.10; terrain with a steep slope at the requested coordinates is not screened.
 - Runway and trajectory selection depends on the data in `lib_location_constants.ks`.
-- Abort handling is under active development; only `runway_abort` and `rtls` should currently be treated as documented functionality.
+- `runway_abort` and `rtls` have been successfully exercised in maintainer flight testing on Poseidon. The supplied `flight_145` logs capture a runway-stop rejection and RTLS selection, but do not provide complete flight traces for a successful runway stop, RTLS turnback, runway handoff, or go-around. Keep those broader failure-condition claims limited to separately recorded flight evidence.
 - The Ferram integration must be available for the aerodynamic calculations used by guidance.
 
 ## Development notes
 
-When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. This keeps the abort section easy to extend without documenting work-in-progress behavior.
+When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. For flight-guidance or control changes, review the flight logger in the same change and retain representative `flight.csv` and `events.csv` traces for each claimed behavior. This keeps the abort section easy to extend and its test claims traceable.
 
-`TRAJ 1 V/SIT` through `TRAJ 5 V/SIT` are successively zoomed views of one fixed energy-height/range corridor generated from successful `reentry_low` flight logs. Their energy bands are 260–290, 210–260, 170–210, 140–170, and 100–140 km. Their corresponding RNG windows are 600–1,100, 450–800, 150–600, 50–300, and 0–180 km, making the vehicle's position inside the corridor readable throughout entry. The generator uses the median remaining range at each energy height, encloses every accepted source flight, and keeps a minimum ±50 km corridor. Rebuild the KerboScript profile and all five backgrounds after selecting a new representative set:
+`TRAJ 1 V/SIT` through `TRAJ 5 V/SIT` are successively zoomed views of one fixed energy-height/range reference corridor generated from successful `reentry_low` flight logs. Their energy bands are 260–290, 210–260, 170–210, 140–170, and 100–140 km. Their corresponding RNG windows are 600–1,100, 450–800, 150–600, 50–300, and 0–180 km. The median remaining range at each energy height remains the centreline. A smoothstep width taper runs from about ±120 km at the far-range end to ±30 km near the target. These bands are visual references and do not define aerodynamic or reachability limits.
+
+During predictive entry, the V/SIT dotted path is interpolated from the existing lower-bank and upper-bank guidance predictions. The traces are matched at shared energy heights, and their remaining ranges are blended using the selected commanded-bank fraction. Sixteen reusable dots stay anchored to the prediction's source state until the next normal guidance update; basic, frozen, invalid, and reset states hide the path. This display adds no trajectory searches. Rebuild the KerboScript profile and all five backgrounds after selecting a new representative set:
 
 ```sh
 python3 support/build_entry_nominal.py \
@@ -219,12 +258,14 @@ python3 support/build_entry_nominal.py \
   /path/to/flight_256 /path/to/flight_260 /path/to/flight_265
 ```
 
-The active page follows energy height and clamps only beyond the complete 100–290 km display span. TEAM then uses the wide `L/SIT 1` and the close-in `L/SIT 2`. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
+The active page follows energy height and clamps only beyond the complete 100–290 km display span. TEAM then uses the wide `L/SIT 1` and the close-in `L/SIT 2`. Use `Script/Tests/POS_Reentry_GUI_Calibrate.ks` in KSP to display a 16-dot test path across each page and recheck the live shuttle, path placement, axes, and offsets. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
 
 ## Credits
 
 - The kOS community libraries and frameworks used for input, navball, and location constants.
 - Giulio Dondi for the Ferram add-on and aerodynamic-force helpers.
+
+Four-RAPIER-loss contingency recovery now attempts a monitored NERV orbit insertion when the NERVs were already active. If insertion is infeasible, it retains healthy NERVs for runway entry and recovery, then selects ocean corridors or sampled flat land when needed. On Kerbin, failed searches, unsafe finals, and timeouts continue into automatic emergency recovery, using reserve fuel when needed. Contingency finishes after stopped ground contact, splashdown, or preservation of a stable orbit. This behavior still requires in-game flight validation.
 
 ### Late-ascent aborts: AED, ATO and EDR
 

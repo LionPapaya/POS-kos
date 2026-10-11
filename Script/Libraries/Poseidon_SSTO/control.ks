@@ -346,7 +346,7 @@ function envelope_refresh {
        (defined abort_state and abort_state:haskey("active") and abort_state["active"] and
         abort_state["mode"] = "contingency_abort" and
         (abort_state["phase"] = "final" or abort_state["phase"] = "ground_stop" or
-         abort_state["phase"] = "ocean_ditch")) {
+         abort_state["phase"] = "ocean_ditch" or abort_state["phase"] = "emergency_final")) {
         // Recovery modes replace STEERING's normal dap_steering lock with a
         // direct AoA lock.  Reclaim that lock before clearing the recovery
         // state; otherwise an aerostr-to-aerostr landing handoff never calls
@@ -367,6 +367,12 @@ function envelope_refresh {
             // Ditching deliberately decelerates below the normal stall gate.
             // Preserve clearance/AoA control until actual water contact.
             set envelope["max_aoa"] to contingency_config()["ditch_max_aoa"].
+            set envelope["max_bank"] to 0.
+        } else if defined abort_state and abort_state["active"] and abort_state["mode"] = "contingency_abort" and
+                  abort_state["phase"] = "emergency_final" {
+            // This touchdown owns its bounded sink/AoA and speed-based power.
+            // A GPWS escape or low-speed dive must not replace it at impact.
+            set envelope["max_aoa"] to contingency_config()["emergency_land_max_aoa"].
             set envelope["max_bank"] to 0.
         }
         set envelope["min_throttle"] to 0.

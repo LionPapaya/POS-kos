@@ -951,10 +951,30 @@ function flight_log_contingency_sample {
         "|rapiers_out="+state["scenario"]["rapiers_out"]+
         "|nervs_out="+state["scenario"]["nervs_out"]+
         "|throttle="+ship:control:mainthrottle+
-        "|gpws="+dap["envelope"]["terrain_state"].
+        "|gpws="+dap["envelope"]["terrain_state"]+
+        "|bottom_height="+ship:bounds:bottomalt+"|bank="+roll_for().
+    if state:haskey("recovery_reason") {
+        set detail to detail+"|recovery_reason="+state["recovery_reason"].
+    }
+    if state:haskey("released_lf_reserve") {
+        set detail to detail+"|released_lf_reserve="+state["released_lf_reserve"].
+    }
+    if state:haskey("emergency_aoa") {
+        set detail to detail+"|emergency_aoa="+state["emergency_aoa"].
+        if state:haskey("emergency_desired_vs") {
+            set detail to detail+"|emergency_desired_vs="+state["emergency_desired_vs"]+
+                "|emergency_bottom_clearance="+state["emergency_bottom_clearance"].
+        }
+        set detail to detail+"|emergency_replan_ut="+state["emergency_replan_ut"].
+    }
     if state["target"]["selected"] {
         set detail to detail+"|kind="+state["target"]["kind"]+
             "|range="+state["target"]["distance_m"]+"|energy_margin="+state["target"]["margin"].
+        if state["target"]:haskey("emergency") {
+            set detail to detail+"|emergency="+state["target"]["emergency"]+
+                "|risk_score="+state["target"]["score"]+"|relief="+state["target"]["relief"]+
+                "|ridge="+state["target"]["ridge"]+"|water_fraction="+state["target"]["water_fraction"].
+        }
     }
     if state:haskey("nerv_power") {
         set detail to detail+"|nerv_available_thrust_kn="+state["nerv_power"]["thrust_kn"]+
