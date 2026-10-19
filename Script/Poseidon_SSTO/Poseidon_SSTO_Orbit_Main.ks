@@ -45,7 +45,6 @@ local ascent_orbit_complete is false.
 
 set confirm_in to false.
 local Target_orbit is create_assent_gui().
-if step = "end" { return. }
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
 set TargetInclination to Target_orbit["inclination"].
