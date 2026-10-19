@@ -54,6 +54,24 @@ function ascent_display_health {
     return "TRACKING - steering within 5 deg / progress observed".
 }
 
+function ascent_display_clock {
+    parameter display_seconds.
+    local whole_seconds is floor(max(0,display_seconds)).
+    local clock_minutes is floor(whole_seconds/60).
+    local clock_seconds is whole_seconds-clock_minutes*60.
+    local minute_text is ""+clock_minutes.
+    local second_text is ""+clock_seconds.
+    if clock_minutes < 10 { set minute_text to "0"+minute_text. }
+    if clock_seconds < 10 { set second_text to "0"+second_text. }
+    return minute_text+":"+second_text.
+}
+
+function ascent_display_fraction {
+    parameter current_apoapsis, cutoff_apoapsis.
+    if cutoff_apoapsis <= 0 { return 0. }
+    return max(0,min(1,current_apoapsis/cutoff_apoapsis)).
+}
+
 function ascent_display_init {
     global ascent_display_state is lex("next_update",0,"origin",ship:geoposition,
         "trend_ut",-1,"trend_phase","","speed",0,"apo",0,"peri",0,
@@ -95,7 +113,8 @@ function ascent_display_collect {
         "pitch_command",0,"heading_command",0,"attitude_error",0,"command_kind","none",
         "throttle",dapthrottle,"rapier_mode",rapier_mode,"rapiers",rapiers,"nervs",nervs,
         "downrange",calcdistance_m(ascent_display_state["origin"],ship:geoposition),
-        "elapsed",0,"burn_seconds",-1,"alignment",-1).
+        "elapsed",0,"burn_seconds",-1,"alignment",-1,"remaining_dv",-1,
+        "insertion_valid",false,"burn_window_seconds",-1,"insertion_altitude_ready",false).
     // kOS can throw while pushing an infinite apsis suffix onto its stack.
     // Avoid reading those suffixes at all on an escape trajectory.
     if sample["orbit_valid"] {
@@ -136,9 +155,18 @@ function ascent_display_collect {
             }
         }
     }
-    if defined abort_state and nominal_insert {
+    if defined abort_state and page_name = "CIRC" and not finished {
         if abort_state:haskey("burn_seconds") { set sample["burn_seconds"] to abort_state["burn_seconds"]. }
         if abort_state:haskey("alignment") { set sample["alignment"] to abort_state["alignment"]. }
+        if abort_state:haskey("display_insertion_ut") and sample["orbit_valid"] {
+            local insertion_age is time:seconds-abort_state["display_insertion_ut"].
+            if insertion_age >= 0 and insertion_age <= 3 {
+                set sample["insertion_valid"] to true.
+                set sample["remaining_dv"] to abort_state["display_remaining_dv"].
+                set sample["burn_window_seconds"] to max(0,abort_state["display_window_ut"]-time:seconds).
+                set sample["insertion_altitude_ready"] to abort_state["display_altitude_ready"].
+            }
+        }
     }
     // Measure progress over elapsed seconds, never per control-loop iteration.
     local trend_dt is time:seconds-ascent_display_state["trend_ut"].
@@ -170,33 +198,60 @@ function ascent_display_collect {
 // values aligned without relying on tabs or a platform-specific font.
 function ascent_display_row {
     parameter parent_box, row_name.
-    local row_box is parent_box:addhlayout().
+    local row_group is parent_box:addvlayout().
+    local row_box is row_group:addhlayout().
     local caption is row_box:addlabel(row_name).
     set caption:style:width to 220.
     local now_label is row_box:addlabel("--").
     set now_label:style:width to 205. set now_label:style:align to "right".
     local goal_label is row_box:addlabel("--").
     set goal_label:style:width to 205. set goal_label:style:align to "right".
-    return lex("box",row_box,"now",now_label,"goal",goal_label).
+    ascent_display_label_style(caption,12,"left",true).
+    ascent_display_label_style(now_label,14,"right").
+    ascent_display_label_style(goal_label,14,"right").
+    local row_rule is row_group:addvlayout().
+    set row_rule:style:width to 630. set row_rule:style:height to 1.
+    set row_rule:style:bg to "Libraries/gui_images/ascent_track.png".
+    set row_rule:style:margin:v to 0. set row_rule:style:padding:v to 0.
+    return lex("box",row_group,"caption",caption,"now",now_label,"goal",goal_label).
+}
+
+function ascent_display_label_style {
+    parameter label_widget, text_size is 14, text_align is "left", muted_text is false.
+    set label_widget:style:fontsize to text_size.
+    set label_widget:style:align to text_align.
+    set label_widget:style:textcolor to RGBA(0.9,0.93,0.95,1).
+    if muted_text { set label_widget:style:textcolor to RGBA(0.69,0.74,0.78,1). }
 }
 
 function create_assent_gui {
     global assent_gui is gui(680).
     set assent_gui:style:width to 680.
+    set assent_gui:style:bg to "Libraries/gui_images/ascent_window.png".
+    set assent_gui:style:padding:h to 16. set assent_gui:style:padding:v to 16.
     local title_row is assent_gui:addhlayout().
     local title_label is title_row:addlabel("<b>POSEIDON ASCENT</b>").
-    set title_label:style:width to 550.
+    set title_label:style:width to 400.
+    ascent_display_label_style(title_label,16).
+    global ascent_display_heading is title_row:addlabel("SETUP").
+    set ascent_display_heading:style:width to 180.
+    ascent_display_label_style(ascent_display_heading,12,"right",true).
     global assent_minb is title_row:addbutton("-").
+    set assent_minb:style:width to 24. set assent_minb:style:height to 24.
     set assent_minb:toggle to true.
     global assent_quitb is title_row:addbutton("X").
+    set assent_quitb:style:width to 24. set assent_quitb:style:height to 24.
     global ascent_display_body is assent_gui:addvlayout().
     set assent_minb:onclick to {
         set ascent_display_body:visible to not assent_minb:pressed.
     }.
     set assent_quitb:onclick to { set step to "end". assent_gui:hide(). }.
     local mode_row is ascent_display_body:addhlayout().
-    mode_row:addlabel("DAP").
+    local mode_caption is mode_row:addlabel("DAP").
+    set mode_caption:style:width to 30.
+    ascent_display_label_style(mode_caption,12,"left",true).
     global assent_dap_mode_menu is mode_row:addpopupmenu().
+    set assent_dap_mode_menu:style:width to 80.
     for mode_name in list("AUTO","CSS","OFF") { assent_dap_mode_menu:addoption(mode_name). }
     set assent_dap_mode_menu:index to 0.
     set assent_dap_mode_menu:onchange to {
@@ -204,6 +259,11 @@ function create_assent_gui {
         set dap["dap_mode"] to selected_mode.
     }.
     global ascent_display_target is mode_row:addlabel("Target orbit: setup").
+    set ascent_display_target:style:width to 400.
+    ascent_display_label_style(ascent_display_target,12,"left",true).
+    global ascent_display_elapsed is mode_row:addlabel().
+    set ascent_display_elapsed:style:width to 120.
+    ascent_display_label_style(ascent_display_elapsed,12,"right",true).
     global ascent_display_setup is ascent_display_body:addvbox().
     local target_row is ascent_display_setup:addhlayout().
     target_row:addlabel("Ap (m)").
@@ -240,8 +300,46 @@ function create_assent_gui {
     }.
     global ascent_display_flight is ascent_display_body:addvlayout().
     ascent_display_flight:hide().
-    global ascent_display_heading is ascent_display_flight:addlabel().
     global ascent_display_status is ascent_display_flight:addlabel().
+    ascent_display_label_style(ascent_display_status,13).
+    set ascent_display_status:style:bg to "Libraries/gui_images/ascent_panel.png".
+    set ascent_display_status:style:padding:h to 12. set ascent_display_status:style:padding:v to 8.
+    local phase_row is ascent_display_flight:addhlayout().
+    global ascent_display_phase is phase_row:addlabel().
+    set ascent_display_phase:style:width to 320.
+    ascent_display_label_style(ascent_display_phase,14).
+    global ascent_display_engines is phase_row:addlabel().
+    set ascent_display_engines:style:width to 310.
+    ascent_display_label_style(ascent_display_engines,12,"right",true).
+    global ascent_display_hero is ascent_display_flight:addvlayout().
+    set ascent_display_hero:style:width to 640.
+    set ascent_display_hero:style:bg to "Libraries/gui_images/ascent_panel.png".
+    set ascent_display_hero:style:padding:h to 16. set ascent_display_hero:style:padding:v to 16.
+    global ascent_display_hero_title is ascent_display_hero:addlabel().
+    global ascent_display_hero_value is ascent_display_hero:addlabel().
+    global ascent_display_hero_detail is ascent_display_hero:addlabel().
+    ascent_display_label_style(ascent_display_hero_title,12,"center",true).
+    ascent_display_label_style(ascent_display_hero_value,32,"center").
+    ascent_display_label_style(ascent_display_hero_detail,14,"center").
+    for hero_label in list(ascent_display_hero_title,ascent_display_hero_value,ascent_display_hero_detail) {
+        set hero_label:style:width to 608.
+    }
+    set ascent_display_hero_value:style:height to 48.
+    global ascent_display_bar is ascent_display_hero:addvlayout().
+    set ascent_display_bar:style:width to 600. set ascent_display_bar:style:height to 8.
+    set ascent_display_bar:style:bg to "Libraries/gui_images/ascent_track.png".
+    set ascent_display_bar:style:padding:h to 0. set ascent_display_bar:style:padding:v to 0.
+    set ascent_display_bar:style:hstretch to false. set ascent_display_bar:style:vstretch to false.
+    global ascent_display_bar_fill is ascent_display_bar:addvlayout().
+    set ascent_display_bar_fill:style:height to 8.
+    set ascent_display_bar_fill:style:hstretch to false.
+    set ascent_display_bar_fill:style:vstretch to false.
+    set ascent_display_bar_fill:style:padding:h to 0. set ascent_display_bar_fill:style:padding:v to 0.
+    set ascent_display_bar_fill:style:bg to "Libraries/gui_images/ascent_fill.png".
+    set ascent_display_bar_fill:style:margin:h to 0. set ascent_display_bar_fill:style:margin:v to 0.
+    global ascent_display_hero_note is ascent_display_hero:addlabel().
+    set ascent_display_hero_note:style:width to 608.
+    ascent_display_label_style(ascent_display_hero_note,12,"center",true).
     global ascent_display_chart is ascent_display_flight:addvlayout().
     set ascent_display_chart:style:width to 640. set ascent_display_chart:style:height to 230.
     set ascent_display_chart:style:bg to "Libraries/gui_images/ascent_climb.png".
@@ -257,12 +355,18 @@ function create_assent_gui {
         set chart_marker:style:margin:h to 0. set chart_marker:style:margin:v to 0.
     }
     global ascent_display_summary is ascent_display_flight:addlabel().
+    ascent_display_label_style(ascent_display_summary,12,"left",true).
+    global ascent_display_columns is ascent_display_row(ascent_display_flight,"FLIGHT").
+    ascent_display_label_style(ascent_display_columns["now"],12,"right",true).
+    ascent_display_label_style(ascent_display_columns["goal"],12,"right",true).
     global ascent_display_rows is lex().
     for field_name in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading","Apoapsis","Periapsis","Inclination") {
         set ascent_display_rows[field_name] to ascent_display_row(ascent_display_flight,field_name).
     }
     global ascent_display_next is ascent_display_flight:addlabel().
     global ascent_display_footer is ascent_display_flight:addlabel().
+    ascent_display_label_style(ascent_display_next,13).
+    ascent_display_label_style(ascent_display_footer,11,"left",true).
     if not (defined confirm_in) { global confirm_in is false. }
     assent_gui:show().
     until confirm_in or step = "end" { wait 0.001. }
@@ -295,6 +399,71 @@ function ascent_display_value {
     set ascent_display_rows[field_name]["goal"]:text to target_value.
 }
 
+function ascent_display_update_hero {
+    parameter sample.
+    local is_circ is sample["page"] = "CIRC".
+    set ascent_display_bar:visible to not is_circ.
+    set ascent_display_hero_detail:style:textcolor to RGBA(0.78,0.66,0.93,1).
+    if not is_circ {
+        local active_cutoff is sample["cutoff_ap"].
+        local cutoff_title is "APOAPSIS / ASCENT CUTOFF".
+        local cutoff_note is "Orbit target "+round(sample["target_ap"]/1000,1)+" km + ascent margin "+
+            round((sample["cutoff_ap"]-sample["target_ap"])/1000,1)+" km".
+        if sample["phase"] = "closed_cycle_climb" {
+            set active_cutoff to AVES["Ascent"]["rapier_cutoff_apoapsis"].
+            set cutoff_title to "APOAPSIS / RAPIER CUTOFF".
+            set cutoff_note to "RAPIER cutoff, then NERV apoapsis build toward "+round(sample["cutoff_ap"]/1000,1)+" km".
+        }
+        set ascent_display_hero_title:text to cutoff_title.
+        set ascent_display_hero_value:text to round(sample["apoapsis"]/1000,1)+" / "+round(active_cutoff/1000,1)+" km".
+        set ascent_display_hero_detail:text to round(max(0,active_cutoff-sample["apoapsis"])/1000,1)+" km TO CUTOFF".
+        set ascent_display_hero_note:text to cutoff_note.
+        local progress_fraction is ascent_display_fraction(sample["apoapsis"],active_cutoff).
+        set ascent_display_bar_fill:visible to progress_fraction > 0.
+        set ascent_display_bar_fill:style:width to max(1,round(600*progress_fraction)).
+        if sample["recovery"] {
+            set ascent_display_hero_title:text to "RECOVERY GUIDANCE".
+            set ascent_display_hero_value:text to "RECOVERY ACTIVE".
+            set ascent_display_hero_detail:text to sample["phase"].
+            set ascent_display_hero_note:text to "Follow the recovery status; nominal cutoff target is suspended.".
+            ascent_display_bar:hide().
+        }
+    } else {
+        set ascent_display_hero_title:text to "TIME TO BURN WINDOW (EST.)".
+        set ascent_display_hero_value:text to "--:--".
+        set ascent_display_hero_detail:style:textcolor to RGBA(0.9,0.93,0.95,1).
+        set ascent_display_hero_detail:text to "Remaining dV -- | alignment --".
+        set ascent_display_hero_note:text to "Waiting for live insertion estimate".
+        if sample["insertion_valid"] {
+            set ascent_display_hero_value:text to ascent_display_clock(sample["burn_window_seconds"]).
+            set ascent_display_hero_detail:text to "Remaining dV "+round(sample["remaining_dv"])+
+                " m/s | alignment error "+round(sample["alignment"],1)+" deg".
+            set ascent_display_hero_note:text to "Burn estimate "+round(sample["burn_seconds"],1)+
+                " s | ETA apoapsis "+round(sample["eta_apoapsis"],1)+" s".
+            if sample["burn_window_seconds"] <= 0 and not sample["insertion_altitude_ready"] {
+                set ascent_display_hero_value:text to "ALTITUDE HOLD".
+                set ascent_display_hero_note:text to "Time window reached; waiting for safe insertion altitude".
+            }
+            if sample["phase"] = "insert" {
+                set ascent_display_hero_title:text to "INSERTION BURN".
+                set ascent_display_hero_value:text to "ALIGN / HOLD".
+                if sample["throttle"] > 0 { set ascent_display_hero_value:text to "BURN COMMANDED". }
+            }
+        }
+        if sample["finished"] {
+            set ascent_display_hero_title:text to "INSERTION RESULT".
+            set ascent_display_hero_value:text to "FINISHED".
+            set ascent_display_hero_detail:text to sample["outcome"].
+            set ascent_display_hero_note:text to "Compare the final orbit with the requested target below".
+        }
+    }
+    if not sample["orbit_valid"] {
+        set ascent_display_hero_value:text to "OPEN TRAJECTORY".
+        set ascent_display_hero_detail:text to "Apsis / timing data unavailable".
+        ascent_display_bar:hide().
+    }
+}
+
 function update_assent_gui {
     parameter inputs is "auto".
     if inputs = "auto" {
@@ -303,8 +472,26 @@ function update_assent_gui {
         set inputs to ascent_display_collect().
     }
     global ascent_display_data is inputs.
-    set ascent_display_heading:text to "<b>"+inputs["page"]+" | "+inputs["phase"]+"</b>".
+    set ascent_display_heading:text to "<b>"+inputs["page"]+"</b>".
+    set ascent_display_elapsed:text to "T+ "+ascent_display_clock(inputs["elapsed"]).
     set ascent_display_status:text to inputs["health"].
+    set ascent_display_status:style:textcolor to RGBA(0.9,0.93,0.95,1).
+    if inputs["health"] = "TRACKING - steering within 5 deg / progress observed" or
+       inputs["health"] = "COAST / ALIGN - waiting for insertion window" {
+        set ascent_display_status:style:textcolor to RGBA(0.63,0.84,0.68,1).
+    }
+    local phase_names is lex("launch","TAKEOFF","rotate","ROTATE","ascent_alignment","ALIGN ASCENT HEADING",
+        "speed_build","SPEED BUILD","high_altitude_climb","HIGH-ALTITUDE CLIMB","nerv_assist","NERV ASSIST",
+        "closed_cycle_climb","CLOSED-CYCLE CLIMB","apoapsis_build","NERV APOAPSIS BUILD",
+        "coast_align","COAST / ALIGN","insert","INSERTION BURN","complete","INSERTION COMPLETE").
+    local phase_text is inputs["phase"].
+    if phase_names:haskey(inputs["phase"]) { set phase_text to phase_names[inputs["phase"]]. }
+    set ascent_display_phase:text to "<b>"+phase_text+"</b>".
+    local rapier_text is "OFF".
+    local nerv_text is "OFF".
+    if inputs["rapiers"] { set rapier_text to inputs["rapier_mode"]. }
+    if inputs["nervs"] { set nerv_text to "ON". }
+    set ascent_display_engines:text to "RAPIER: "+rapier_text+" / NERV: "+nerv_text.
     set ascent_display_target:text to "Target: "+round(inputs["target_ap"]/1000,1)+" x "+
         round(inputs["target_pe"]/1000,1)+" km / "+round(inputs["target_inc"],1)+" deg".
     local menu_mode is "OFF".
@@ -316,8 +503,21 @@ function update_assent_gui {
     local air_page is inputs["page"] = "ASCENT 1 / 2".
     local circ_page is inputs["page"] = "CIRC".
     set ascent_display_chart:visible to air_page.
+    set ascent_display_hero:visible to not air_page.
+    set ascent_display_summary:visible to air_page.
     for orbit_field in list("Apoapsis","Periapsis","Inclination") {
-        set ascent_display_rows[orbit_field]["box"]:visible to not air_page.
+        set ascent_display_rows[orbit_field]["box"]:visible to circ_page.
+    }
+    for flight_field in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading") {
+        set ascent_display_rows[flight_field]["box"]:visible to not circ_page.
+    }
+    set ascent_display_columns["now"]:text to "NOW".
+    set ascent_display_columns["caption"]:text to "FLIGHT".
+    set ascent_display_columns["goal"]:text to "COMMAND".
+    if air_page { set ascent_display_columns["goal"]:text to "PLAN / COMMAND". }
+    if circ_page {
+        set ascent_display_columns["caption"]:text to "ORBIT".
+        set ascent_display_columns["goal"]:text to "TARGET".
     }
     local vehicle_point is ascent_display_point(inputs["altitude"],inputs["airspeed"]).
     local goal_point is ascent_display_point(inputs["climb_alt"],inputs["climb_speed"]).
@@ -326,18 +526,22 @@ function update_assent_gui {
     set goal_point["visible"] to goal_point["visible"] and inputs["phase"] = "high_altitude_climb".
     ascent_display_place(ascent_display_goal,goal_point,ascent_display_vehicle,vehicle_point["y"]).
     ascent_display_value("Altitude / ASL",round(inputs["altitude"]/1000,1)+" km").
-    ascent_display_value("Speed",round(inputs["surface_speed"])+" m/s surface").
-    if air_page { ascent_display_value("Speed",round(inputs["airspeed"])+" m/s air"). }
-    ascent_display_value("Vertical speed",round(inputs["vertical_speed"],1)+" m/s").
-    ascent_display_value("Pitch",round(inputs["pitch"],1)+" deg","CMD: --").
-    ascent_display_value("Heading",round(inputs["heading"],1)+" deg","CMD: --").
-    if inputs["command_kind"] = "angles" {
-        ascent_display_value("Pitch",round(inputs["pitch"],1)+" deg","CMD: "+round(inputs["pitch_command"],1)+" deg").
-        ascent_display_value("Heading",round(inputs["heading"],1)+" deg","CMD: "+round(inputs["heading_command"],1)+" deg").
+    set ascent_display_rows["Speed"]["caption"]:text to "Surface speed".
+    ascent_display_value("Speed",round(inputs["surface_speed"])+" m/s").
+    if air_page {
+        set ascent_display_rows["Speed"]["caption"]:text to "Airspeed".
+        ascent_display_value("Speed",round(inputs["airspeed"])+" m/s").
     }
-    ascent_display_value("Apoapsis",round(inputs["apoapsis"]/1000,1)+" km","GOAL: "+round(inputs["target_ap"]/1000,1)+" km").
-    ascent_display_value("Periapsis",round(inputs["periapsis"]/1000,1)+" km","GOAL: "+round(inputs["target_pe"]/1000,1)+" km").
-    ascent_display_value("Inclination",round(inputs["inclination"],1)+" deg","GOAL: "+round(inputs["target_inc"],1)+" deg").
+    ascent_display_value("Vertical speed",round(inputs["vertical_speed"],1)+" m/s").
+    ascent_display_value("Pitch",round(inputs["pitch"],1)+" deg").
+    ascent_display_value("Heading",round(inputs["heading"],1)+" deg").
+    if inputs["command_kind"] = "angles" {
+        ascent_display_value("Pitch",round(inputs["pitch"],1)+" deg",round(inputs["pitch_command"],1)+" deg").
+        ascent_display_value("Heading",round(inputs["heading"],1)+" deg",round(inputs["heading_command"],1)+" deg").
+    }
+    ascent_display_value("Apoapsis",round(inputs["apoapsis"]/1000,1)+" km",round(inputs["target_ap"]/1000,1)+" km").
+    ascent_display_value("Periapsis",round(inputs["periapsis"]/1000,1)+" km",round(inputs["target_pe"]/1000,1)+" km").
+    ascent_display_value("Inclination",round(inputs["inclination"],1)+" deg",round(inputs["target_inc"],1)+" deg").
     local next_text is "Next: follow active recovery guidance".
     local summary_text is "Apoapsis cutoff: "+round(inputs["cutoff_ap"]/1000,1)+" km | remaining "+
         round(max(0,inputs["cutoff_ap"]-inputs["apoapsis"])/1000,1)+" km".
@@ -377,6 +581,7 @@ function update_assent_gui {
     }
     if inputs["recovery"] { set next_text to "Recovery: "+inputs["phase"]+" | "+Lastest_status. }
     if inputs["finished"] { set next_text to "Outcome: "+inputs["outcome"]+" | inspect final orbit errors above". }
+    ascent_display_update_hero(inputs).
     set ascent_display_summary:text to summary_text.
     set ascent_display_next:text to next_text.
     local error_text is "--".

@@ -913,6 +913,9 @@ function flight_log_ascent_display_observe {
         "|target_inc_deg="+snapshot["target_inc"]+"|climb_alt_m="+snapshot["climb_alt"]+
         "|climb_speed_mps="+snapshot["climb_speed"]+"|cutoff_ap_m="+snapshot["cutoff_ap"]+
         "|eta_apoapsis_s="+snapshot["eta_apoapsis"]+"|burn_seconds="+snapshot["burn_seconds"]+
+        "|insertion_valid="+snapshot["insertion_valid"]+"|remaining_dv_mps="+snapshot["remaining_dv"]+
+        "|burn_window_seconds="+snapshot["burn_window_seconds"]+
+        "|insertion_altitude_ready="+snapshot["insertion_altitude_ready"]+
         "|alignment_deg="+snapshot["alignment"]+"|outcome="+snapshot["outcome"].
     if changed {
         flight_log_event("ascent_display_state",detail).

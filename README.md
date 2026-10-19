@@ -157,8 +157,14 @@ During flight, the GUI shows the active phase, guidance mode, vehicle data, and 
 The ascent manager automatically uses two guidance pages: **Ascent 1** covers
 takeoff through NERV assist with a fixed altitude/airspeed chart, and **Ascent 2**
 covers closed-cycle climb and apoapsis build with the cutoff target and orbit
-readouts. Circularization has a separate page showing actual/requested orbit,
-time to apoapsis, and the insertion controller's burn estimate. The climb chart's
+readouts. Its large apoapsis/cutoff panel includes remaining altitude and a
+progress bar; closed-cycle climb shows the RAPIER cutoff before switching to
+the NERV ascent cutoff. Circularization has a separate page with a large
+estimated countdown to the insertion burn window, remaining delta-v, alignment,
+burn-duration estimate, and actual/requested orbit. The countdown uses the live
+controller's timing gate; ignition still requires its altitude and alignment
+conditions. Missing or stale insertion estimates display as unavailable rather
+than counting down old data. The climb chart's
 cross is a planning aimpoint, not a predicted flight path; reaching the altitude
 trigger starts NERV assist even if the speed aimpoint has not been reached.
 

@@ -855,6 +855,13 @@ until running = false{
                                     2/(radius_now+ship:body:radius+safe_height+100)))).
                                 local remaining_dv is max(0,target_speed-tangent:mag).
                                 set abort_state["burn_seconds"] to remaining_dv/max(0.01,power["acceleration"]).
+                                // Passive GUI evidence from the same calculation and time gate
+                                // used below. These fields never participate in control decisions.
+                                set abort_state["display_remaining_dv"] to remaining_dv.
+                                set abort_state["display_window_ut"] to time:seconds+ship:orbit:eta:apoapsis-
+                                    abort_state["burn_seconds"]/2-15.
+                                set abort_state["display_altitude_ready"] to ship:altitude >= safe_height.
+                                set abort_state["display_insertion_ut"] to time:seconds.
                                 set dapthrottle to 0.
                                 if abort_state["phase"] = "coast_align" and ship:altitude >= safe_height and
                                     ship:orbit:eta:apoapsis <= abort_state["burn_seconds"]/2+15 {
