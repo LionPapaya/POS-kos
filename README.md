@@ -160,10 +160,13 @@ only after the rotate phase ends. The V1 marker initially uses a 113.6 m/s
 surface-speed reference: two supplied accelerate/stop measurements reached
 1252-1254 m rolled at that speed, near the current runway-stop model's 1255 m
 validity boundary. It is an estimated reference, not the V1 decision. When the
-live runway-feasibility check actually calls V1, the marker moves once to that
-measured surface speed and stays there. VR comes from the configured rotation
+live runway-feasibility check actually calls V1, the reference latches that
+measured surface speed. VR comes from the configured rotation
 airspeed, translated to the current surface-speed frame for its tick. Coincident
-thresholds share one tick. Numeric labels distinguish estimated/called V1 and VR.
+thresholds share one tick. The displayed V1 tick is always capped at VR in the
+bar's surface-speed frame, including after a callout. The numeric callout and log
+retain the true measured speed even when the tick is capped. Numeric labels
+distinguish estimated/called V1 and VR.
 
 The takeoff stopping-distance reference reuses the existing conservative fit
 `0.055 * surface_speed^2 + 30` metres over its calibrated 13-113.6 m/s interval.

@@ -532,6 +532,9 @@ function ascent_display_update_takeoff {
         set displayed_v1 to sample["v1_actual_speed"].
         set v1_caption to "V1 CALLED ".
     }
+    local uncapped_v1 is displayed_v1.
+    set displayed_v1 to max(0,min(displayed_v1,vr_surface_speed)).
+    set sample["v1_marker_speed"] to displayed_v1.
     set ascent_display_bar:visible to true.
     local speed_fraction is ascent_display_fraction(sample["surface_speed"],bar_max_speed).
     set ascent_display_bar_fill:visible to speed_fraction > 0.
@@ -549,6 +552,9 @@ function ascent_display_update_takeoff {
     if sample["v1_called"] { set ascent_display_hero_detail:text to "V1 CALLED - RTLS preferred". }
     if sample["phase"] = "rotate" { set ascent_display_hero_title:text to "ROTATION IN PROGRESS / SURFACE SPEED". }
     set ascent_display_v1_label:text to v1_caption+round(displayed_v1,1)+" m/s surface".
+    if sample["v1_called"] {
+        set ascent_display_v1_label:text to v1_caption+round(uncapped_v1,1)+" m/s surface".
+    }
     set ascent_display_vr_label:text to "VR "+round(sample["vr_speed"],1)+" m/s air".
     set ascent_display_hero_note:text to "Surface-speed scale 0-"+round(bar_max_speed,1)+" m/s | VR tick is airspeed-equivalent".
     local v1_point is ascent_display_speed_marker(displayed_v1,bar_max_speed).
@@ -565,6 +571,12 @@ function ascent_display_update_takeoff {
     if not v1_point["visible"] and displayed_v1 > bar_max_speed {
         set ascent_display_hero_note:text to "V1 marker outside scale - use the recorded numeric callout".
     }
+    if uncapped_v1 > vr_surface_speed {
+        set ascent_display_hero_note:text to "V1 estimate capped at VR".
+        if sample["v1_called"] {
+            set ascent_display_hero_note:text to "V1 tick capped at VR; measured callout speed is retained".
+        }
+    }
 }
 
 function update_assent_gui {
@@ -575,6 +587,7 @@ function update_assent_gui {
         set inputs to ascent_display_collect().
     }
     global ascent_display_data is inputs.
+    set inputs["v1_marker_speed"] to -1.
     set ascent_display_heading:text to "<b>"+inputs["page"]+"</b>".
     set ascent_display_elapsed:text to "T+ "+ascent_display_clock(inputs["elapsed"]).
     set ascent_display_status:text to inputs["health"].

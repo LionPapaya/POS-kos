@@ -918,6 +918,7 @@ function flight_log_ascent_display_observe {
         "|insertion_altitude_ready="+snapshot["insertion_altitude_ready"]+
         "|v1_estimate_surface_mps="+snapshot["v1_estimate"]+"|v1_called="+snapshot["v1_called"]+
         "|v1_actual_surface_mps="+snapshot["v1_actual_speed"]+"|vr_airspeed_mps="+snapshot["vr_speed"]+
+        "|v1_marker_surface_mps="+snapshot["v1_marker_speed"]+
         "|stop_reference_valid="+snapshot["stop_reference_valid"]+"|stop_reference_m="+snapshot["stop_reference_m"]+
         "|alignment_deg="+snapshot["alignment"]+"|outcome="+snapshot["outcome"].
     if changed {
