@@ -52,6 +52,8 @@ global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
 global POS_LOG_SESSION is "".
 global POS_LOG_PROGRAM is "".
+global POS_LOG_SOURCE is lex("status","unavailable","reason","no_preflight","id","unknown",
+    "files",0,"bytes",0,"checked_ut",-1,"elapsed",0,"session","").
 global POS_LOG_NEXT_SAMPLE_TIME is -1.
 global POS_LOG_SAMPLE_INDEX is 0.
 global POS_LOG_LAST_STEP is "".
@@ -337,6 +339,169 @@ function flight_log_event {
     log POS_LOG_SCHEMA_VERSION + "," + POS_LOG_SESSION + "," + time:seconds + "," + missiontime + "," + POS_LOG_PROGRAM + "," + event_name + "," + csv_detail to POS_LOG_EVENT_FILE.
 }
 
+function flight_log_source_checksum {
+    parameter source_bytes, sum_low is 1, sum_high is 0.
+    for source_byte in source_bytes {
+        set sum_low to sum_low+source_byte.
+        set sum_high to sum_high+sum_low.
+    }
+    return list(mod(sum_low,65521),mod(sum_high,65521)).
+}
+
+function flight_log_source_record_checksum {
+    parameter source_record, source_sum.
+    local record_bytes is list().
+    for source_character in source_record { record_bytes:add(unchar(source_character)). }
+    return flight_log_source_checksum(record_bytes,source_sum[0],source_sum[1]).
+}
+
+function flight_log_source_safe {
+    return (ship:status = "PRELAUNCH" or ship:status = "LANDED") and
+        ship:groundspeed < 1 and abs(ship:verticalspeed) < 1 and throttle = 0 and ship:thrust < 0.1.
+}
+
+function flight_log_source_sort {
+    parameter source_paths.
+    local sorted_paths is source_paths:copy.
+    local source_index is 1.
+    until source_index >= sorted_paths:length {
+        local source_path is sorted_paths[source_index].
+        local insert_index is source_index.
+        until insert_index = 0 or sorted_paths[insert_index-1] <= source_path {
+            set sorted_paths[insert_index] to sorted_paths[insert_index-1].
+            set insert_index to insert_index-1.
+        }
+        set sorted_paths[insert_index] to source_path.
+        set source_index to source_index+1.
+    }
+    return sorted_paths.
+}
+
+function flight_log_source_collect {
+    parameter source_root, recursive, source_paths.
+    if not flight_log_source_safe() { return "unsafe_preflight". }
+    local source_directory is open(source_root).
+    if source_directory:istype("Boolean") { return "missing_directory". }
+    if source_directory:isfile { return "expected_directory". }
+    local source_entries is source_directory:lexicon.
+    for source_name in source_entries:keys {
+        local source_item is source_entries[source_name].
+        if source_item:isfile {
+            if source_item:extension = "ks" { source_paths:add(source_root+source_name). }
+        } else if recursive {
+            local collect_reason is flight_log_source_collect(source_root+source_name+"/",true,source_paths).
+            if collect_reason <> "" { return collect_reason. }
+        }
+        if not flight_log_source_safe() { return "unsafe_preflight". }
+        wait 0.
+    }
+    return "".
+}
+
+function flight_log_source_file {
+    parameter source_path.
+    local file_result is lex("complete",false,"reason","unsafe_preflight","bytes",0,"disk_bytes",0,"low",1,"high",0).
+    if not flight_log_source_safe() { return file_result. }
+    local source_file is open(source_path).
+    if source_file:istype("Boolean") { set file_result["reason"] to "missing_file". return file_result. }
+    if not source_file:isfile { set file_result["reason"] to "expected_file". return file_result. }
+    set file_result["disk_bytes"] to source_file:size.
+    local source_content is source_file:readall.
+    if not source_content:hassuffix("BINARY") {
+        set file_result["reason"] to "binary_read_unsupported". return file_result.
+    }
+    local source_bytes is source_content:binary.
+    set file_result["bytes"] to source_bytes:length.
+    local source_sum is list(1,0).
+    local source_offset is 0.
+    until source_offset >= source_bytes:length {
+        if not flight_log_source_safe() { return file_result. }
+        local block_length is min(1024,source_bytes:length-source_offset).
+        set source_sum to flight_log_source_checksum(source_bytes:sublist(source_offset,block_length),source_sum[0],source_sum[1]).
+        set source_offset to source_offset+block_length.
+        wait 0.
+    }
+    if not flight_log_source_safe() { return file_result. }
+    if source_file:size <> file_result["disk_bytes"] {
+        set file_result["reason"] to "file_size_changed". return file_result.
+    }
+    set file_result["low"] to source_sum[0].
+    set file_result["high"] to source_sum[1].
+    set file_result["complete"] to true.
+    set file_result["reason"] to "".
+    return file_result.
+}
+
+function flight_log_source_report {
+    flight_log_event("source_fingerprint","status="+POS_LOG_SOURCE["status"]+
+        "|reason="+POS_LOG_SOURCE["reason"]+"|id="+POS_LOG_SOURCE["id"]+
+        "|algorithm=adler32-manifest-v1|scope=pos-archive-ks-v1|volume=0"+
+        "|files="+POS_LOG_SOURCE["files"]+"|bytes="+POS_LOG_SOURCE["bytes"]+
+        "|checked_ut="+POS_LOG_SOURCE["checked_ut"]+"|elapsed="+POS_LOG_SOURCE["elapsed"]+
+        "|preflight_session="+POS_LOG_SOURCE["session"]+"|inherited="+
+        (POS_LOG_SOURCE["session"] <> "" and POS_LOG_SOURCE["session"] <> POS_LOG_SESSION)).
+}
+
+function flight_log_source_preflight {
+    parameter program_name.
+    if POS_LOG_LEVEL < 1 { return. }
+    if program_name <> "ascent" and program_name <> "vacuum_ascent" {
+        flight_log_source_report(). return.
+    }
+    set POS_LOG_SOURCE to lex("status","incomplete","reason","unsafe_preflight","id","unknown",
+        "files",0,"bytes",0,"checked_ut",time:seconds,"elapsed",0,"session",POS_LOG_SESSION).
+    if not flight_log_source_safe() { flight_log_source_report(). return. }
+    print "Preflight: checking installed POS source files...".
+    flight_log_event("source_fingerprint_start","algorithm=adler32-manifest-v1|scope=pos-archive-ks-v1|volume=0").
+    local source_paths is list().
+    local collect_reason is flight_log_source_collect("0:/",false,source_paths).
+    for source_root in list("0:/Libraries/","0:/Poseidon_SSTO/") {
+        if collect_reason = "" {
+            set collect_reason to flight_log_source_collect(source_root,true,source_paths).
+        }
+    }
+    if collect_reason = "" and exists("0:/Boot/") {
+        set collect_reason to flight_log_source_collect("0:/Boot/",true,source_paths).
+    }
+    if collect_reason <> "" {
+        set POS_LOG_SOURCE["reason"] to collect_reason.
+    } else if source_paths:length = 0 {
+        set POS_LOG_SOURCE["reason"] to "no_source_files".
+    } else {
+        set source_paths to flight_log_source_sort(source_paths).
+        local manifest_sum is list(1,0).
+        local scan_complete is true.
+        for source_path in source_paths {
+            if scan_complete {
+                local file_result is flight_log_source_file(source_path).
+                if not file_result["complete"] {
+                    set scan_complete to false.
+                    set POS_LOG_SOURCE["reason"] to file_result["reason"].
+                    flight_log_event("source_file_unavailable","path="+source_path+"|reason="+file_result["reason"]).
+                } else {
+                    local source_record is source_path+"|bytes="+file_result["bytes"]+
+                        "|low="+file_result["low"]+"|high="+file_result["high"]+char(10).
+                    set manifest_sum to flight_log_source_record_checksum(source_record,manifest_sum).
+                    set POS_LOG_SOURCE["files"] to POS_LOG_SOURCE["files"]+1.
+                    set POS_LOG_SOURCE["bytes"] to POS_LOG_SOURCE["bytes"]+file_result["bytes"].
+                    flight_log_event("source_file","path="+source_path+"|bytes="+file_result["bytes"]+
+                        "|disk_bytes="+file_result["disk_bytes"]+
+                        "|adler32="+(file_result["high"]*65536+file_result["low"])).
+                    print "Source check "+POS_LOG_SOURCE["files"]+"/"+source_paths:length+": "+source_path.
+                }
+            }
+        }
+        if scan_complete and flight_log_source_safe() {
+            set POS_LOG_SOURCE["status"] to "complete".
+            set POS_LOG_SOURCE["reason"] to "".
+            set POS_LOG_SOURCE["id"] to "adler32-manifest-v1-"+manifest_sum[0]+"-"+manifest_sum[1].
+        }
+    }
+    set POS_LOG_SOURCE["elapsed"] to time:seconds-POS_LOG_SOURCE["checked_ut"].
+    flight_log_source_report().
+    print "Preflight source check: "+POS_LOG_SOURCE["status"]+" ("+POS_LOG_SOURCE["id"]+").".
+}
+
 function flight_log_begin {
     parameter program_name.
     set POS_LOG_PROGRAM to program_name.
@@ -396,6 +561,7 @@ function flight_log_begin {
     // replay distinguish guidance behavior from a differently configured CPU.
     flight_log_event("flight_start","mode=" + POS_LOGGING_MODE + "|body=" + POS_LOG_LAST_BODY +
         "|directory=" + POS_LOG_DIRECTORY + "|ipu=" + CONFIG:IPU).
+    flight_log_source_preflight(program_name).
 }
 
 // Recovery state is sampled only at the logger's existing medium/high cadence.
