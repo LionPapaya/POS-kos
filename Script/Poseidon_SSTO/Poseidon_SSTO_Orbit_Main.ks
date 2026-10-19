@@ -43,7 +43,9 @@ local speed_trend is 0.
 local ascent_orbit_complete is false.
 
 
+set confirm_in to false.
 local Target_orbit is create_assent_gui().
+if step = "end" { return. }
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
 set TargetInclination to Target_orbit["inclination"].
@@ -93,6 +95,7 @@ if launch_heading < 0 {
 }
 set previous_speed to ship:airspeed.
 set t0 to -1.
+ascent_display_init().
 local takeoff_start_position is ship:geoposition.
 local takeoff_estimate is assess_takeoff_runway(active_runway).
 local takeoff_evidence is lex("released",false,"rotated",false,"airborne",false,
@@ -114,12 +117,7 @@ until running = false{
     update_readouts().
     dap:update().
     update_assent_gui().
-
-    if ship:altitude < ascent["display_altitude"] and ship:airspeed < ascent["display_speed"]{
-        set console_mode to "assent".
-    }else{
-         set console_mode to "Data".
-    }
+    flight_log_ascent_display_observe(ascent_display_data,ascent_display_log).
     set speed_trend to ship:airspeed - previous_speed.
     set previous_speed to ship:airspeed.
 
@@ -1478,6 +1476,7 @@ until running = false{
             flight_log_event("recovery_handoff","mode="+abort_state["mode"]+
                 "|phase="+abort_state["handoff_phase"]+"|runway="+abort_state["target"]["location"]+
                 "_"+abort_state["target"]["runway_num"]).
+            assent_gui:hide().
             runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks",lex("force",true,
                 "Location",abort_state["target"]["location"],"Runway",abort_state["target"]["runway_num"],
                 "context",handoff_context)).
@@ -1510,7 +1509,8 @@ until running = false{
         } else { reset_sys(). }
         set warp to 0.
         update_readouts().
-        assent_gui:hide().
+        update_assent_gui().
+        flight_log_ascent_display_observe(ascent_display_data,ascent_display_log).
     }
     if t0 >= 0 and not takeoff_evidence["screen_reached"] {
         flight_log_takeoff_observe(takeoff_evidence,takeoff_estimate,takeoff_start_position,t0,step).

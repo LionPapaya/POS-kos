@@ -154,6 +154,28 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 
 During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
 
+The ascent manager automatically uses two guidance pages: **Ascent 1** covers
+takeoff through NERV assist with a fixed altitude/airspeed chart, and **Ascent 2**
+covers closed-cycle climb and apoapsis build with the cutoff target and orbit
+readouts. Circularization has a separate page showing actual/requested orbit,
+time to apoapsis, and the insertion controller's burn estimate. The climb chart's
+cross is a planning aimpoint, not a predicted flight path; reaching the altitude
+trigger starts NERV assist even if the speed aimpoint has not been reached.
+
+The status line distinguishes tracking, insufficient observed progress, manual
+control, protection activity, and recovery. Tracking means steering is within a
+5-degree display threshold and progress has been observed over a two-second
+window; it is advisory and does not change the flight law or abort criteria.
+The display refreshes at 2 Hz and shows its sample UT so a frozen readout is
+recognizable. Final insertion readouts remain available until the window is
+closed. `ascent_display_state` events record page/phase/status changes at low
+logging level; medium adds 1 Hz display samples and high records each fresh
+display snapshot. Normal flight telemetry retains its existing rates.
+
+The chart uses one background PNG and two small marker images. Placement is
+based on kOS layout offsets and still needs in-game KSP/Unity verification;
+the experimental offline GUI workbench cannot establish final image alignment.
+
 ### Targeted vacuum landing
 
 Use the **Vacuum Landing** item from the main menu, or run `0:/POS4.ks`. It operates only on bodies without an atmosphere. It keeps the R.A.P.I.E.R.s disabled and uses the LV-N engines for both the de-orbit node and powered descent.
