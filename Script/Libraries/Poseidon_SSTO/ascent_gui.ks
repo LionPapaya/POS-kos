@@ -198,7 +198,7 @@ function create_assent_gui {
     mode_row:addlabel("DAP").
     global assent_dap_mode_menu is mode_row:addpopupmenu().
     for mode_name in list("AUTO","CSS","OFF") { assent_dap_mode_menu:addoption(mode_name). }
-    set assent_dap_mode_menu:value to "AUTO".
+    set assent_dap_mode_menu:index to 0.
     set assent_dap_mode_menu:onchange to {
         parameter selected_mode.
         set dap["dap_mode"] to selected_mode.
@@ -219,7 +219,7 @@ function create_assent_gui {
     rendezvous_row:addlabel("Rendezvous").
     global assent_rendezvous_menu is rendezvous_row:addpopupmenu().
     assent_rendezvous_menu:addoption("None").
-    set assent_rendezvous_menu:value to "None".
+    set assent_rendezvous_menu:index to 0.
     list targets in all_vessels.
     for rendezvous_candidate in all_vessels {
         if rendezvous_candidate <> ship and rendezvous_candidate:body = ship:body {
@@ -303,7 +303,9 @@ function update_assent_gui {
     local menu_mode is "OFF".
     if inputs["dap_mode"] = "auto" or inputs["dap_mode"] = "AUTO" { set menu_mode to "AUTO". }
     if inputs["dap_mode"] = "css" or inputs["dap_mode"] = "CSS" { set menu_mode to "CSS". }
-    set assent_dap_mode_menu:value to menu_mode.
+    if menu_mode = "AUTO" { set assent_dap_mode_menu:index to 0. }
+    if menu_mode = "CSS" { set assent_dap_mode_menu:index to 1. }
+    if menu_mode = "OFF" { set assent_dap_mode_menu:index to 2. }
     local air_page is inputs["page"] = "ASCENT 1 / 2".
     local circ_page is inputs["page"] = "CIRC".
     set ascent_display_chart:visible to air_page.
