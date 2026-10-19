@@ -274,12 +274,19 @@ function create_assent_gui {
 }
 
 function ascent_display_place {
-    parameter marker_widget, chart_point.
+    parameter marker_widget, chart_point, previous_widget is "none", previous_y is 0.
     set marker_widget:visible to chart_point["visible"].
-    // Each image consumes zero net vertical flow so both share chart origin.
+    local marker_top is chart_point["y"]-6.
+    local margin_delta is marker_top.
+    if previous_widget <> "none" {
+        set margin_delta to marker_top-(previous_y-6)-12.
+        // Unity collapses adjacent vertical margins with MAX. Pair negative
+        // margins on both widgets so the target remains at its chart Y.
+        set previous_widget:style:margin:bottom to min(0,margin_delta).
+    }
     set marker_widget:style:margin:left to chart_point["x"]-6.
-    set marker_widget:style:margin:top to chart_point["y"]-6.
-    set marker_widget:style:margin:bottom to -chart_point["y"]-6.
+    set marker_widget:style:margin:top to margin_delta.
+    set marker_widget:style:margin:bottom to 0.
 }
 
 function ascent_display_value {
@@ -317,7 +324,7 @@ function update_assent_gui {
     ascent_display_place(ascent_display_vehicle,vehicle_point).
     // The climb aimpoint does not apply during takeoff or NERV assist.
     set goal_point["visible"] to goal_point["visible"] and inputs["phase"] = "high_altitude_climb".
-    ascent_display_place(ascent_display_goal,goal_point).
+    ascent_display_place(ascent_display_goal,goal_point,ascent_display_vehicle,vehicle_point["y"]).
     ascent_display_value("Altitude / ASL",round(inputs["altitude"]/1000,1)+" km").
     ascent_display_value("Speed",round(inputs["surface_speed"])+" m/s surface").
     if air_page { ascent_display_value("Speed",round(inputs["airspeed"])+" m/s air"). }
