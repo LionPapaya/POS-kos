@@ -429,11 +429,11 @@ function flight_log_entry_recovery_columns {
 }
 
 function flight_log_entry_recovery {
-    parameter recovery_phase, solve_duration.
+    parameter recovery_phase_name, solve_duration.
     if POS_LOG_LEVEL < 1 { return. }
-    if recovery_phase = "basic_update" { set POS_LOG_ENTRY_BASIC_UT to time:seconds. }
-    if recovery_phase = "solver_complete" { set POS_LOG_ENTRY_SOLVER_DURATION to solve_duration. }
-    flight_log_event("entry_recovery_update","phase="+recovery_phase+
+    if recovery_phase_name = "basic_update" { set POS_LOG_ENTRY_BASIC_UT to time:seconds. }
+    if recovery_phase_name = "solver_complete" { set POS_LOG_ENTRY_SOLVER_DURATION to solve_duration. }
+    flight_log_event("entry_recovery_update","phase="+recovery_phase_name+
         "|runway="+Location+"_"+runway_nr+"|solver_duration="+round(solve_duration,2)+
         "|aoa="+round(dap["aoa"]["target_aoa"],2)+
         "|bank="+round(dap["aoa"]["target_bank"],2)).
