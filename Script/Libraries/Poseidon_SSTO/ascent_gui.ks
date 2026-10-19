@@ -2,10 +2,10 @@
 // No steering, throttle, engine or abort decisions belong in this library.
 
 function ascent_display_page {
-    parameter flight_phase, recovery_phase is "", nominal_insertion is false.
+    parameter flight_phase, recovery_phase_name is "", nominal_insertion is false.
     if flight_phase = "circ" or
-       (flight_phase = "ato" and (recovery_phase = "coast_align" or recovery_phase = "insert" or
-        (recovery_phase = "complete" and nominal_insertion))) { return "CIRC". }
+       (flight_phase = "ato" and (recovery_phase_name = "coast_align" or recovery_phase_name = "insert" or
+        (recovery_phase_name = "complete" and nominal_insertion))) { return "CIRC". }
     if flight_phase = "closed_cycle_climb" or flight_phase = "apoapsis_build" or
        flight_phase = "ato" { return "ASCENT 2 / 2". }
     return "ASCENT 1 / 2".
@@ -64,13 +64,13 @@ function ascent_display_init {
 function ascent_display_collect {
     local cfg is AVES["Ascent"].
     local display_phase is step.
-    local recovery_phase is "".
+    local recovery_phase_name is "".
     local nominal_insert is false.
     local recovering is false.
     local finished is step = "end".
     local display_outcome is "".
     if defined abort_state and abort_state:haskey("mode") {
-        set recovery_phase to abort_state["phase"].
+        set recovery_phase_name to abort_state["phase"].
         set recovering to abort_state["active"].
         if abort_state:haskey("nominal_insertion") { set nominal_insert to abort_state["nominal_insertion"]. }
         if nominal_insert { set recovering to false. }
@@ -79,8 +79,8 @@ function ascent_display_collect {
         }
         if finished and abort_state:haskey("result") { set display_outcome to abort_state["result"]["reason"]. }
     }
-    local page_name is ascent_display_page(display_phase,recovery_phase,nominal_insert).
-    if display_phase = "ato" { set display_phase to recovery_phase. }
+    local page_name is ascent_display_page(display_phase,recovery_phase_name,nominal_insert).
+    if display_phase = "ato" { set display_phase to recovery_phase_name. }
     local sample is lex("ut",time:seconds,"phase",display_phase,"page",page_name,
         "finished",finished,"recovery",recovering,"outcome",display_outcome,
         "dap_mode",dap["dap_mode"],"protection",dap["envelope"]["state"],
