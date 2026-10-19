@@ -263,7 +263,7 @@ function create_assent_gui {
     }
     global ascent_display_next is ascent_display_flight:addlabel().
     global ascent_display_footer is ascent_display_flight:addlabel().
-    if not defined confirm_in { global confirm_in is false. }
+    if not (defined confirm_in) { global confirm_in is false. }
     assent_gui:show().
     until confirm_in or step = "end" { wait 0.001. }
     ascent_display_setup:hide(). ascent_display_flight:show().
