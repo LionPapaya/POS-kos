@@ -1,8 +1,11 @@
-// Passive ascent display. Two ascent pages, then a separate insertion page.
+// Passive takeoff/rotate display, two ascent pages, then an insertion page.
 // No steering, throttle, engine or abort decisions belong in this library.
 
 function ascent_display_page {
     parameter flight_phase, recovery_phase_name is "", nominal_insertion is false.
+    if flight_phase = "launch" or flight_phase = "rotate" or flight_phase = "rendezvous_window" {
+        return "TAKEOFF".
+    }
     if flight_phase = "circ" or
        (flight_phase = "ato" and (recovery_phase_name = "coast_align" or recovery_phase_name = "insert" or
         (recovery_phase_name = "complete" and nominal_insertion))) { return "CIRC". }
@@ -31,6 +34,7 @@ function ascent_display_health {
     if sample["phase"] = "rendezvous_window" { return "WAITING - rendezvous launch window". }
     if not sample["command_valid"] { return "MONITORING - steering command unavailable". }
     if sample["attitude_error"] > 5 { return "CHECK - steering error > 5 deg". }
+    if sample["phase"] = "rotate" { return "ROTATING - waiting for liftoff / clearance". }
     if sample["page"] = "CIRC" and sample["phase"] = "coast_align" {
         return "COAST / ALIGN - waiting for insertion window".
     }
@@ -41,7 +45,7 @@ function ascent_display_health {
     if sample["page"] = "CIRC" and sample["throttle"] > 0 and sample["peri_rate"] <= 0 {
         return "CHECK - periapsis not increasing".
     }
-    if sample["page"] = "ASCENT 1 / 2" {
+    if sample["page"] = "ASCENT 1 / 2" or sample["page"] = "TAKEOFF" {
         if sample["phase"] = "launch" or sample["phase"] = "speed_build" {
             if sample["speed_rate"] <= 0 { return "CHECK - airspeed not increasing". }
         } else if sample["phase"] <> "rendezvous_window" and sample["vertical_speed"] <= 0 {
@@ -72,10 +76,26 @@ function ascent_display_fraction {
     return max(0,min(1,current_apoapsis/cutoff_apoapsis)).
 }
 
+function ascent_display_speed_marker {
+    parameter marker_speed, bar_max_speed.
+    return lex("visible",bar_max_speed > 0 and marker_speed >= 0 and marker_speed <= bar_max_speed,
+        "x",max(6,min(594,600*marker_speed/max(1,bar_max_speed))),"y",6).
+}
+
+// Surface-speed reference only. Uses the existing conservative calibration;
+// never substitute this speed curve for the actual runway-stop decision.
+function ascent_display_stop_reference {
+    parameter reference_speed, stop_config.
+    return lex("valid",reference_speed >= stop_config["minimum_stop_reference_speed_mps"] and
+        reference_speed <= stop_config["maximum_stop_reference_speed_mps"],
+        "distance",stop_config["stop_reference_slope"]*max(0,reference_speed)^2+stop_config["stop_reference_margin_m"]).
+}
+
 function ascent_display_init {
     global ascent_display_state is lex("next_update",0,"origin",ship:geoposition,
         "trend_ut",-1,"trend_phase","","speed",0,"apo",0,"peri",0,
-        "progress_valid",false,"speed_rate",0,"apo_rate",0,"peri_rate",0).
+        "progress_valid",false,"speed_rate",0,"apo_rate",0,"peri_rate",0,
+        "v1_called",false,"v1_actual_speed",-1).
     global ascent_display_log is lex("page","","phase","","health","","next_sample",0,"last_ut",-1).
 }
 
@@ -115,6 +135,13 @@ function ascent_display_collect {
         "downrange",calcdistance_m(ascent_display_state["origin"],ship:geoposition),
         "elapsed",0,"burn_seconds",-1,"alignment",-1,"remaining_dv",-1,
         "insertion_valid",false,"burn_window_seconds",-1,"insertion_altitude_ready",false).
+    set sample["vr_speed"] to AVES["Speed"]["Rotate"].
+    set sample["v1_estimate"] to cfg["display_v1_estimate_mps"].
+    set sample["v1_called"] to ascent_display_state["v1_called"].
+    set sample["v1_actual_speed"] to ascent_display_state["v1_actual_speed"].
+    local stopping_reference is ascent_display_stop_reference(sample["surface_speed"],AVES["Takeoff"]).
+    set sample["stop_reference_valid"] to stopping_reference["valid"].
+    set sample["stop_reference_m"] to stopping_reference["distance"].
     // kOS can throw while pushing an infinite apsis suffix onto its stack.
     // Avoid reading those suffixes at all on an escape trajectory.
     if sample["orbit_valid"] {
@@ -337,6 +364,30 @@ function create_assent_gui {
     set ascent_display_bar_fill:style:padding:h to 0. set ascent_display_bar_fill:style:padding:v to 0.
     set ascent_display_bar_fill:style:bg to "Libraries/gui_images/ascent_fill.png".
     set ascent_display_bar_fill:style:margin:h to 0. set ascent_display_bar_fill:style:margin:v to 0.
+    // A transparent layer overlaps the 8px fill using the same calibrated
+    // paired-margin placement as the ascent chart markers.
+    global ascent_display_speed_ticks is ascent_display_bar:addvlayout().
+    set ascent_display_speed_ticks:style:width to 600. set ascent_display_speed_ticks:style:height to 12.
+    set ascent_display_speed_ticks:style:padding:h to 0. set ascent_display_speed_ticks:style:padding:v to 0.
+    set ascent_display_speed_ticks:style:margin:h to 0. set ascent_display_speed_ticks:style:margin:top to -8.
+    global ascent_display_v1_tick is ascent_display_speed_ticks:addlabel().
+    set ascent_display_v1_tick:image to "Libraries/gui_images/ascent_v1_tick.png".
+    global ascent_display_vr_tick is ascent_display_speed_ticks:addlabel().
+    set ascent_display_vr_tick:image to "Libraries/gui_images/ascent_vr_tick.png".
+    for speed_tick in list(ascent_display_v1_tick,ascent_display_vr_tick) {
+        set speed_tick:style:width to 12. set speed_tick:style:height to 12.
+        set speed_tick:style:hstretch to false. set speed_tick:style:vstretch to false.
+        set speed_tick:style:padding:h to 0. set speed_tick:style:padding:v to 0.
+        set speed_tick:style:margin:h to 0. set speed_tick:style:margin:v to 0.
+    }
+    global ascent_display_speed_legend is ascent_display_hero:addhlayout().
+    set ascent_display_speed_legend:style:margin:top to 8.
+    global ascent_display_v1_label is ascent_display_speed_legend:addlabel().
+    global ascent_display_vr_label is ascent_display_speed_legend:addlabel().
+    set ascent_display_v1_label:style:width to 304. set ascent_display_vr_label:style:width to 304.
+    ascent_display_label_style(ascent_display_v1_label,12).
+    set ascent_display_v1_label:style:textcolor to RGBA(0.78,0.66,0.93,1).
+    ascent_display_label_style(ascent_display_vr_label,12,"right").
     global ascent_display_hero_note is ascent_display_hero:addlabel().
     set ascent_display_hero_note:style:width to 608.
     ascent_display_label_style(ascent_display_hero_note,12,"center",true).
@@ -360,7 +411,7 @@ function create_assent_gui {
     ascent_display_label_style(ascent_display_columns["now"],12,"right",true).
     ascent_display_label_style(ascent_display_columns["goal"],12,"right",true).
     global ascent_display_rows is lex().
-    for field_name in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading","Apoapsis","Periapsis","Inclination") {
+    for field_name in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading","Est. stop distance","Apoapsis","Periapsis","Inclination") {
         set ascent_display_rows[field_name] to ascent_display_row(ascent_display_flight,field_name).
     }
     global ascent_display_next is ascent_display_flight:addlabel().
@@ -402,6 +453,11 @@ function ascent_display_value {
 function ascent_display_update_hero {
     parameter sample.
     local is_circ is sample["page"] = "CIRC".
+    local is_takeoff is sample["page"] = "TAKEOFF".
+    set ascent_display_speed_ticks:visible to is_takeoff.
+    set ascent_display_speed_legend:visible to is_takeoff.
+    set ascent_display_bar_fill:style:margin:bottom to 0.
+    if is_takeoff { ascent_display_update_takeoff(sample). return. }
     set ascent_display_bar:visible to not is_circ.
     set ascent_display_hero_detail:style:textcolor to RGBA(0.78,0.66,0.93,1).
     if not is_circ {
@@ -464,6 +520,53 @@ function ascent_display_update_hero {
     }
 }
 
+function ascent_display_update_takeoff {
+    parameter sample.
+    // The supplied stopping measurements are surface speeds. Keep the bar
+    // in that frame; convert the airspeed-based VR to its current equivalent.
+    local vr_surface_speed is max(0,sample["vr_speed"]+sample["surface_speed"]-sample["airspeed"]).
+    local bar_max_speed is 1.5*max(1,max(sample["vr_speed"],sample["v1_estimate"])).
+    local displayed_v1 is sample["v1_estimate"].
+    local v1_caption is "V1 EST ".
+    if sample["v1_called"] {
+        set displayed_v1 to sample["v1_actual_speed"].
+        set v1_caption to "V1 CALLED ".
+    }
+    set ascent_display_bar:visible to true.
+    local speed_fraction is ascent_display_fraction(sample["surface_speed"],bar_max_speed).
+    set ascent_display_bar_fill:visible to speed_fraction > 0.
+    set ascent_display_bar_fill:style:width to max(1,round(600*speed_fraction)).
+    // Both margins are needed because Unity collapses adjacent margins.
+    set ascent_display_speed_ticks:style:margin:top to 0.
+    if speed_fraction > 0 {
+        set ascent_display_bar_fill:style:margin:bottom to -8.
+        set ascent_display_speed_ticks:style:margin:top to -8.
+    }
+    set ascent_display_hero_title:text to "TAKEOFF SURFACE SPEED".
+    set ascent_display_hero_value:text to round(sample["surface_speed"],1)+" m/s".
+    set ascent_display_hero_detail:text to "V1 estimate only - actual callout follows runway stopping margin".
+    set ascent_display_hero_detail:style:textcolor to RGBA(0.69,0.74,0.78,1).
+    if sample["v1_called"] { set ascent_display_hero_detail:text to "V1 CALLED - RTLS preferred". }
+    if sample["phase"] = "rotate" { set ascent_display_hero_title:text to "ROTATION IN PROGRESS / SURFACE SPEED". }
+    set ascent_display_v1_label:text to v1_caption+round(displayed_v1,1)+" m/s surface".
+    set ascent_display_vr_label:text to "VR "+round(sample["vr_speed"],1)+" m/s air".
+    set ascent_display_hero_note:text to "Surface-speed scale 0-"+round(bar_max_speed,1)+" m/s | VR tick is airspeed-equivalent".
+    local v1_point is ascent_display_speed_marker(displayed_v1,bar_max_speed).
+    local vr_point is ascent_display_speed_marker(vr_surface_speed,bar_max_speed).
+    // Coincident thresholds share a single tick rather than hiding each other.
+    if abs(v1_point["x"]-vr_point["x"]) < 3 and v1_point["visible"] and vr_point["visible"] {
+        set v1_point["visible"] to false.
+        set ascent_display_hero_note:text to "Shared V1 / VR tick | surface-speed scale 0-"+round(bar_max_speed,1)+" m/s".
+    }
+    ascent_display_place(ascent_display_v1_tick,v1_point).
+    if v1_point["visible"] {
+        ascent_display_place(ascent_display_vr_tick,vr_point,ascent_display_v1_tick,v1_point["y"]).
+    } else { ascent_display_place(ascent_display_vr_tick,vr_point). }
+    if not v1_point["visible"] and displayed_v1 > bar_max_speed {
+        set ascent_display_hero_note:text to "V1 marker outside scale - use the recorded numeric callout".
+    }
+}
+
 function update_assent_gui {
     parameter inputs is "auto".
     if inputs = "auto" {
@@ -502,6 +605,7 @@ function update_assent_gui {
     if menu_mode = "OFF" { set assent_dap_mode_menu:index to 2. }
     local air_page is inputs["page"] = "ASCENT 1 / 2".
     local circ_page is inputs["page"] = "CIRC".
+    local takeoff_page is inputs["page"] = "TAKEOFF".
     set ascent_display_chart:visible to air_page.
     set ascent_display_hero:visible to not air_page.
     set ascent_display_summary:visible to air_page.
@@ -510,6 +614,11 @@ function update_assent_gui {
     }
     for flight_field in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading") {
         set ascent_display_rows[flight_field]["box"]:visible to not circ_page.
+    }
+    set ascent_display_rows["Est. stop distance"]["box"]:visible to takeoff_page.
+    ascent_display_value("Est. stop distance","-- (outside calibration)").
+    if inputs["stop_reference_valid"] {
+        ascent_display_value("Est. stop distance",round(inputs["stop_reference_m"])+" m","Surface-speed reference").
     }
     set ascent_display_columns["now"]:text to "NOW".
     set ascent_display_columns["caption"]:text to "FLIGHT".
@@ -528,7 +637,7 @@ function update_assent_gui {
     ascent_display_value("Altitude / ASL",round(inputs["altitude"]/1000,1)+" km").
     set ascent_display_rows["Speed"]["caption"]:text to "Surface speed".
     ascent_display_value("Speed",round(inputs["surface_speed"])+" m/s").
-    if air_page {
+    if air_page or takeoff_page {
         set ascent_display_rows["Speed"]["caption"]:text to "Airspeed".
         ascent_display_value("Speed",round(inputs["airspeed"])+" m/s").
     }
@@ -545,7 +654,7 @@ function update_assent_gui {
     local next_text is "Next: follow active recovery guidance".
     local summary_text is "Apoapsis cutoff: "+round(inputs["cutoff_ap"]/1000,1)+" km | remaining "+
         round(max(0,inputs["cutoff_ap"]-inputs["apoapsis"])/1000,1)+" km".
-    if air_page {
+    if air_page or takeoff_page {
         set summary_text to "Vehicle dot / climb target cross | 0-30 km / 0-1800 m/s".
         if not vehicle_point["visible"] { set summary_text to "Vehicle outside chart - use numeric readouts". }
         if inputs["phase"] = "launch" { set next_text to "Next: rotate at "+AVES["Speed"]["Rotate"]+" m/s airspeed". }

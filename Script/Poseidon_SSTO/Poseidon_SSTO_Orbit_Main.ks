@@ -172,8 +172,12 @@ until running = false{
                 local v1_check is runway_abort_feasibility(takeoff_start_position,active_runway["end"]).
                 if not v1_check["permitted"] {
                     set v1_announced to true.
+                    // Passive speed-marker capture. The runway test above,
+                    // not the GUI's estimated speed, remains the V1 decision.
+                    set ascent_display_state["v1_called"] to true.
+                    set ascent_display_state["v1_actual_speed"] to ship:velocity:surface:mag.
                     set Lastest_status to "V1 - RTLS preferred".
-                    flight_log_event("v1","rolled_m=" + round(v1_check["roll_distance_m"]) + "|required_m=" + round(v1_check["required_stop_distance_m"]) + "|remaining_m=" + round(v1_check["runway_remaining_m"]) + "|model_valid=" + v1_check["model_valid"] + "|preferred_abort=rtls").
+                    flight_log_event("v1","rolled_m=" + round(v1_check["roll_distance_m"]) + "|required_m=" + round(v1_check["required_stop_distance_m"]) + "|remaining_m=" + round(v1_check["runway_remaining_m"]) + "|model_valid=" + v1_check["model_valid"] + "|surface_speed_mps="+ascent_display_state["v1_actual_speed"]+"|airspeed_mps="+ship:airspeed+"|preferred_abort=rtls").
                 }
             }
             if ship:airspeed > AVES["Speed"]["Rotate"]{

@@ -154,8 +154,25 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 
 During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
 
-The ascent manager automatically uses two guidance pages: **Ascent 1** covers
-takeoff through NERV assist with a fixed altitude/airspeed chart, and **Ascent 2**
+The ascent manager starts with a **Takeoff** surface-speed bar and V1/VR ticks.
+It remains visible through rotation and changes to the altitude/airspeed chart
+only after the rotate phase ends. The V1 marker initially uses a 113.6 m/s
+surface-speed reference: two supplied accelerate/stop measurements reached
+1252-1254 m rolled at that speed, near the current runway-stop model's 1255 m
+validity boundary. It is an estimated reference, not the V1 decision. When the
+live runway-feasibility check actually calls V1, the marker moves once to that
+measured surface speed and stays there. VR comes from the configured rotation
+airspeed, translated to the current surface-speed frame for its tick. Coincident
+thresholds share one tick. Numeric labels distinguish estimated/called V1 and VR.
+
+The takeoff stopping-distance reference reuses the existing conservative fit
+`0.055 * surface_speed^2 + 30` metres over its calibrated 13-113.6 m/s interval.
+It covers all 12 supplied stopping measurements and is unavailable outside that
+interval. Both the speed marker and this readout are passive display references;
+the actual runway-stop and rotation decisions continue to use their live inputs.
+
+After takeoff the manager automatically uses two guidance pages: **Ascent 1** covers
+alignment through NERV assist with a fixed altitude/airspeed chart, and **Ascent 2**
 covers closed-cycle climb and apoapsis build with the cutoff target and orbit
 readouts. Its large apoapsis/cutoff panel includes remaining altitude and a
 progress bar; closed-cycle climb shows the RAPIER cutoff before switching to
