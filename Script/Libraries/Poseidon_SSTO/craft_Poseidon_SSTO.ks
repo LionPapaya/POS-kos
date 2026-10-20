@@ -589,6 +589,12 @@ Poseidon_SSTO:add("Ascent",lex(
     "runway_alignment_speed_limit",300,
     "runway_alignment_target_aoa",10,
     "runway_alignment_bank",45,
+    "alignment_min_vs",2,
+    "alignment_full_bank_vs",15,
+    "alignment_target_vs",12,
+    "alignment_vs_gain",0.5,
+    "alignment_max_aoa",20,
+    "alignment_max_pitch",25,
     "speed_build_pitch",10,
     "climb_altitude",20000,
     "climb_target_speed",1500,
@@ -776,7 +782,24 @@ Poseidon_SSTO:add("Envelope",lex(
         "final_inhibit_min_glideslope_error",-25,
         "final_inhibit_preflare_min_glideslope_error",-40,
         "pullup_aoa",20,
-        "pullup_min_base_pitch",0
+        "pullup_min_base_pitch",0,
+        // Long-range paths include turn/roll delay and lateral terrain probes.
+        // No lift/20-degree-AoA capability is assumed by this predictor.
+        "Navigation",lex(
+            "minimum_range",15000,"maximum_range",45000,"horizon_seconds",35,
+            "sample_spacing",250,"corridor_width",60,"corridor_growth",0.005,
+            "stations_per_update",12,"scan_pause",0.2,"maximum_age",4,
+            "roll_hold_seconds",1,"rollout_seconds",3,
+            "scan_acceleration",10,"response_seconds",7,"prediction_bank",15,
+            "climb_credit",10,"turn_sink_reserve",3,"clearance",150,
+            "escape_offsets",list(0,-5,5,-15,15,-30,30,-60,60),
+            "escape_margin",50,"escape_bank",25,"escape_heading_gain",6,
+            "departure_range",18000,"departure_dogleg_distance",6000,
+            "departure_heading_gain",2,"departure_response_seconds",3,"departure_speed",300,"departure_gradient",0.025,"reference_mass",69.5,
+            "departure_initial_clearance",5,"departure_clearance_ramp",10000,
+            "liftoff_distance_fraction",0.75,"waypoint_capture",300,
+            "departure_min_clearance",15
+        )
     )
 )).
 Poseidon_SSTO:add("TerminalRoute",lex(

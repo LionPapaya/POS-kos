@@ -105,6 +105,22 @@ print("Takeoff estimate: " + takeoff_estimate["reason"]).
 print("Runway requirement " + round(takeoff_estimate["required_runway_m"]) + " m; available " +
     round(takeoff_estimate["remaining_runway_m"]) + " m; departure to 35m " + round(takeoff_estimate["required_departure_m"]) + " m").
 flight_log_takeoff_prediction(takeoff_estimate,"preflight").
+// Check the departure before any engine spool/brake release. A finite sampled
+// route is monitored again by GPWS in flight; it is not a terrain guarantee.
+brakes on.
+set dapthrottle to 0.
+global departure_runway_altitude is runway_altitude.
+local departure_config is terrain_navigation_config(AVES["Envelope"]["Terrain"]["Navigation"],ship:mass).
+print("Checking departure terrain corridors...").
+global departure_route is terrain_departure_plan(active_runway,takeoff_estimate,launch_heading,departure_config).
+global ascent_alignment_debug is lex("bank",0,"aoa",0,"pitch_floor",ascent["rotate_pitch"]).
+flight_log_departure_plan(departure_route).
+if not departure_route["valid"] {
+    print("TAKEOFF HELD: no checked departure corridor ("+departure_route["reason"]+").").
+    set Lastest_status to "Departure terrain route unavailable".
+    flight_log_event("departure_takeoff_held","reason="+departure_route["reason"]).
+    return.
+}
 local v1_announced is false.
 local abort_info is lex().
 set dap_mode to "auto".
@@ -225,10 +241,12 @@ until running = false{
             set warp to 0.
             set assent_heading to launch_heading.
             local runway_to_ascent_error is abs(normalized_heading_error(launch_heading,runway_heading)).
-            if runway_to_ascent_error > ascent["runway_alignment_heading_threshold"] {
+            if departure_route["valid"] or runway_to_ascent_error > ascent["runway_alignment_heading_threshold"] {
                 set step to "ascent_alignment".
                 set Lastest_status to "aligning ascent heading".
                 set dap["str_mode"] to "aoa".
+                set dap["aoa"]["smooth_target_aoa"] to max(ascent["runway_alignment_target_aoa"],calc_aoa()).
+                set dap["aoa"]["smooth_target_bank"] to 0.
             }else{
                 set step to "speed_build".
                 set dap["str_mode"] to "aerostr".
@@ -242,30 +260,40 @@ until running = false{
             set assent_heading to ascent["inclination_heading_fallback"].
         }
 
-        // AoA steering turns through bank.  A positive heading error is a turn
-        // to the right, which uses a negative bank in the kOS steering convention.
-        local alignment_heading_error is normalized_heading_error(assent_heading,compass_for_prograde()).
-        local alignment_bank is min(ascent["runway_alignment_bank"],max(10,abs(alignment_heading_error) * 2)).
-        set dap["str_mode"] to "aoa".
-        set dap["aoa"]["target_aoa"] to ascent["runway_alignment_target_aoa"].
-        if alignment_heading_error > 0 {
-            set dap["aoa"]["target_bank"] to -alignment_bank.
-        }else{
-            set dap["aoa"]["target_bank"] to alignment_bank.
+        local orbital_course is assent_heading.
+        local route_index_before is departure_route["index"].
+        set assent_heading to terrain_departure_course(departure_route,ship:geoposition,orbital_course,departure_config).
+        if departure_route["index"] <> route_index_before {
+            flight_log_event("departure_waypoint","index="+departure_route["index"]+
+                "|count="+departure_route["waypoints"]:length+"|course="+round(assent_heading,2)).
         }
-
-        // Do not build speed while making the initial cross-runway turn.
-        // Ramp from full to idle between 200 and 300 m/s, rather than
-        // abruptly cutting thrust, to hold the turn below the speed limit.
+        local alignment_heading_error is normalized_heading_error(assent_heading,compass_for_prograde()).
+        set ascent_alignment_debug to terrain_alignment_command(alignment_heading_error,ship:verticalspeed,
+            calc_aoa(),pitch_for(),pitch_for_prograde(),ascent).
+        set dap["str_mode"] to "aoa".
+        set dap["aoa"]["target_aoa"] to ascent_alignment_debug["aoa"].
+        set dap["aoa"]["target_bank"] to ascent_alignment_debug["bank"].
+        // Keep turns early and slow enough to follow the checked curve. Full
+        // power remains available when climb is weak; GPWS has final priority.
         local throttle_ramp_width is ascent["runway_alignment_speed_limit"] - ascent["runway_alignment_throttle_ramp_start"].
         set dapthrottle to max(0,min(1,(ascent["runway_alignment_speed_limit"] - ship:airspeed) / throttle_ramp_width)).
+        if ship:verticalspeed < ascent["alignment_target_vs"] { set dapthrottle to 1. }
 
         set abort_info to check_abort(step).
         if abort_info["abort"]{
             set abort_state to create_abort_state(abort_info,step,active_runway).
             set step to abort_state["mode"].
         }
-        if step = "ascent_alignment" and abs(alignment_heading_error) <= ascent["runway_alignment_completion_tolerance"] {
+        // Once the checked dogleg is behind us and both courses agree,
+        // resume normal acceleration without flying the remaining straight
+        // verification waypoints at the alignment speed limit.
+        local departure_turn_pending is abs(normalized_heading_error(departure_route["first_course"],orbital_course)) >
+            ascent["runway_alignment_completion_tolerance"] and
+            departure_route["index"]*1000 < departure_config["departure_dogleg_distance"].
+        if step = "ascent_alignment" and not departure_turn_pending and
+           abs(normalized_heading_error(orbital_course,compass_for_prograde())) <= ascent["runway_alignment_completion_tolerance"] and
+           abs(alignment_heading_error) <= ascent["runway_alignment_completion_tolerance"] {
+            set departure_route["index"] to departure_route["waypoints"]:length.
             set dap["aoa"]["target_bank"] to 0.
             set dapthrottle to 1.
             set dap["str_mode"] to "aerostr".

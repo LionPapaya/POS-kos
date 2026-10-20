@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terrain_navigation.ks").
 
 
 // Libraries/Poseidon_SSTO/control.ks
@@ -102,6 +103,10 @@ if not (dap:haskey("setup")) {
         dap["envelope"]:add("terrain_final_captured", false).
     }
 
+    if not dap["envelope"]:haskey("terrain_navigation") {
+        dap["envelope"]:add("terrain_navigation",terrain_scan_state()).
+    }
+
     if not (dap:haskey("dap_mode")) {
         dap:add("dap_mode", "auto").
     }
@@ -180,6 +185,9 @@ function envelope_terrain_reset {
     set envelope["terrain_clear_timer"] to 0.
     set envelope["terrain_inhibit_reason"] to inhibit_reason.
     set envelope["terrain_final_captured"] to final_captured.
+    if envelope:haskey("terrain_navigation") {
+        set envelope["terrain_navigation"] to terrain_scan_state().
+    }
 }
 
 // Only an established terminal final is permitted to own terrain protection.
@@ -270,6 +278,34 @@ function envelope_terrain_refresh {
     }
     set envelope["terrain_inhibit_reason"] to "".
     set envelope["terrain_final_captured"] to false.
+    local navigation_config is terrain_navigation_config(terrain_config["Navigation"]).
+    // A planned departure starts below the cruise terrain margin. Preserve
+    // obstacle detection without labelling the checked runway itself a wall.
+    if defined departure_route and (step = "ascent_alignment" or step = "rotate") {
+        if departure_route["valid"] {
+            set navigation_config["clearance"] to min(navigation_config["clearance"],
+                max(navigation_config["departure_min_clearance"],
+                    (ship:altitude-departure_runway_altitude)*0.5)).
+        }
+    }
+    local scan is envelope["terrain_navigation"].
+    local horizontal_velocity is ship:velocity:surface-ship:up:vector*vdot(ship:velocity:surface,ship:up:vector).
+    local scan_now is time:seconds.
+    if scan["paths"]:length = 0 and scan_now >= scan["next_start"] {
+        terrain_scan_start(scan,ship:geoposition,compass_for_prograde(),horizontal_velocity:mag,
+            envelope["terrain_bounds"]:bottomalt,ship:verticalspeed,
+            ship:body:mu/(ship:body:radius+ship:altitude)^2,navigation_config,scan_now,roll_for()).
+    }
+    terrain_scan_advance(scan,navigation_config,scan_now).
+    local long_threat is scan["central_margin"] < 0.
+    local escape_fresh is scan["escape_valid"] and scan_now-scan["completed_ut"] <= navigation_config["maximum_age"] and
+        abs(terrain_heading_delta(compass_for_prograde(),scan["escape_snapshot_course"])) <= 5.
+    if not escape_fresh { set scan["escape_valid"] to false. }
+    set scan["mode"] to "monitor".
+    if long_threat {
+        set scan["mode"] to "climb".
+        if escape_fresh { set scan["mode"] to "turn". }
+    }
 
     if time:seconds >= envelope["terrain_next_scan"] {
         local worst_clearance is 999999.
@@ -281,13 +317,20 @@ function envelope_terrain_refresh {
     }
 
     local vertical_closure_rate is max(-ship:verticalspeed,0).
-    local required_clearance is terrain_config["base_clearance"] +
+    local required_clearance is navigation_config["clearance"] +
         vertical_closure_rate * (terrain_config["scan_interval"] + terrain_config["response_time"]).
     set envelope["terrain_required_clearance"] to required_clearance.
 
     if envelope["state"] = "terrain_pullup" {
-        if envelope["terrain_worst_clearance"] >= required_clearance + terrain_config["release_margin"] and
-           ship:verticalspeed >= terrain_config["recovery_min_climb_rate"] {
+        if scan["mode"] = "monitor" { set scan["mode"] to "climb". }
+        local recovery_vertical_safe is ship:verticalspeed >= terrain_config["recovery_min_climb_rate"].
+        // A successful lateral escape may finish level. Do not hold an
+        // aircraft in full-power recovery solely because it cannot climb.
+        if scan["escape_offset"] <> 0 and scan["central_margin"] >= terrain_config["release_margin"] and
+           ship:verticalspeed >= -0.5 { set recovery_vertical_safe to true. }
+        if not long_threat and scan_now-scan["central_ut"] <= navigation_config["maximum_age"] and
+           envelope["terrain_worst_clearance"] >= required_clearance + terrain_config["release_margin"] and
+           recovery_vertical_safe {
             set envelope["terrain_clear_timer"] to envelope["terrain_clear_timer"] + dt.
             if envelope["terrain_clear_timer"] >= terrain_config["recovery_stable_time"] {
                 set envelope["state"] to "normal".
@@ -301,7 +344,11 @@ function envelope_terrain_refresh {
         return.
     }
 
-    if envelope["terrain_worst_clearance"] < required_clearance {
+    if long_threat or envelope["terrain_worst_clearance"] < required_clearance {
+        if scan["mode"] = "monitor" {
+            set scan["mode"] to "climb".
+            if escape_fresh { set scan["mode"] to "turn". }
+        }
         set envelope["state"] to "terrain_pullup".
         set envelope["terrain_state"] to "pullup".
         set envelope["terrain_clear_timer"] to 0.
@@ -520,6 +567,9 @@ function envelope_refresh {
         // zero-AoA phase.  Terrain escape needs an immediate controlled pull-up.
         set envelope["max_aoa"] to config_envelope["Terrain"]["pullup_aoa"].
         set envelope["max_bank"] to config_envelope["max_bank_recovery"].
+        if envelope["terrain_navigation"]["mode"] = "turn" {
+            set envelope["max_bank"] to config_envelope["Terrain"]["Navigation"]["escape_bank"].
+        }
         set envelope["min_throttle"] to 1.
         set envelope["rcs_assist"] to rcs_available.
         if envelope["rcs_assist"] {
@@ -639,7 +689,15 @@ function envelope_run_recovery {
         // vector is already pointed down.  The CSS or aerostr commands above
         // this function are intentionally ignored by this final steering lock.
         local terrain_base_pitch is max(pitch_for_prograde(),terrain_config["pullup_min_base_pitch"]).
-        aoa_bank_management(terrain_config["pullup_aoa"],0,terrain_base_pitch).
+        local escape_bank is 0.
+        local scan is dap["envelope"]["terrain_navigation"].
+        local navigation_config is terrain_config["Navigation"].
+        if scan["mode"] = "turn" and scan["escape_valid"] and
+           time:seconds-scan["completed_ut"] <= navigation_config["maximum_age"] {
+            set escape_bank to max(-navigation_config["escape_bank"],min(navigation_config["escape_bank"],
+                -terrain_heading_delta(scan["escape_course"],compass_for_prograde())*navigation_config["escape_heading_gain"])).
+        }
+        aoa_bank_management(terrain_config["pullup_aoa"],escape_bank,terrain_base_pitch).
     } else if dap["envelope"]["state"] = "upset_zero_aoa" {
         aoa_bank_management(0,0).
     } else {
@@ -706,9 +764,9 @@ if not (dap:haskey("update")) {
                 aoa_bank_management(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["smooth_target_bank"], dap["aoa"]["base_pitch"]).
                 set dap["aoa"]["base_pitch"] to 0.
             }
-            
-             
-        
+            if defined ascent_alignment_debug and step = "ascent_alignment" {
+                set dap["aoa"]["aoa_pitch"] to max(dap["aoa"]["aoa_pitch"],ascent_alignment_debug["pitch_floor"]).
+            }
         }
         if dap["str_mode"] = "vector"{
             lock steering to dap["vector"]["targetVector"].
