@@ -156,11 +156,10 @@ During flight, the GUI shows the active phase, guidance mode, vehicle data, and 
 
 The ascent manager starts with a **Takeoff** surface-speed bar and V1/VR ticks.
 It remains visible through rotation and changes to the altitude/airspeed chart
-only after the rotate phase ends. The V1 marker initially uses a 113.6 m/s
-surface-speed reference: two supplied accelerate/stop measurements reached
-1252-1254 m rolled at that speed, near the current runway-stop model's 1255 m
-validity boundary. It is an estimated reference, not the V1 decision. When the
-live runway-feasibility check actually calls V1, the reference latches that
+only after the rotate phase ends. The V1 marker estimates the accelerate-stop
+limit from runway remaining, current surface speed and mass, using logged
+takeoff acceleration and the supplied takeoff-weight braking measurements.
+When the live runway-feasibility check actually calls V1, the marker latches that
 measured surface speed. VR comes from the configured rotation
 airspeed, translated to the current surface-speed frame for its tick. Coincident
 thresholds share one tick. The displayed V1 tick is always capped at VR in the
@@ -169,7 +168,8 @@ retain the true measured speed even when the tick is capped. Numeric labels
 distinguish estimated/called V1 and VR.
 
 The takeoff stopping-distance reference reuses the existing conservative fit
-`0.055 * surface_speed^2 + 30` metres over its calibrated 13-113.6 m/s interval.
+`0.055 * max(1, mass / 69.5) * surface_speed^2 + 30` metres over its
+calibrated 13-113.6 m/s interval.
 It covers all 12 supplied stopping measurements and is unavailable outside that
 interval. Both the speed marker and this readout are passive display references;
 the actual runway-stop and rotation decisions continue to use their live inputs.
@@ -269,7 +269,7 @@ It returns rotation and liftoff distances, liftoff speed, initial climb distance
 
 Calibration uses 26 confirmed liftoffs and 24 completed initial climbs in the supplied `flight_145` collection. Supported initial mass is 68.72565–70.04567 tonnes, with nominal Poseidon propulsion, the current rotation profile, and Kerbin launch altitudes of 70–325 m. Weight, density, and thrust scaling outside that envelope is explicitly heuristic: numeric estimates are returned, but `model_valid` and `sufficient` remain false. Changes to wing geometry, payload balance, engines, FAR settings, runway slope, or obstacles require new flight validation even inside the mass range. The 15% allowance is an engineering margin, not a statistical confidence interval.
 
-At 69.5 tonnes the conservative estimate is about 1,893 m to liftoff, 2,177 m with the runway margin, and 3,591 m to reach 35 m including the departure margin. This is deliberately above the recorded distances. The 12 supplied stopping runs also bound a separate reference stopping curve; their mass was not recorded, so it is diagnostic only and does not replace the existing V1/abort model. The assessment does not block takeoff or change the ascent commands.
+At 69.5 tonnes the conservative estimate is about 1,893 m to liftoff, 2,177 m with the runway margin, and 3,591 m to reach 35 m including the departure margin. This is deliberately above the recorded distances. The 12 supplied stopping runs were confirmed at takeoff weight and bound the braking curve used by the GUI V1 estimate. Their exact mass was not recorded; 69.5 tonnes is the logged takeoff reference, and mass scaling remains an assumption. The GUI estimate does not replace the existing live V1/abort model. The assessment does not block takeoff or change the ascent commands.
 
 `events.csv` records takeoff predictions, brake release, rotation, confirmed liftoff, and reaching the screen height. Low logging records transitions; medium adds 1 Hz takeoff samples; high samples each physics tick. Predictions remain independent of logging.
 
@@ -320,3 +320,26 @@ Water recovery captures a wings-level approach at 400 m hull clearance, or earli
 ### Late-ascent aborts: AED, ATO and EDR
 
 ATI has been replaced by AED (energy-managed runway diversion), ATO (supervised orbit recovery), and EDR (emergency deorbit/return). Their guidance remains in Orbit Main until the reentry/TEAM handoff. Engine failures, deliberate isolation, per-engine survivor limits, original fuel reserves and rejected-attempt history persist across transfers. See [the ascent recovery guide](ASCENT_ABORTS.md) for the dispatch matrix, implemented behavior and initial flight tests. These modes have source/offline validation and still require KSP/FAR flight calibration.
+
+### Takeoff GUI V1 estimate
+
+The takeoff speed bar estimates V1 from the runway available at brake release,
+less the distance already rolled, current surface speed and vessel mass. It solves
+`remaining = k * (V1² - current_speed²) + b * V1² + 30 m`, with
+`k = 0.107 * mass / 69.5` from logged takeoff acceleration and
+`b = 0.055 * max(1, mass / 69.5)` from the twelve supplied takeoff-weight abort
+stops. The 30 m allowance and braking coefficient cover all supplied stops.
+Linear mass scaling assumes fixed braking force; lighter craft receive no
+braking-distance credit. Masses outside the logged 68.73–70.05 t range are marked
+as extrapolations. Landing logs near 35.7 t are not treated as takeoff-weight
+braking calibration.
+
+`V1 >=` means the runway permits stopping at the displayed limit (VR or the
+highest measured abort speed, 113.6 m/s); it does not claim an exact V1 beyond
+that limit. An unknown or misaligned runway hides the estimate. The actual V1
+callout continues to use the executive's runway-abort feasibility decision and
+retains its measured surface speed. Display telemetry records the runway budget,
+mass, coefficients, validity and limiting status at the existing low/medium/high
+cadence. This remains a passive display estimate: it does not change runway-stop,
+RTLS, or contingency dispatch. Validate stopping and GUI behavior in KSP; the
+offline GUI is experimental.

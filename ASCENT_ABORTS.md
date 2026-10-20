@@ -2,6 +2,8 @@
 
 Implemented source behavior, 2026-10-11. These modes replace ATI. AED, ATO and EDR each execute directly in their own steps in `Poseidon_SSTO_Orbit_Main.ks`, which defines no functions. Reused lifecycle and engine policy live in the craft library; the two recovery libraries provide prediction, mathematics and return-target services. Orbit Main retains guidance ownership until the deliberate handoff to `Poseidon_SSTO_Reentry.ks`. Atmospheric and asymmetric-engine authority still require Poseidon KSP/FAR flight validation.
 
+The takeoff GUI's V1 estimate is a passive display reference. It does not change the runway-stop/RTLS dispatch described here or the live feasibility decision; see [README](README.md#takeoff-gui-v1-estimate) for its inputs, limits, and telemetry.
+
 ## Selection
 
 | Failure phase | Selection |
