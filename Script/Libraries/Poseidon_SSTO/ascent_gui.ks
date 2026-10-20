@@ -101,15 +101,17 @@ function ascent_display_v1_prediction {
     parameter remaining_m, current_speed_mps, mass_t, vr_surface_mps, model.
     parameter field_altitude_m is 72.68.
     local result is lex("valid",false,"speed",0,"limited",false,"remaining_m",remaining_m,
-        "mass_t",mass_t,"roll_coefficient",0,"stop_coefficient",0,"reason","runway_unavailable").
+        "mass_t",mass_t,"roll_coefficient",0,"stop_coefficient",0,
+        "roll_model","three_field_v2","reason","runway_unavailable").
     if remaining_m < 0 or current_speed_mps < 0 or mass_t <= 0 or vr_surface_mps <= 0 { return result. }
     local mass_scale is mass_t/model["reference_mass_t"].
-    // Two-field empirical trend, extrapolated above Desert. Do not reduce
-    // the historical envelope or credit improved performance below KSC.
+    // Three-field acceleration fit with a separate roll reserve. The
+    // conservative liftoff model does not define the displayed V1 curve.
+    // Do not credit improved performance below KSC.
     local altitude_roll_k is model["v1_roll_fit_coefficient"] *
         2.718281828459045^(model["v1_roll_altitude_exponent"] *
         max(0,field_altitude_m-model["v1_roll_reference_altitude_m"])).
-    local roll_k is max(model["roll_coefficient"],altitude_roll_k)*mass_scale.
+    local roll_k is altitude_roll_k*(1+model["v1_roll_margin_fraction"])*mass_scale.
     local stop_k is model["stop_reference_slope"]*max(1,mass_scale).
     local predicted_speed is sqrt(max(0,(remaining_m-model["stop_reference_margin_m"]+
         roll_k*current_speed_mps^2)/(roll_k+stop_k))).

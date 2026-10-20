@@ -619,11 +619,12 @@ Poseidon_SSTO:add("Takeoff",lex(
     "body","Kerbin",
     "reference_mass_t",69.5,"minimum_mass_t",68.72565,"maximum_mass_t",70.04567,
     "roll_coefficient",0.107,"lift_speed_mps",133,"rotation_response",3.6,
-    // Mass-normalized launch fits (20-100 m/s), flight_369 at KSC and
-    // flight_373 at Desert: 0.098567 at 72.68 m, 0.106852 at 824.03 m.
-    // V1 display only; retain the historical roll envelope as a floor.
-    "v1_roll_fit_coefficient",0.0985669551,"v1_roll_reference_altitude_m",72.68,
-    "v1_roll_altitude_exponent",0.000107417037,
+    // V1 display roll fit: log-linear altitude regression of mass-normalized
+    // 20-100 m/s launches 369 (KSC), 373 (Desert), 374/375 (Nye).
+    // 2% roll reserve covers the fitted runs; 376 is a held-out repeat.
+    // Separate from the conservative takeoff/liftoff envelope above.
+    "v1_roll_fit_coefficient",0.0977610258,"v1_roll_reference_altitude_m",72.68,
+    "v1_roll_altitude_exponent",0.000112892613,"v1_roll_margin_fraction",0.02,
     "climb_distance_m",1230,"climb_mass_exponent",2,
     "distance_margin_fraction",0.15,"screen_height_m",35,
     "validated_rotation_speed_mps",110,"rotation_speed_tolerance_mps",0.01,
