@@ -99,10 +99,11 @@ function ascent_display_stop_reference {
 // This does not replace the executive's empirical runway-abort decision.
 function ascent_display_v1_prediction {
     parameter remaining_m, current_speed_mps, mass_t, vr_surface_mps, model.
-    parameter field_altitude_m is 72.68.
+    parameter field_altitude_m is 72.68, runway_key is "".
     local result is lex("valid",false,"speed",0,"limited",false,"remaining_m",remaining_m,
         "mass_t",mass_t,"roll_coefficient",0,"stop_coefficient",0,
-        "roll_model","three_field_v2","reason","runway_unavailable").
+        "roll_model","three_field_v2","runway_key",runway_key,"runway_factor",1,
+        "reason","runway_unavailable").
     if remaining_m < 0 or current_speed_mps < 0 or mass_t <= 0 or vr_surface_mps <= 0 { return result. }
     local mass_scale is mass_t/model["reference_mass_t"].
     // Three-field acceleration fit with a separate roll reserve. The
@@ -111,7 +112,15 @@ function ascent_display_v1_prediction {
     local altitude_roll_k is model["v1_roll_fit_coefficient"] *
         2.718281828459045^(model["v1_roll_altitude_exponent"] *
         max(0,field_altitude_m-model["v1_roll_reference_altitude_m"])).
-    local roll_k is altitude_roll_k*(1+model["v1_roll_margin_fraction"])*mass_scale.
+    // Apply a measured runway correction only where evidence exists. The
+    // 2% roll reserve and the historical stopping envelope remain separate.
+    local runway_factor is 1.
+    if model["v1_roll_runway_factors"]:haskey(runway_key) {
+        set runway_factor to model["v1_roll_runway_factors"][runway_key].
+        set result["roll_model"] to "runway_fit_v3".
+    }
+    set result["runway_factor"] to runway_factor.
+    local roll_k is altitude_roll_k*runway_factor*(1+model["v1_roll_margin_fraction"])*mass_scale.
     local stop_k is model["stop_reference_slope"]*max(1,mass_scale).
     local predicted_speed is sqrt(max(0,(remaining_m-model["stop_reference_margin_m"]+
         roll_k*current_speed_mps^2)/(roll_k+stop_k))).
@@ -194,9 +203,11 @@ function ascent_display_collect {
     // Keep field elevation fixed while climbing; this is a runway estimate.
     local field_takeoff_altitude is ship:altitude.
     if display_takeoff:haskey("field_altitude_m") { set field_takeoff_altitude to display_takeoff["field_altitude_m"]. }
+    local field_runway_key is "".
+    if display_takeoff:haskey("runway_key") { set field_runway_key to display_takeoff["runway_key"]. }
     local v1_prediction is ascent_display_v1_prediction(remaining_for_v1,sample["surface_speed"],ship:mass,
         max(0,sample["vr_speed"]+sample["surface_speed"]-sample["airspeed"]),AVES["Takeoff"],
-        field_takeoff_altitude).
+        field_takeoff_altitude,field_runway_key).
     if v1_prediction["valid"] and display_takeoff["reason"] = "unvalidated_atmosphere" {
         set v1_prediction["reason"] to "atmosphere_extrapolated".
         if ship:mass < AVES["Takeoff"]["minimum_mass_t"] or ship:mass > AVES["Takeoff"]["maximum_mass_t"] {

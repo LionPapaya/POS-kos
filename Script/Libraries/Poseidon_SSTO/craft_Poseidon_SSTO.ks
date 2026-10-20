@@ -385,6 +385,7 @@ function assess_takeoff_runway {
     set estimate["along_track_m"] to 0.
     set estimate["cross_track_m"] to 0.
     set estimate["facing_error_deg"] to 0.
+    set estimate["runway_key"] to "".
     set estimate["field_altitude_m"] to ship:altitude.
     set estimate["mass_t"] to ship:mass.
     set estimate["nominal_propulsion_assumed"] to true.
@@ -400,6 +401,7 @@ function assess_takeoff_runway {
     set estimate to takeoff_performance(ship:mass,geometry["remaining_m"],AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"],
         1,1,selected_runway["location"],selected_runway["runway_num"],geometry["along_track_m"]).
     set estimate["remaining_runway_m"] to geometry["remaining_m"].
+    set estimate["runway_key"] to selected_runway["location"]+"/"+selected_runway["runway_num"].
     set estimate["field_altitude_m"] to ship:altitude.
     set estimate["mass_t"] to ship:mass.
     set estimate["nominal_propulsion_assumed"] to true.
@@ -625,6 +627,9 @@ Poseidon_SSTO:add("Takeoff",lex(
     // Separate from the conservative takeoff/liftoff envelope above.
     "v1_roll_fit_coefficient",0.0977610258,"v1_roll_reference_altitude_m",72.68,
     "v1_roll_altitude_exponent",0.000112892613,"v1_roll_margin_fraction",0.02,
+    // Flight 380 roll fit; checked against 381. Only the tested direction.
+    // Correct local performance without treating altitude as its sole cause.
+    "v1_roll_runway_factors",lex("Area-15/31",0.8437635112),
     "climb_distance_m",1230,"climb_mass_exponent",2,
     "distance_margin_fraction",0.15,"screen_height_m",35,
     "validated_rotation_speed_mps",110,"rotation_speed_tolerance_mps",0.01,

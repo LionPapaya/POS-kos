@@ -928,6 +928,8 @@ function flight_log_ascent_display_observe {
         "|v1_runway_remaining_m="+snapshot["v1_prediction"]["remaining_m"]+
         "|v1_mass_t="+snapshot["v1_prediction"]["mass_t"]+
         "|v1_roll_model="+snapshot["v1_prediction"]["roll_model"]+
+        "|v1_runway_key="+snapshot["v1_prediction"]["runway_key"]+
+        "|v1_runway_factor="+snapshot["v1_prediction"]["runway_factor"]+
         "|v1_roll_coefficient="+snapshot["v1_prediction"]["roll_coefficient"]+
         "|v1_stop_coefficient="+snapshot["v1_prediction"]["stop_coefficient"]+
         "|v1_marker_surface_mps="+snapshot["v1_marker_speed"]+
