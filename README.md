@@ -154,6 +154,54 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 
 During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
 
+The ascent manager starts with a **Takeoff** surface-speed bar and V1/VR ticks.
+It remains visible through rotation and changes to the altitude/airspeed chart
+only after the rotate phase ends. The V1 marker initially uses a 113.6 m/s
+surface-speed reference: two supplied accelerate/stop measurements reached
+1252-1254 m rolled at that speed, near the current runway-stop model's 1255 m
+validity boundary. It is an estimated reference, not the V1 decision. When the
+live runway-feasibility check actually calls V1, the reference latches that
+measured surface speed. VR comes from the configured rotation
+airspeed, translated to the current surface-speed frame for its tick. Coincident
+thresholds share one tick. The displayed V1 tick is always capped at VR in the
+bar's surface-speed frame, including after a callout. The numeric callout and log
+retain the true measured speed even when the tick is capped. Numeric labels
+distinguish estimated/called V1 and VR.
+
+The takeoff stopping-distance reference reuses the existing conservative fit
+`0.055 * surface_speed^2 + 30` metres over its calibrated 13-113.6 m/s interval.
+It covers all 12 supplied stopping measurements and is unavailable outside that
+interval. Both the speed marker and this readout are passive display references;
+the actual runway-stop and rotation decisions continue to use their live inputs.
+
+After takeoff the manager automatically uses two guidance pages: **Ascent 1** covers
+alignment through NERV assist with a fixed altitude/airspeed chart, and **Ascent 2**
+covers closed-cycle climb and apoapsis build with the cutoff target and orbit
+readouts. Its large apoapsis/cutoff panel includes remaining altitude and a
+progress bar; closed-cycle climb shows the RAPIER cutoff before switching to
+the NERV ascent cutoff. Circularization has a separate page with a large
+estimated countdown to the insertion burn window, remaining delta-v, alignment,
+burn-duration estimate, and actual/requested orbit. The countdown uses the live
+controller's timing gate; ignition still requires its altitude and alignment
+conditions. Missing or stale insertion estimates display as unavailable rather
+than counting down old data. The climb chart's
+cross is a planning aimpoint, not a predicted flight path; reaching the altitude
+trigger starts NERV assist even if the speed aimpoint has not been reached.
+
+The status line distinguishes tracking, insufficient observed progress, manual
+control, protection activity, and recovery. Tracking means steering is within a
+5-degree display threshold and progress has been observed over a two-second
+window; it is advisory and does not change the flight law or abort criteria.
+The display refreshes at 2 Hz and shows its sample UT so a frozen readout is
+recognizable. Final insertion readouts remain available until the window is
+closed. `ascent_display_state` events record page/phase/status changes at low
+logging level; medium adds 1 Hz display samples and high records each fresh
+display snapshot. Normal flight telemetry retains its existing rates.
+
+The chart uses one background PNG and two small marker images. Placement is
+based on kOS layout offsets and still needs in-game KSP/Unity verification;
+the experimental offline GUI workbench cannot establish final image alignment.
+
 ### Targeted vacuum landing
 
 Use the **Vacuum Landing** item from the main menu, or run `0:/POS4.ks`. It operates only on bodies without an atmosphere. It keeps the R.A.P.I.E.R.s disabled and uses the LV-N engines for both the de-orbit node and powered descent.

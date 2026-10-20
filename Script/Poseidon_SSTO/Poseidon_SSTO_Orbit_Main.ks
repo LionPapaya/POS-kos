@@ -43,6 +43,7 @@ local speed_trend is 0.
 local ascent_orbit_complete is false.
 
 
+set confirm_in to false.
 local Target_orbit is create_assent_gui().
 set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
@@ -93,6 +94,7 @@ if launch_heading < 0 {
 }
 set previous_speed to ship:airspeed.
 set t0 to -1.
+ascent_display_init().
 local takeoff_start_position is ship:geoposition.
 local takeoff_estimate is assess_takeoff_runway(active_runway).
 local takeoff_evidence is lex("released",false,"rotated",false,"airborne",false,
@@ -114,12 +116,7 @@ until running = false{
     update_readouts().
     dap:update().
     update_assent_gui().
-
-    if ship:altitude < ascent["display_altitude"] and ship:airspeed < ascent["display_speed"]{
-        set console_mode to "assent".
-    }else{
-         set console_mode to "Data".
-    }
+    flight_log_ascent_display_observe(ascent_display_data,ascent_display_log).
     set speed_trend to ship:airspeed - previous_speed.
     set previous_speed to ship:airspeed.
 
@@ -174,8 +171,12 @@ until running = false{
                 local v1_check is runway_abort_feasibility(takeoff_start_position,active_runway["end"]).
                 if not v1_check["permitted"] {
                     set v1_announced to true.
+                    // Passive speed-marker capture. The runway test above,
+                    // not the GUI's estimated speed, remains the V1 decision.
+                    set ascent_display_state["v1_called"] to true.
+                    set ascent_display_state["v1_actual_speed"] to ship:velocity:surface:mag.
                     set Lastest_status to "V1 - RTLS preferred".
-                    flight_log_event("v1","rolled_m=" + round(v1_check["roll_distance_m"]) + "|required_m=" + round(v1_check["required_stop_distance_m"]) + "|remaining_m=" + round(v1_check["runway_remaining_m"]) + "|model_valid=" + v1_check["model_valid"] + "|preferred_abort=rtls").
+                    flight_log_event("v1","rolled_m=" + round(v1_check["roll_distance_m"]) + "|required_m=" + round(v1_check["required_stop_distance_m"]) + "|remaining_m=" + round(v1_check["runway_remaining_m"]) + "|model_valid=" + v1_check["model_valid"] + "|surface_speed_mps="+ascent_display_state["v1_actual_speed"]+"|airspeed_mps="+ship:airspeed+"|preferred_abort=rtls").
                 }
             }
             if ship:airspeed > AVES["Speed"]["Rotate"]{
@@ -857,6 +858,13 @@ until running = false{
                                     2/(radius_now+ship:body:radius+safe_height+100)))).
                                 local remaining_dv is max(0,target_speed-tangent:mag).
                                 set abort_state["burn_seconds"] to remaining_dv/max(0.01,power["acceleration"]).
+                                // Passive GUI evidence from the same calculation and time gate
+                                // used below. These fields never participate in control decisions.
+                                set abort_state["display_remaining_dv"] to remaining_dv.
+                                set abort_state["display_window_ut"] to time:seconds+ship:orbit:eta:apoapsis-
+                                    abort_state["burn_seconds"]/2-15.
+                                set abort_state["display_altitude_ready"] to ship:altitude >= safe_height.
+                                set abort_state["display_insertion_ut"] to time:seconds.
                                 set dapthrottle to 0.
                                 if abort_state["phase"] = "coast_align" and ship:altitude >= safe_height and
                                     ship:orbit:eta:apoapsis <= abort_state["burn_seconds"]/2+15 {
@@ -1478,6 +1486,7 @@ until running = false{
             flight_log_event("recovery_handoff","mode="+abort_state["mode"]+
                 "|phase="+abort_state["handoff_phase"]+"|runway="+abort_state["target"]["location"]+
                 "_"+abort_state["target"]["runway_num"]).
+            assent_gui:hide().
             runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks",lex("force",true,
                 "Location",abort_state["target"]["location"],"Runway",abort_state["target"]["runway_num"],
                 "context",handoff_context)).
@@ -1510,7 +1519,8 @@ until running = false{
         } else { reset_sys(). }
         set warp to 0.
         update_readouts().
-        assent_gui:hide().
+        update_assent_gui().
+        flight_log_ascent_display_observe(ascent_display_data,ascent_display_log).
     }
     if t0 >= 0 and not takeoff_evidence["screen_reached"] {
         flight_log_takeoff_observe(takeoff_evidence,takeoff_estimate,takeoff_start_position,t0,step).

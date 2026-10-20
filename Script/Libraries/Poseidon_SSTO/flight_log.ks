@@ -882,6 +882,58 @@ function flight_log_maneuver_observe {
     flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
 }
 
+// Ascent GUI evidence is a passive copy of the displayed snapshot. Low emits
+// page/phase/health transitions, medium samples at 1 Hz, high on each fresh
+// display snapshot (2 Hz). The normal flight.csv high-rate stream is unchanged.
+// Never call this observer from trajectory predictors or GUI rendering itself.
+function flight_log_ascent_display_observe {
+    parameter snapshot, evidence.
+    if POS_LOG_LEVEL = 0 { return. }
+    local changed is snapshot["page"] <> evidence["page"] or snapshot["phase"] <> evidence["phase"] or
+        snapshot["health"] <> evidence["health"].
+    if snapshot["ut"] = evidence["last_ut"] and not changed { return. }
+    set evidence["last_ut"] to snapshot["ut"].
+    local sample_due is POS_LOG_LEVEL >= 2 and time:seconds >= evidence["next_sample"].
+    if not changed and not sample_due { return. }
+    local detail is "page="+snapshot["page"]+"|phase="+snapshot["phase"]+"|health="+snapshot["health"]+
+        "|sample_ut="+snapshot["ut"]+"|command_kind="+snapshot["command_kind"]+
+        "|command_valid="+snapshot["command_valid"]+"|steering_error_deg="+snapshot["attitude_error"]+
+        "|pitch_command_deg="+snapshot["pitch_command"]+"|heading_command_deg="+snapshot["heading_command"]+
+        "|progress_valid="+snapshot["progress_valid"]+"|speed_rate_mps2="+snapshot["speed_rate"]+
+        "|apo_rate_mps="+snapshot["apo_rate"]+"|peri_rate_mps="+snapshot["peri_rate"]+
+        "|altitude_m="+snapshot["altitude"]+"|airspeed_mps="+snapshot["airspeed"]+
+        "|surface_speed_mps="+snapshot["surface_speed"]+"|vs_mps="+snapshot["vertical_speed"]+
+        "|pitch_deg="+snapshot["pitch"]+"|heading_deg="+snapshot["heading"]+
+        "|inclination_deg="+snapshot["inclination"]+"|downrange_m="+snapshot["downrange"]+
+        "|throttle_command="+snapshot["throttle"]+"|dap_mode="+snapshot["dap_mode"]+
+        "|protection="+snapshot["protection"]+"|rapier_mode="+snapshot["rapier_mode"]+
+        "|rapiers="+snapshot["rapiers"]+"|nervs="+snapshot["nervs"]+
+        "|orbit_valid="+snapshot["orbit_valid"]+"|apoapsis_m="+snapshot["apoapsis"]+"|periapsis_m="+snapshot["periapsis"]+
+        "|target_ap_m="+snapshot["target_ap"]+"|target_pe_m="+snapshot["target_pe"]+
+        "|target_inc_deg="+snapshot["target_inc"]+"|climb_alt_m="+snapshot["climb_alt"]+
+        "|climb_speed_mps="+snapshot["climb_speed"]+"|cutoff_ap_m="+snapshot["cutoff_ap"]+
+        "|eta_apoapsis_s="+snapshot["eta_apoapsis"]+"|burn_seconds="+snapshot["burn_seconds"]+
+        "|insertion_valid="+snapshot["insertion_valid"]+"|remaining_dv_mps="+snapshot["remaining_dv"]+
+        "|burn_window_seconds="+snapshot["burn_window_seconds"]+
+        "|insertion_altitude_ready="+snapshot["insertion_altitude_ready"]+
+        "|v1_estimate_surface_mps="+snapshot["v1_estimate"]+"|v1_called="+snapshot["v1_called"]+
+        "|v1_actual_surface_mps="+snapshot["v1_actual_speed"]+"|vr_airspeed_mps="+snapshot["vr_speed"]+
+        "|v1_marker_surface_mps="+snapshot["v1_marker_speed"]+
+        "|stop_reference_valid="+snapshot["stop_reference_valid"]+"|stop_reference_m="+snapshot["stop_reference_m"]+
+        "|alignment_deg="+snapshot["alignment"]+"|outcome="+snapshot["outcome"].
+    if changed {
+        flight_log_event("ascent_display_state",detail).
+        set evidence["page"] to snapshot["page"].
+        set evidence["phase"] to snapshot["phase"].
+        set evidence["health"] to snapshot["health"].
+    }
+    if sample_due {
+        set evidence["next_sample"] to time:seconds.
+        if POS_LOG_LEVEL = 2 { set evidence["next_sample"] to time:seconds+1. }
+        flight_log_event("ascent_display_sample",detail).
+    }
+}
+
 // Takeoff evidence uses events.csv without changing the flight.csv schema.
 // Low: predictions and transitions. Medium: 1 Hz. High: each physics tick.
 // Called only from the real ascent executive, never aerodynamic predictors.
