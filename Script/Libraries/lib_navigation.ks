@@ -79,7 +79,8 @@ function takeoff_runway_geometry {
     parameter geometry_config.
     local along_distance is distance_from_start_m * cos(start_bearing_error_deg).
     local cross_distance is distance_from_start_m * sin(start_bearing_error_deg).
-    local remaining_distance is runway_length_m - along_distance.
+    // A tolerated origin behind the threshold earns no extra runway.
+    local remaining_distance is runway_length_m - max(0,along_distance).
     local valid is runway_length_m > 0 and along_distance >= -geometry_config["start_tolerance_m"] and
         along_distance < runway_length_m and abs(cross_distance) <= geometry_config["cross_track_tolerance_m"] and
         abs(facing_error_deg) <= geometry_config["facing_tolerance_deg"].

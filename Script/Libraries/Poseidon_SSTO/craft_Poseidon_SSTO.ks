@@ -381,6 +381,10 @@ function assess_takeoff_runway {
     local takeoff_config is AVES["Takeoff"].
     local estimate is takeoff_performance(ship:mass,0,AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"]).
     set estimate["remaining_runway_m"] to 0.
+    set estimate["geometry_valid"] to false.
+    set estimate["along_track_m"] to 0.
+    set estimate["cross_track_m"] to 0.
+    set estimate["facing_error_deg"] to 0.
     set estimate["mass_t"] to ship:mass.
     set estimate["nominal_propulsion_assumed"] to true.
     if ship:body:name <> takeoff_config["body"] or selected_runway["heading"] < 0 {
@@ -397,6 +401,8 @@ function assess_takeoff_runway {
     set estimate["remaining_runway_m"] to geometry["remaining_m"].
     set estimate["mass_t"] to ship:mass.
     set estimate["nominal_propulsion_assumed"] to true.
+    set estimate["geometry_valid"] to geometry["valid"].
+    set estimate["facing_error_deg"] to facing_error.
     set estimate["along_track_m"] to geometry["along_track_m"].
     set estimate["cross_track_m"] to geometry["cross_track_m"].
     if not geometry["valid"] {
@@ -619,7 +625,8 @@ Poseidon_SSTO:add("Takeoff",lex(
     "minimum_altitude_m",70,"maximum_altitude_m",325,
     "stop_reference_slope",0.055,"stop_reference_margin_m",30,
     "minimum_stop_reference_speed_mps",13,"maximum_stop_reference_speed_mps",113.6,
-    "geometry",lex("start_tolerance_m",5,"cross_track_tolerance_m",20,"facing_tolerance_deg",10),
+    // Allow the craft origin at the KSC spawn (flight_369: 8.54 m behind start).
+    "geometry",lex("start_tolerance_m",15,"cross_track_tolerance_m",20,"facing_tolerance_deg",10),
     "demonstrated_departure",lex(
         "site","Nye-Island","direction","15","minimum_mass_t",68.72565,
         "maximum_mass_t",68.82,"maximum_start_offset_m",5,"minimum_runway_m",1515,

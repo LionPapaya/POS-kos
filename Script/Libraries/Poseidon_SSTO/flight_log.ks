@@ -965,6 +965,8 @@ function flight_log_takeoff_prediction {
         "|liftoff_fits="+estimate["liftoff_fits"]+"|screen_fits="+estimate["screen_fits"]+
         "|estimated_feasible="+estimate["estimated_feasible"]+"|screen_beyond_runway_m="+estimate["screen_beyond_runway_m"]+
         "|remaining_m="+estimate["remaining_runway_m"]+
+        "|geometry_valid="+estimate["geometry_valid"]+"|along_track_m="+estimate["along_track_m"]+
+        "|cross_track_m="+estimate["cross_track_m"]+"|facing_error_deg="+estimate["facing_error_deg"]+
         "|margin_m="+estimate["runway_margin_m"]+"|distance_margin_fraction="+estimate["distance_margin_fraction"]+
         "|reference_stop_at_rotation_m="+estimate["reference_stop_at_rotation_m"]+
         "|stop_reference_valid="+estimate["stop_reference_valid"]).
