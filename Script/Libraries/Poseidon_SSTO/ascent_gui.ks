@@ -99,11 +99,17 @@ function ascent_display_stop_reference {
 // This does not replace the executive's empirical runway-abort decision.
 function ascent_display_v1_prediction {
     parameter remaining_m, current_speed_mps, mass_t, vr_surface_mps, model.
+    parameter field_altitude_m is 72.68.
     local result is lex("valid",false,"speed",0,"limited",false,"remaining_m",remaining_m,
         "mass_t",mass_t,"roll_coefficient",0,"stop_coefficient",0,"reason","runway_unavailable").
     if remaining_m < 0 or current_speed_mps < 0 or mass_t <= 0 or vr_surface_mps <= 0 { return result. }
     local mass_scale is mass_t/model["reference_mass_t"].
-    local roll_k is model["roll_coefficient"]*mass_scale.
+    // Two-field empirical trend, extrapolated above Desert. Do not reduce
+    // the historical envelope or credit improved performance below KSC.
+    local altitude_roll_k is model["v1_roll_fit_coefficient"] *
+        2.718281828459045^(model["v1_roll_altitude_exponent"] *
+        max(0,field_altitude_m-model["v1_roll_reference_altitude_m"])).
+    local roll_k is max(model["roll_coefficient"],altitude_roll_k)*mass_scale.
     local stop_k is model["stop_reference_slope"]*max(1,mass_scale).
     local predicted_speed is sqrt(max(0,(remaining_m-model["stop_reference_margin_m"]+
         roll_k*current_speed_mps^2)/(roll_k+stop_k))).
@@ -129,7 +135,7 @@ function ascent_display_init {
         "trend_ut",-1,"trend_phase","","speed",0,"apo",0,"peri",0,
         "progress_valid",false,"speed_rate",0,"apo_rate",0,"peri_rate",0,
         "v1_called",false,"v1_actual_speed",-1,
-        "takeoff_estimate",lex("reason","unknown_runway_or_body","remaining_runway_m",-1),
+        "takeoff_estimate",lex("reason","unknown_runway_or_body","remaining_runway_m",-1,"geometry_valid",false),
         "takeoff_start_position",ship:geoposition).
     global ascent_display_log is lex("page","","phase","","health","","next_sample",0,"last_ut",-1).
 }
@@ -173,16 +179,28 @@ function ascent_display_collect {
     set sample["vr_speed"] to AVES["Speed"]["Rotate"].
     local remaining_for_v1 is -1.
     local display_takeoff is ascent_display_state["takeoff_estimate"].
-    if display_takeoff["reason"] <> "unknown_runway_or_body" and
-       display_takeoff["reason"] <> "not_aligned_on_runway" and
-       display_takeoff["reason"] <> "unvalidated_atmosphere" {
+    // Geometry determines runway availability. An atmosphere outside the takeoff
+    // calibration makes this passive estimate extrapolated, not unavailable.
+    if display_takeoff["geometry_valid"] and
+       display_takeoff["reason"] <> "unknown_runway_or_body" and
+       display_takeoff["reason"] <> "not_aligned_on_runway" {
         set remaining_for_v1 to display_takeoff["remaining_runway_m"].
         if defined t0 and t0 >= 0 {
             set remaining_for_v1 to max(0,remaining_for_v1-calcdistance_m(ascent_display_state["takeoff_start_position"],ship:geoposition)).
         }
     }
+    // Keep field elevation fixed while climbing; this is a runway estimate.
+    local field_takeoff_altitude is ship:altitude.
+    if display_takeoff:haskey("field_altitude_m") { set field_takeoff_altitude to display_takeoff["field_altitude_m"]. }
     local v1_prediction is ascent_display_v1_prediction(remaining_for_v1,sample["surface_speed"],ship:mass,
-        max(0,sample["vr_speed"]+sample["surface_speed"]-sample["airspeed"]),AVES["Takeoff"]).
+        max(0,sample["vr_speed"]+sample["surface_speed"]-sample["airspeed"]),AVES["Takeoff"],
+        field_takeoff_altitude).
+    if v1_prediction["valid"] and display_takeoff["reason"] = "unvalidated_atmosphere" {
+        set v1_prediction["reason"] to "atmosphere_extrapolated".
+        if ship:mass < AVES["Takeoff"]["minimum_mass_t"] or ship:mass > AVES["Takeoff"]["maximum_mass_t"] {
+            set v1_prediction["reason"] to "mass_and_atmosphere_extrapolated".
+        }
+    }
     set sample["v1_estimate"] to v1_prediction["speed"].
     set sample["v1_prediction"] to v1_prediction.
     set sample["v1_called"] to ascent_display_state["v1_called"].
@@ -613,8 +631,13 @@ function ascent_display_update_takeoff {
             set ascent_display_v1_label:text to "V1 >= "+round(displayed_v1,1)+" m/s surface".
             set ascent_display_hero_note:text to "Runway permits stop at tick; VR / measured speed limit".
         }
-        if sample["v1_prediction"]["reason"] = "mass_extrapolated" {
+        if sample["v1_prediction"]["reason"] = "mass_extrapolated" or
+           sample["v1_prediction"]["reason"] = "mass_and_atmosphere_extrapolated" {
             set ascent_display_hero_detail:text to ascent_display_hero_detail:text+" | mass extrapolated".
+        }
+        if sample["v1_prediction"]["reason"] = "atmosphere_extrapolated" or
+           sample["v1_prediction"]["reason"] = "mass_and_atmosphere_extrapolated" {
+            set ascent_display_hero_detail:text to ascent_display_hero_detail:text+" | atmosphere extrapolated".
         }
         if not sample["v1_prediction"]["valid"] {
             set v1_point["visible"] to false.

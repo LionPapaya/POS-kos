@@ -385,6 +385,7 @@ function assess_takeoff_runway {
     set estimate["along_track_m"] to 0.
     set estimate["cross_track_m"] to 0.
     set estimate["facing_error_deg"] to 0.
+    set estimate["field_altitude_m"] to ship:altitude.
     set estimate["mass_t"] to ship:mass.
     set estimate["nominal_propulsion_assumed"] to true.
     if ship:body:name <> takeoff_config["body"] or selected_runway["heading"] < 0 {
@@ -399,6 +400,7 @@ function assess_takeoff_runway {
     set estimate to takeoff_performance(ship:mass,geometry["remaining_m"],AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"],
         1,1,selected_runway["location"],selected_runway["runway_num"],geometry["along_track_m"]).
     set estimate["remaining_runway_m"] to geometry["remaining_m"].
+    set estimate["field_altitude_m"] to ship:altitude.
     set estimate["mass_t"] to ship:mass.
     set estimate["nominal_propulsion_assumed"] to true.
     set estimate["geometry_valid"] to geometry["valid"].
@@ -617,6 +619,11 @@ Poseidon_SSTO:add("Takeoff",lex(
     "body","Kerbin",
     "reference_mass_t",69.5,"minimum_mass_t",68.72565,"maximum_mass_t",70.04567,
     "roll_coefficient",0.107,"lift_speed_mps",133,"rotation_response",3.6,
+    // Mass-normalized launch fits (20-100 m/s), flight_369 at KSC and
+    // flight_373 at Desert: 0.098567 at 72.68 m, 0.106852 at 824.03 m.
+    // V1 display only; retain the historical roll envelope as a floor.
+    "v1_roll_fit_coefficient",0.0985669551,"v1_roll_reference_altitude_m",72.68,
+    "v1_roll_altitude_exponent",0.000107417037,
     "climb_distance_m",1230,"climb_mass_exponent",2,
     "distance_margin_fraction",0.15,"screen_height_m",35,
     "validated_rotation_speed_mps",110,"rotation_speed_tolerance_mps",0.01,
