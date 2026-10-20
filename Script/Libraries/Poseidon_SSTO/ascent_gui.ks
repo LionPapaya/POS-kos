@@ -86,16 +86,51 @@ function ascent_display_speed_marker {
 // never substitute this speed curve for the actual runway-stop decision.
 function ascent_display_stop_reference {
     parameter reference_speed, stop_config.
+    parameter mass_scale is 1.
     return lex("valid",reference_speed >= stop_config["minimum_stop_reference_speed_mps"] and
         reference_speed <= stop_config["maximum_stop_reference_speed_mps"],
-        "distance",stop_config["stop_reference_slope"]*max(0,reference_speed)^2+stop_config["stop_reference_margin_m"]).
+        "distance",stop_config["stop_reference_slope"]*max(1,mass_scale)*max(0,reference_speed)^2+stop_config["stop_reference_margin_m"]).
+}
+
+// Passive accelerate-stop estimate. Solve remaining = k*(V1^2-v^2)
+// + b*V1^2 + margin. k comes from logged takeoffs; b envelopes the twelve
+// takeoff-weight aborts. Fixed wheel brake force motivates linear mass
+// scaling; do not credit improved braking below the reference mass.
+// This does not replace the executive's empirical runway-abort decision.
+function ascent_display_v1_prediction {
+    parameter remaining_m, current_speed_mps, mass_t, vr_surface_mps, model.
+    local result is lex("valid",false,"speed",0,"limited",false,"remaining_m",remaining_m,
+        "mass_t",mass_t,"roll_coefficient",0,"stop_coefficient",0,"reason","runway_unavailable").
+    if remaining_m < 0 or current_speed_mps < 0 or mass_t <= 0 or vr_surface_mps <= 0 { return result. }
+    local mass_scale is mass_t/model["reference_mass_t"].
+    local roll_k is model["roll_coefficient"]*mass_scale.
+    local stop_k is model["stop_reference_slope"]*max(1,mass_scale).
+    local predicted_speed is sqrt(max(0,(remaining_m-model["stop_reference_margin_m"]+
+        roll_k*current_speed_mps^2)/(roll_k+stop_k))).
+    local speed_limit is min(vr_surface_mps,model["maximum_stop_reference_speed_mps"]).
+    set result["valid"] to true.
+    set result["speed"] to min(predicted_speed,speed_limit).
+    set result["limited"] to predicted_speed > speed_limit.
+    set result["roll_coefficient"] to roll_k.
+    set result["stop_coefficient"] to stop_k.
+    set result["reason"] to "accelerate_stop_estimate".
+    if mass_t < model["minimum_mass_t"] or mass_t > model["maximum_mass_t"] {
+        set result["reason"] to "mass_extrapolated".
+    }
+    if predicted_speed < model["minimum_stop_reference_speed_mps"] {
+        set result["valid"] to false.
+        set result["reason"] to "below_stop_calibration".
+    }
+    return result.
 }
 
 function ascent_display_init {
     global ascent_display_state is lex("next_update",0,"origin",ship:geoposition,
         "trend_ut",-1,"trend_phase","","speed",0,"apo",0,"peri",0,
         "progress_valid",false,"speed_rate",0,"apo_rate",0,"peri_rate",0,
-        "v1_called",false,"v1_actual_speed",-1).
+        "v1_called",false,"v1_actual_speed",-1,
+        "takeoff_estimate",lex("reason","unknown_runway_or_body","remaining_runway_m",-1),
+        "takeoff_start_position",ship:geoposition).
     global ascent_display_log is lex("page","","phase","","health","","next_sample",0,"last_ut",-1).
 }
 
@@ -136,10 +171,24 @@ function ascent_display_collect {
         "elapsed",0,"burn_seconds",-1,"alignment",-1,"remaining_dv",-1,
         "insertion_valid",false,"burn_window_seconds",-1,"insertion_altitude_ready",false).
     set sample["vr_speed"] to AVES["Speed"]["Rotate"].
-    set sample["v1_estimate"] to cfg["display_v1_estimate_mps"].
+    local remaining_for_v1 is -1.
+    local display_takeoff is ascent_display_state["takeoff_estimate"].
+    if display_takeoff["reason"] <> "unknown_runway_or_body" and
+       display_takeoff["reason"] <> "not_aligned_on_runway" and
+       display_takeoff["reason"] <> "unvalidated_atmosphere" {
+        set remaining_for_v1 to display_takeoff["remaining_runway_m"].
+        if defined t0 and t0 >= 0 {
+            set remaining_for_v1 to max(0,remaining_for_v1-calcdistance_m(ascent_display_state["takeoff_start_position"],ship:geoposition)).
+        }
+    }
+    local v1_prediction is ascent_display_v1_prediction(remaining_for_v1,sample["surface_speed"],ship:mass,
+        max(0,sample["vr_speed"]+sample["surface_speed"]-sample["airspeed"]),AVES["Takeoff"]).
+    set sample["v1_estimate"] to v1_prediction["speed"].
+    set sample["v1_prediction"] to v1_prediction.
     set sample["v1_called"] to ascent_display_state["v1_called"].
     set sample["v1_actual_speed"] to ascent_display_state["v1_actual_speed"].
-    local stopping_reference is ascent_display_stop_reference(sample["surface_speed"],AVES["Takeoff"]).
+    local stopping_reference is ascent_display_stop_reference(sample["surface_speed"],AVES["Takeoff"],
+        ship:mass/AVES["Takeoff"]["reference_mass_t"]).
     set sample["stop_reference_valid"] to stopping_reference["valid"].
     set sample["stop_reference_m"] to stopping_reference["distance"].
     // kOS can throw while pushing an infinite apsis suffix onto its stack.
@@ -547,7 +596,7 @@ function ascent_display_update_takeoff {
     }
     set ascent_display_hero_title:text to "TAKEOFF SURFACE SPEED".
     set ascent_display_hero_value:text to round(sample["surface_speed"],1)+" m/s".
-    set ascent_display_hero_detail:text to "V1 estimate only - actual callout follows runway stopping margin".
+    set ascent_display_hero_detail:text to "V1 accelerate-stop estimate | runway left "+round(sample["v1_prediction"]["remaining_m"])+" m".
     set ascent_display_hero_detail:style:textcolor to RGBA(0.69,0.74,0.78,1).
     if sample["v1_called"] { set ascent_display_hero_detail:text to "V1 CALLED - RTLS preferred". }
     if sample["phase"] = "rotate" { set ascent_display_hero_title:text to "ROTATION IN PROGRESS / SURFACE SPEED". }
@@ -559,6 +608,20 @@ function ascent_display_update_takeoff {
     set ascent_display_hero_note:text to "Surface-speed scale 0-"+round(bar_max_speed,1)+" m/s | VR tick is airspeed-equivalent".
     local v1_point is ascent_display_speed_marker(displayed_v1,bar_max_speed).
     local vr_point is ascent_display_speed_marker(vr_surface_speed,bar_max_speed).
+    if not sample["v1_called"] {
+        if sample["v1_prediction"]["limited"] {
+            set ascent_display_v1_label:text to "V1 >= "+round(displayed_v1,1)+" m/s surface".
+            set ascent_display_hero_note:text to "Runway permits stop at tick; VR / measured speed limit".
+        }
+        if sample["v1_prediction"]["reason"] = "mass_extrapolated" {
+            set ascent_display_hero_detail:text to ascent_display_hero_detail:text+" | mass extrapolated".
+        }
+        if not sample["v1_prediction"]["valid"] {
+            set v1_point["visible"] to false.
+            set ascent_display_v1_label:text to "V1 EST unavailable".
+            set ascent_display_hero_detail:text to "V1: "+sample["v1_prediction"]["reason"].
+        }
+    }
     // Coincident thresholds share a single tick rather than hiding each other.
     if abs(v1_point["x"]-vr_point["x"]) < 3 and v1_point["visible"] and vr_point["visible"] {
         set v1_point["visible"] to false.

@@ -97,6 +97,8 @@ set t0 to -1.
 ascent_display_init().
 local takeoff_start_position is ship:geoposition.
 local takeoff_estimate is assess_takeoff_runway(active_runway).
+set ascent_display_state["takeoff_estimate"] to takeoff_estimate.
+set ascent_display_state["takeoff_start_position"] to takeoff_start_position.
 local takeoff_evidence is lex("released",false,"rotated",false,"airborne",false,
     "screen_reached",false,"next_sample",0,"base_altitude_m",ship:altitude).
 print("Takeoff estimate: " + takeoff_estimate["reason"]).
@@ -155,6 +157,8 @@ until running = false{
                 set takeoff_start_position to ship:geoposition.
                 set takeoff_evidence["base_altitude_m"] to ship:altitude.
                 set takeoff_estimate to assess_takeoff_runway(active_runway).
+                set ascent_display_state["takeoff_estimate"] to takeoff_estimate.
+                set ascent_display_state["takeoff_start_position"] to takeoff_start_position.
                 flight_log_takeoff_prediction(takeoff_estimate,"brake_release").
             }
         }

@@ -891,6 +891,10 @@ function flight_log_ascent_display_observe {
     if POS_LOG_LEVEL = 0 { return. }
     local changed is snapshot["page"] <> evidence["page"] or snapshot["phase"] <> evidence["phase"] or
         snapshot["health"] <> evidence["health"].
+    // Include prediction availability / extrapolation changes at low level too.
+    if not evidence:haskey("v1_reason") { set changed to true. }
+    else if snapshot["v1_prediction"]["reason"] <> evidence["v1_reason"] or
+        snapshot["v1_prediction"]["limited"] <> evidence["v1_limited"] { set changed to true. }
     if snapshot["ut"] = evidence["last_ut"] and not changed { return. }
     set evidence["last_ut"] to snapshot["ut"].
     local sample_due is POS_LOG_LEVEL >= 2 and time:seconds >= evidence["next_sample"].
@@ -918,6 +922,13 @@ function flight_log_ascent_display_observe {
         "|insertion_altitude_ready="+snapshot["insertion_altitude_ready"]+
         "|v1_estimate_surface_mps="+snapshot["v1_estimate"]+"|v1_called="+snapshot["v1_called"]+
         "|v1_actual_surface_mps="+snapshot["v1_actual_speed"]+"|vr_airspeed_mps="+snapshot["vr_speed"]+
+        "|v1_prediction_valid="+snapshot["v1_prediction"]["valid"]+
+        "|v1_prediction_reason="+snapshot["v1_prediction"]["reason"]+
+        "|v1_prediction_limited="+snapshot["v1_prediction"]["limited"]+
+        "|v1_runway_remaining_m="+snapshot["v1_prediction"]["remaining_m"]+
+        "|v1_mass_t="+snapshot["v1_prediction"]["mass_t"]+
+        "|v1_roll_coefficient="+snapshot["v1_prediction"]["roll_coefficient"]+
+        "|v1_stop_coefficient="+snapshot["v1_prediction"]["stop_coefficient"]+
         "|v1_marker_surface_mps="+snapshot["v1_marker_speed"]+
         "|stop_reference_valid="+snapshot["stop_reference_valid"]+"|stop_reference_m="+snapshot["stop_reference_m"]+
         "|alignment_deg="+snapshot["alignment"]+"|outcome="+snapshot["outcome"].
@@ -926,6 +937,8 @@ function flight_log_ascent_display_observe {
         set evidence["page"] to snapshot["page"].
         set evidence["phase"] to snapshot["phase"].
         set evidence["health"] to snapshot["health"].
+        set evidence["v1_reason"] to snapshot["v1_prediction"]["reason"].
+        set evidence["v1_limited"] to snapshot["v1_prediction"]["limited"].
     }
     if sample_due {
         set evidence["next_sample"] to time:seconds.

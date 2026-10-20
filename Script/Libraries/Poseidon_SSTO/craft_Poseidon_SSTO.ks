@@ -563,7 +563,6 @@ Poseidon_SSTO:add("Ascent",lex(
     // Display reference only: two measured rolls at 1252-1254 m reached
     // 113.6 m/s surface speed, near the V1 model's 1255 m validity limit.
     // Actual V1 remains the live runway_abort_feasibility decision.
-    "display_v1_estimate_mps",113.6,
     "liftoff_height_above_runway",13,
     "rotate_height_above_runway",30,
     "rotate_pitch",20,
