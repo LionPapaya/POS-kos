@@ -870,6 +870,7 @@ until running = false{
                 abort_set_fuel_dump(false).
                 set landing_preflare_active to terminal_route["landing_handoff_kind"] = "preflare".
                 set landing_preflare_escape_since to -1.
+                set terminal_route["landing_pullup_since"] to -1.
                 set terminal_route_debug["landing_preflare_active"] to landing_preflare_active.
                 local handoff_exit_margin is 0.
                 if landing_commit:haskey("exit_margin") { set handoff_exit_margin to landing_commit["exit_margin"]. }
@@ -908,6 +909,7 @@ until running = false{
             set landing_ground_contact_seen to true.
             set landing_preflare_active to false.
             set terminal_route_debug["landing_preflare_active"] to false.
+            set terminal_route_debug["landing_pullup_active"] to false.
         }
         update_team_dap_gui().
         // The final flare deliberately remains a descent.  Interpolating the
@@ -925,11 +927,14 @@ until running = false{
                AVES["TerminalRoute"]["PreflareCommit"]["escape_persistence"] {
                 set landing_preflare_active to false.
                 set terminal_route_debug["landing_preflare_active"] to false.
+                set terminal_route_debug["landing_pullup_active"] to false.
                 set terminal_route["go_around_reason"] to "committed_preflare_unstable".
                 set terminal_route["go_around_count"] to terminal_route["go_around_count"]+1.
                 flight_log_event("terminal_go_around","reason=committed_preflare_unstable|altitude="+round(alt_ovr_runway,1)+
                     "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(preflare_command["profile_error"],1)+
-                    "|exit_margin="+round(preflare_command["exit_margin"],1)).
+                    "|exit_margin="+round(preflare_command["exit_margin"],1)+
+                    "|escape_reason="+preflare_command["escape_reason"]+"|pullup_margin="+round(preflare_command["pullup_margin"],1)+
+                    "|remaining_response_delay="+round(preflare_command["response_delay"],2)).
                 terminal_route_change_phase(terminal_route,"go_around").
                 set terminal_route["recovery_throttle_floor"] to AVES["TerminalRoute"]["GoAround"]["recovery_throttle"].
                 set terminal_route["propulsion_mode"] to "air".
@@ -944,6 +949,7 @@ until running = false{
         if alt_ovr_runway < landing_config["flare_start_altitude"] {
             set landing_preflare_active to false.
             set terminal_route_debug["landing_preflare_active"] to false.
+            set terminal_route_debug["landing_pullup_active"] to false.
             set flare_fraction to max(0,min(1,
                 (landing_config["flare_start_altitude"] - alt_ovr_runway) /
                 max(landing_config["flare_start_altitude"] - landing_config["touchdown_altitude"],1)

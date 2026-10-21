@@ -118,6 +118,9 @@ global terminal_route_debug is lex(
     "preflare_commit_stable", false,
     "preflare_commit_margin", 0,
     "landing_preflare_active", false,
+    "landing_pullup_active", false,
+    "landing_pullup_margin", 0,
+    "landing_pullup_response_delay", 0,
     "go_around_reason", "",
     "last_log_time", -1
 ).
@@ -226,7 +229,7 @@ function terminal_mass_speed_scale {
 // derated and scales with dynamic pressure per unit mass.
 function terminal_sink_arrest_prediction {
     parameter measured_vs, target_vs, horizontal_speed, measured_mass, measured_airspeed, config_TR,
-        available_vertical_acceleration is -1.
+        available_vertical_acceleration is -1, response_delay_credit is 0.
     local prediction_config is config_TR["PreflarePrediction"].
     local mass_scale is terminal_mass_speed_scale(measured_mass,config_TR).
     local reference_speed is config_TR["ApproachSpeed"]["target_speed"]*mass_scale.
@@ -236,6 +239,7 @@ function terminal_sink_arrest_prediction {
     local heavy_ratio is max(0,measured_mass/max(1,config_TR["max_landing_mass"])-1).
     local response_delay is prediction_config["response_delay_seconds"]+
         heavy_ratio*prediction_config["heavy_mass_delay_seconds"].
+    set response_delay to max(0,response_delay-max(0,response_delay_credit)).
     local vertical_deceleration is max(0.1,
         prediction_config["reference_vertical_deceleration"]*capability_ratio).
     if available_vertical_acceleration >= 0 {
@@ -998,7 +1002,8 @@ function terminal_route_preflare_commit_check {
     return lex("stable",terminal_preflare_commit_decision(sample,config_TR),
         "glideslope_error",ship:altitude-profile["altitude"],"exit_margin",exit_margin,
         "arrest_height",arrest["absolute_arrest_height"],"target_vertical_speed",target_vs,
-        "usable_acceleration",available_acceleration,"raw_acceleration",raw_acceleration).
+        "usable_acceleration",available_acceleration,"raw_acceleration",raw_acceleration,
+        "clearance",clearance,"closure_speed",closure_speed).
 }
 
 // Use the landing controller's existing bounded pitch gain during committed
@@ -1030,16 +1035,62 @@ function terminal_landing_preflare_guidance {
     set terminal_route_debug["pullup_far_accel"] to check["usable_acceleration"].
     set terminal_route_debug["pullup_far_raw_accel"] to check["raw_acceleration"].
     set terminal_route_debug["landing_preflare_active"] to true.
+    // TEAM no longer updates its route after ownership transfers. Keep the
+    // logged geometry live during committed preflare instead of freezing it
+    // at the handoff point.
+    local live_profile is calculate_glideslope_profile(geometry["distance"]).
+    set terminal_route_debug["remaining_distance"] to geometry["distance"].
+    set terminal_route_debug["along_track"] to geometry["along_track"].
+    set terminal_route_debug["cross_track"] to geometry["cross_track"].
+    set terminal_route_debug["runway_heading_error"] to geometry["heading_error"].
+    set terminal_route_debug["profile_region"] to live_profile["region"].
+    set terminal_route_debug["profile_altitude"] to live_profile["altitude"].
+    set terminal_route_debug["profile_gradient"] to live_profile["gradient"].
     set terminal_route_debug["profile_error"] to command["profile_error"].
     set terminal_route_debug["desired_vertical_speed"] to command["desired_vs"].
     set terminal_route_debug["preflare_preview_feedforward_vs"] to command["preview_feedforward_vs"].
     set terminal_route_debug["preflare_altitude_correction"] to command["altitude_correction"].
-    local unsafe is abs(command["profile_error"]) > config_TR["PreflareCommit"]["escape_profile_error"] or
-        abs(roll_for()) > config_TR["PreflareCommit"]["escape_bank"] or
-        abs(geometry["heading_error"]) > 15 or abs(geometry["cross_track"]) > 150.
-    if route["pullup_far_valid"] and far_age <= config_TR["PreflareCommit"]["maximum_far_age"] and
-       check["exit_margin"] < 0 { set unsafe to true. }
-    return lex("desired_vs",command["desired_vs"],"unsafe",unsafe,
+    // The full-delay margin is a request to finish the pull-up, not an
+    // immediate abandonment of an otherwise aligned landing. Once requested,
+    // keep the shallow-sink command through the final flare. Only this active
+    // command earns response-time credit; ordinary profile tracking does not.
+    local fresh_force is route["pullup_far_valid"] and far_age >= 0 and
+        far_age <= config_TR["PreflareCommit"]["maximum_far_age"].
+    if route["landing_pullup_since"] < 0 and fresh_force and
+       check["exit_margin"] < config_TR["PreflareCommit"]["minimum_exit_margin"] {
+        set route["landing_pullup_since"] to time:seconds.
+        flight_log_event("landing_pullup_start","height="+round(geometry["altitude"],1)+
+            "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(command["profile_error"],1)+
+            "|full_delay_margin="+round(check["exit_margin"],1)).
+    }
+    local pullup_active is route["landing_pullup_since"] >= 0.
+    local pullup_margin is check["exit_margin"].
+    local remaining_delay is 0.
+    if pullup_active {
+        set command["desired_vs"] to max(command["desired_vs"],check["target_vertical_speed"]).
+        local arrest is terminal_sink_arrest_prediction(ship:verticalspeed,check["target_vertical_speed"],
+            check["closure_speed"],ship:mass,ship:airspeed,config_TR,check["usable_acceleration"],
+            time:seconds-route["landing_pullup_since"]).
+        set remaining_delay to arrest["response_delay"].
+        set pullup_margin to check["clearance"]-arrest["absolute_arrest_height"]-AVES["Landing"]["flare_start_altitude"].
+    }
+    set terminal_route_debug["landing_pullup_active"] to pullup_active.
+    set terminal_route_debug["landing_pullup_margin"] to pullup_margin.
+    set terminal_route_debug["landing_pullup_response_delay"] to remaining_delay.
+    set terminal_route_debug["desired_vertical_speed"] to command["desired_vs"].
+    local escape_reason is "".
+    if abs(command["profile_error"]) > config_TR["PreflareCommit"]["escape_profile_error"] {
+        set escape_reason to "profile_error".
+    }
+    if abs(roll_for()) > config_TR["PreflareCommit"]["escape_bank"] or
+       abs(geometry["heading_error"]) > 15 or abs(geometry["cross_track"]) > 150 {
+        set escape_reason to "alignment".
+    }
+    if fresh_force and pullup_active and pullup_margin < 0 {
+        set escape_reason to "pullup_clearance".
+    }
+    return lex("desired_vs",command["desired_vs"],"unsafe",escape_reason <> "",
+        "escape_reason",escape_reason,"pullup_margin",pullup_margin,"response_delay",remaining_delay,
         "profile_error",command["profile_error"],"exit_margin",check["exit_margin"]).
 }
 
@@ -1243,6 +1294,7 @@ function terminal_route_init {
         "landing_stable_since", -1,
         "preflare_stable_since", -1,
         "landing_handoff_kind", "none",
+        "landing_pullup_since", -1,
         "go_around_count", 0,
         "go_around_reason", "",
         "high_energy_final_active", false,
