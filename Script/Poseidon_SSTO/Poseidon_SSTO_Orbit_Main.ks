@@ -119,7 +119,8 @@ if not departure_route["valid"] {
     print("TAKEOFF HELD: no checked departure corridor ("+departure_route["reason"]+").").
     set Lastest_status to "Departure terrain route unavailable".
     flight_log_event("departure_takeoff_held","reason="+departure_route["reason"]).
-    return.
+    // End through the script loop guard; this is not a function return.
+    set running to false.
 }
 local v1_announced is false.
 local abort_info is lex().
@@ -128,8 +129,10 @@ set dap["str_mode"] to "aerostr".
 if ascent_rendezvous_enabled { set step to "rendezvous_window". }
 print("3").
 global recovery_nominal_cutoff is false.
-recovery_register_engines().
-rapierson().
+if running {
+    recovery_register_engines().
+    rapierson().
+}
 until running = false{
     update_readouts().
     dap:update().

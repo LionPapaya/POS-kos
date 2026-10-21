@@ -14,6 +14,18 @@ from test_navigation_math import source_function
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT/'Script/Libraries/Poseidon_SSTO'
 SOURCE = (LIB/'terrain_navigation.ks').read_text()
+MAIN = (ROOT/'Script/Poseidon_SSTO/Poseidon_SSTO_Orbit_Main.ks').read_text()
+
+
+def departure_startup_source():
+    start = MAIN.index('if not departure_route["valid"] {')
+    end = MAIN.index('\nuntil running = false{', start)
+    return MAIN[start:end]
+
+
+def departure_loop_guard():
+    start = MAIN.index('until running = false{')
+    return MAIN[start:MAIN.index('\n', start)].strip()
 
 
 def production_config():
@@ -309,6 +321,43 @@ class TerrainLoggingTest(unittest.TestCase):
         self.call('flight_log_departure_plan',dict(valid=True,reason='sampled_corridor',
             first_course=-5,margin=50,mass=69,waypoints=[LogPoint()]))
         self.assertEqual([e[0] for e in self.events],['departure_plan','departure_plan_waypoint'])
+
+
+class DepartureHoldStartupTest(unittest.TestCase):
+    def run_startup(self, route):
+        runtime = ScriptRuntime(ROOT, FixtureHost())
+        calls = []
+        events = []
+        g = runtime.globals
+        g.update(running=True, step='launch', departure_route=route,
+            ascent_rendezvous_enabled=False, dap={},
+            lex=lambda *args: dict(zip(args[::2],args[1::2])),
+            print=lambda *args:None,
+            flight_log_event=lambda *args:events.append(args),
+            recovery_register_engines=lambda:calls.append('register'),
+            rapierson=lambda:calls.append('activate'))
+        runtime.load_source(departure_startup_source(),'actual-departure-startup')
+        return runtime, g, calls, events
+
+    def test_held_route_stops_before_engine_initialization_and_ascent(self):
+        runtime, g, calls, events = self.run_startup(
+            {'valid':False,'reason':'terrain_blocked'})
+        self.assertFalse(g.get_value('running'))
+        self.assertEqual(g.get_value('step'),'launch')
+        self.assertEqual(calls,[])
+        self.assertEqual(events,[('departure_takeoff_held','reason=terrain_blocked')])
+        g['ascent_entered'] = False
+        # Keep the production UNTIL predicate and use a sentinel as its body.
+        runtime.load_source(departure_loop_guard() +
+            ' set ascent_entered to true. }','actual-ascent-loop-entry-guard')
+        self.assertFalse(g.get_value('ascent_entered'))
+
+    def test_valid_route_still_initializes_engines(self):
+        _, g, calls, events = self.run_startup({'valid':True,'reason':'clear'})
+        self.assertTrue(g.get_value('running'))
+        self.assertEqual(g.get_value('step'),'launch')
+        self.assertEqual(calls,['register','activate'])
+        self.assertEqual(events,[])
 
 
 def wall_escape_scenario():
