@@ -64,6 +64,13 @@ class TerrainNavigationTest(unittest.TestCase):
         self.kos = Runtime(math_source+'\n'+'\n'.join(source_function(navigation,n) for n in names))
         self.hosted = ScriptRuntime(ROOT,FixtureHost())
         self.hosted.load_source(SOURCE+'\n'+'\n'.join(source_function(navigation,n) for n in names),'terrain-source')
+        craft = (LIB/'craft_Poseidon_SSTO.ks').read_text()
+        integration_names = ('find_active_runway','calcdistance_m','heading_between',
+                             'navigation_longitude_delta','takeoff_runway_geometry')
+        self.hosted.load_source('\n'.join(source_function(navigation,n) for n in integration_names)+'\n'+
+            '\n'.join(source_function(craft,n) for n in
+                      ('normalized_heading_error','takeoff_performance','assess_takeoff_runway')),
+            'production-runway-integration')
         self.field = lambda east,north: 0
         self.kos.globals.update(ship=dict(body=dict(radius=600000,hasocean=True,
             mu=9.81*600000**2),geoposition=self.point(0,0),mass=69.5,altitude=5),
@@ -155,11 +162,35 @@ class TerrainNavigationTest(unittest.TestCase):
         scheduler = OpcodeScheduler(ipu=2000,tick_seconds=.02)
         self.hosted.scheduler = scheduler
         try:
-            plan = self.call('terrain_departure_plan',dict(selected=True,heading=0,altitude=0),
+            plan = self.call('terrain_departure_plan',dict(heading=0,altitude=0),
                              dict(liftoff_distance_m=1800),orbital,self.cfg)
         finally:
             self.hosted.scheduler = None
         return plan,scheduler.profile()
+
+    def area_15_runway_metadata(self):
+        # Real Area-15 runway endpoint coordinates and elevation from
+        # lib_location_constants.ks. Runway 31's end is the reciprocal runway
+        # 13 start, matching the production aliasing rule in that file.
+        start_31 = self.point(-60.6101231793587,39.3817317024422)
+        start_13 = self.point(-60.4656073371585,39.0415304340361)
+        return ({'kerbin': {
+            'Area-15_runway_31_start':start_31,
+            'Area-15_runway_31_end':start_13,
+            'Area-15_runway_13_start':start_13,
+            'Area-15_runway_13_end':start_31}},
+            {'Area-15_runway':1371})
+
+    def actual_runway_assessment(self, geoposition, runways, elevations):
+        ship = dict(mass=69.5,altitude=1371,geoposition=geoposition,
+                    body=dict(name='Kerbin',radius=600000,mu=9.81*600000**2,hasocean=True))
+        self.hosted.globals.update(ship=ship,aves=self.aves,
+            location_constants=runways,kerbinrunwayalt=elevations,
+            compass_for=lambda:0)
+        runway = self.hosted.globals.get_value('find_active_runway')()
+        self.hosted.globals['compass_for'] = lambda:runway['heading']
+        prediction = self.hosted.globals.get_value('assess_takeoff_runway')(runway)
+        return runway,prediction
 
     def test_preflight_builds_waypoints_around_wall_before_orbital_alignment(self):
         self.field = lambda e,n: 5000 if 9000 <= n <= 12000 and abs(e) < 400 else 0
@@ -178,9 +209,68 @@ class TerrainNavigationTest(unittest.TestCase):
         plan,_ = self.plan()
         self.assertFalse(plan['valid'])
         self.assertEqual(plan['reason'],'terrain_blocked')
-        result = self.call('terrain_departure_plan',dict(selected=False),{},0,self.cfg)
+        result = self.call('terrain_departure_plan',dict(heading=-1,altitude=-1),{},0,self.cfg)
         self.assertFalse(result['valid'])
         self.assertEqual(result['reason'],'unknown_runway')
+
+    def test_actual_runway_lookup_and_takeoff_assessment_feed_terrain_plan(self):
+        self.field = lambda e,n: 0
+        runways,elevations = self.area_15_runway_metadata()
+        start_31 = runways['kerbin']['Area-15_runway_31_start']
+        runway,prediction = self.actual_runway_assessment(start_31,runways,elevations)
+
+        self.assertEqual(runway['location'],'Area-15')
+        self.assertEqual(runway['runway_num'],'31')
+        self.assertGreaterEqual(runway['heading'],0)
+        self.assertEqual(runway['altitude'],1371)
+        self.assertNotIn('selected',runway)
+        self.assertIn('liftoff_distance_m',prediction)
+        self.assertGreater(prediction['liftoff_distance_m'],0)
+
+        scheduler = OpcodeScheduler(ipu=2000,tick_seconds=.02)
+        self.hosted.scheduler = scheduler
+        try:
+            plan = self.call('terrain_departure_plan',runway,prediction,0,self.cfg)
+        finally:
+            self.hosted.scheduler = None
+        self.assertTrue(plan['valid'],plan)
+        self.assertEqual(plan['reason'],'sampled_corridor')
+        planned_offset = self.hosted.globals.get_value('calcdistance_m')(start_31,plan['origin'])
+        self.assertAlmostEqual(planned_offset,
+            prediction['liftoff_distance_m']*self.cfg['liftoff_distance_fraction'],places=5)
+        self.assertEqual(plan['origin'].terrainheight,0)
+        self.assertEqual(plan['waypoints'][0].terrainheight,0)
+        self.assertEqual(scheduler.profile().max_opcodes_in_update,2000)
+        self.assertGreater(scheduler.profile().waits,0)
+
+    def test_real_lookup_no_match_and_incomplete_runway_metadata_hold_cleanly(self):
+        self.field = lambda e,n: 0
+        runways,elevations = self.area_15_runway_metadata()
+        _,prediction = self.actual_runway_assessment(
+            self.point(0,0),{'kerbin':{}},elevations)
+        no_match = self.hosted.globals.get_value('find_active_runway')()
+        self.assertEqual(no_match['heading'],-1)
+        self.assertEqual(no_match['altitude'],-1)
+        self.assertEqual(no_match['distance_m'],9999999999)
+        self.assertNotIn('selected',no_match)
+        result = self.call('terrain_departure_plan',no_match,prediction,0,self.cfg)
+        self.assertFalse(result['valid'])
+        self.assertEqual(result['reason'],'unknown_runway')
+
+        for incomplete in ({},{'heading':0},{'altitude':1371}):
+            with self.subTest(incomplete=incomplete):
+                result = self.call('terrain_departure_plan',incomplete,prediction,0,self.cfg)
+                self.assertFalse(result['valid'])
+                self.assertEqual(result['reason'],'unknown_runway')
+
+    def test_missing_or_invalid_takeoff_distance_returns_held_plan(self):
+        for prediction in ({},{'reason':'invalid_inputs','liftoff_distance_m':0},
+                           {'liftoff_distance_m':-1}):
+            with self.subTest(prediction=prediction):
+                result = self.call('terrain_departure_plan',
+                    {'heading':0,'altitude':0},prediction,0,self.cfg)
+                self.assertFalse(result['valid'])
+                self.assertEqual(result['reason'],'invalid_takeoff_prediction')
 
     def test_mass_penalty_is_local_and_early_turn_preserves_pitch_and_climb(self):
         heavy = self.call('terrain_navigation_config',self.cfg,100)

@@ -131,7 +131,14 @@ function terrain_departure_plan {
         "origin",ship:geoposition,"planned_ut",time:seconds,"mass",ship:mass,
         "model_gradient",navigation_config["departure_gradient"],"model_speed",navigation_config["departure_speed"],
         "sample_spacing",navigation_config["sample_spacing"],"model_valid",false).
-    if not active_runway["selected"] { return result_plan. }
+    // find_active_runway() returns heading/altitude sentinels, not a
+    // selected flag (that flag belongs to recovery runway candidates).
+    if not(active_runway:haskey("heading")) or not(active_runway:haskey("altitude")) { return result_plan. }
+    if active_runway["heading"] < 0 or active_runway["altitude"] < 0 { return result_plan. }
+    if not(takeoff_prediction:haskey("liftoff_distance_m")) {
+        set result_plan["reason"] to "invalid_takeoff_prediction".
+        return result_plan.
+    }
     if takeoff_prediction["liftoff_distance_m"] <= 0 {
         set result_plan["reason"] to "invalid_takeoff_prediction".
         return result_plan.
