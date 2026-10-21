@@ -4,6 +4,57 @@ Implemented source behavior, 2026-10-11. These modes replace ATI. AED, ATO and E
 
 The takeoff GUI's V1 estimate is a passive display reference. It does not change the runway-stop/RTLS dispatch described here or the live feasibility decision; see [README](README.md#takeoff-gui-v1-estimate) for its inputs, limits, and telemetry.
 
+## Ascent recovery display
+
+The ascent window switches to a recovery page for runway stop, RTLS, ATR, ATO,
+AED, EDR and contingency. Normal circularization continues to use its nominal
+insertion display even though it shares the ATO executive. Recovery pages show
+the actual mode/phase, RAPIER/NERV failure counts, current control owner, next
+transition, relevant measurements and the reported outcome.
+
+- Runway stop shows signed runway remaining and the stopping requirement,
+  available distance, margin and validity recorded at abort selection. Its bar
+  measures remaining runway; it is not a new stopping prediction.
+- RTLS uses measured positions in the departure-runway frame. A runway rectangle
+  identifies the departure origin; a separate diamond identifies the position
+  recorded when the reciprocal-heading/altitude handoff gates passed. There is
+  no invented turn path or predetermined handoff waypoint. History is limited
+  to 24 measured samples, two seconds apart; symbols are not to scale.
+- ATR offers **Show L/SIT / Show runway decision**. The decision view presents
+  the selector's cached range, track error, score and selected/excluded reason,
+  six candidates per page. The best evaluated candidate appears first, then
+  other eligible candidates in catalog order, then excluded candidates.
+  The spatial view uses the selected runway frame and only draws terminal route
+  fixes once landing guidance supplies them.
+- ATO shows measured apoapsis progress, live insertion-window/alignment data and
+  permitted-thrust/budget decisions. Stale insertion estimates are labelled
+  unavailable. The insertion bar uses the first observed live delta-v reference.
+- AED shows cached terminal energy, search state and capture conditions. The
+  energy bar uses the configured TEAM intake energy range, alongside the other
+  capture gates; it does not certify a diversion or landing.
+- EDR's runway table uses distance from the assessed footprint, not aircraft
+  range. It displays the assessment UT and identifies a search-budget cutoff;
+  unsearched runways remain unranked. A geometric candidate is not a verified
+  landing approach.
+- Contingency emphasizes its current strategy/phase, clearance or orbital
+  measurement, speed, sink and cached propulsion/degradation information.
+
+The window continues observing during synchronous entry/landing calls through
+the shared HUD tick and labels the receiving controller's phase. Closing a
+recovery window only hides that display; it does not set the landing controller's
+global flight step to `end`. Nominal close/cancel behavior is retained.
+
+Display updates remain at 2 Hz. Candidate ordering is linear and cached by
+assessment UT; drawing a table never reruns a runway selector or trajectory
+prediction. The flight logger records cached candidate snapshots, mode/owner
+transfers, handoff coordinates and display measurements using its existing
+low/medium/high cadence. Logging does not enter trajectory prediction.
+
+Offline source/callback checks use `tools/test-pos gui` → **Ascent manager** →
+**Recovery fixture (synthetic)**, plus the source-executing regression tests.
+The workbench remains experimental and incomplete: validate marker placement,
+window size, handoff interaction and flight behavior in KSP/FAR.
+
 ## Selection
 
 | Failure phase | Selection |

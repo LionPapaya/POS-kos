@@ -529,6 +529,8 @@ function abort_set_fuel_dump {
 
 function abort_select_runway {
     parameter config_select is AVES["Abort"]["RunwaySelection"].
+    local candidate_rows is list().
+    local selection_ut is time:seconds.
     local runways is location_constants["kerbin"].
     local best is lex("selected",false,"location","","runway_num","","start","","end","","heading",-1,"altitude",-1,"distance_m",0,"score",999999999999).
     for runway_key in runways:keys {
@@ -541,10 +543,17 @@ function abort_select_runway {
                 local runway_start_ is runways[runway_key].
                 local runway_end_ is runways[end_key].
                 local distance_ is calcdistance_m(ship:geoposition,runway_start_).
+                local candidate_row is lex("location",location_name,"runway_num",runway_number,
+                    "distance_m",distance_,"heading_error",-1,"penalty_m",0,"score",-1,"eligible",false).
+                candidate_rows:add(candidate_row).
                 if distance_ <= config_select["maximum_distance"] {
                     local bearing_error is abs(normalized_heading_error(heading_to_target(runway_start_),compass_for_prograde())).
                     local score_ is distance_ + bearing_error * config_select["heading_weight"].
                     if bearing_error > config_select["ahead_angle"] { set score_ to score_ + config_select["behind_penalty"]. }
+                    set candidate_row["heading_error"] to bearing_error.
+                    set candidate_row["penalty_m"] to score_-distance_-bearing_error*config_select["heading_weight"].
+                    set candidate_row["score"] to score_.
+                    set candidate_row["eligible"] to true.
                     if score_ < best["score"] {
                         local altitude_ is KerbinRunwayalt[location_name + "_runway"].
                         set best to lex(
@@ -562,6 +571,11 @@ function abort_select_runway {
     }else{
         flight_log_event("atr_runway_selection_failed","").
     }
+    set best["candidates"] to candidate_rows.
+    set best["assessment_ut"] to selection_ut.
+    set best["search_complete"] to true.
+    set best["selection_rule"] to "range_heading_penalty".
+    if defined POS_LOG_LEVEL { flight_log_runway_candidates(best,"atr"). }
     return best.
 }
 local Poseidon_SSTO is lex().
@@ -1262,6 +1276,8 @@ function recovery_transition {
     flight_log_event("recovery_mode","from="+state["mode"]+"|to="+next_mode+"|reason="+reason+
         "|source="+state["source_step"]+"|rapiers_out="+state["scenario"]["rapiers_out"]+
         "|nervs_out="+state["scenario"]["nervs_out"]).
+    set state["display_from_mode"] to state["mode"].
+    set state["display_mode_reason"] to reason.
     set state["mode"] to next_mode.
     set state["phase"] to "initialize".
     set state["phase_entered"] to time:seconds.

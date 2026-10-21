@@ -586,6 +586,8 @@ until running = false{
                     if reciprocal_heading_error <= rtls_config["reciprocal_heading_tolerance"] and ship:altitude >= handoff_altitude and not abort_state["handoff"]["started"] {
 
                         set abort_state["phase"] to "handoff".
+                        set abort_state["display_handoff_position"] to ship:geoposition.
+                        set abort_state["display_handoff_ut"] to time:seconds.
                         set abort_state["phase_entered"] to time:seconds.
                         set rtls_handoff_time to time:seconds.
 
@@ -641,6 +643,8 @@ until running = false{
                 abort_set_fuel_dump(abort_state["policy"]["fuel_dump"] and ship:mass > abort_state["policy"]["target_mass"]).
                 set Lastest_status to "ATR " + abort_state["submode"] + " to " + abort_state["target"]["location"] + " " + abort_state["target"]["runway_num"].
                 set abort_state["handoff"]["started"] to true.
+                set abort_state["display_handoff_position"] to ship:geoposition.
+                set abort_state["display_handoff_ut"] to time:seconds.
                 RUN "0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks"(lex(
                     "force",TRUE,"Location",abort_state["target"]["location"],"Runway",abort_state["target"]["runway_num"],
                     "context",lex("mission","abort","abort_mode","atr","preserve_propulsion",true,"allow_go_around",true)
@@ -1513,6 +1517,8 @@ until running = false{
         set Lastest_status to abort_state["mode"]+": "+abort_state["phase"].
         if abort_state["active"] and abort_state:haskey("handoff_ready") and abort_state["handoff_ready"] {
             set abort_state["handoff"]["started"] to true.
+            set abort_state["display_handoff_position"] to ship:geoposition.
+            set abort_state["display_handoff_ut"] to time:seconds.
             local handoff_context is lex("mission","abort","abort_mode",abort_state["mode"],
                 "preserve_propulsion",true,"allow_go_around",true,"initial_phase",abort_state["handoff_phase"]).
             if abort_state:haskey("capture_interface") {
@@ -1521,7 +1527,7 @@ until running = false{
             flight_log_event("recovery_handoff","mode="+abort_state["mode"]+
                 "|phase="+abort_state["handoff_phase"]+"|runway="+abort_state["target"]["location"]+
                 "_"+abort_state["target"]["runway_num"]).
-            assent_gui:hide().
+            update_assent_gui().
             runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks",lex("force",true,
                 "Location",abort_state["target"]["location"],"Runway",abort_state["target"]["runway_num"],
                 "context",handoff_context)).

@@ -155,6 +155,8 @@ function recovery_ato_reject {
 function recovery_edr_select_target {
     parameter footprint, cfg.
     local selected is lex("selected",false,"score",1e12).
+    local candidate_rows is list().
+    local search_complete is true.
     local search_started is time:seconds.
     for runway_key in location_constants["kerbin"]:keys {
         if runway_key:endswith("_start") and runway_key:contains("_runway_") {
@@ -165,6 +167,8 @@ function recovery_edr_select_target {
             if location_constants["kerbin"]:haskey(finish_key) and KerbinRunwayalt:haskey(site_name+"_runway") {
                 local start_site is location_constants["kerbin"][runway_key].
                 local range_m is calcdistance_m(footprint,start_site).
+                candidate_rows:add(lex("location",site_name,"runway_num",runway_num,
+                    "distance_m",range_m,"score",range_m,"eligible",range_m < 400000)).
                 if range_m < 400000 and range_m < selected["score"] {
                     local finish_site is location_constants["kerbin"][finish_key].
                     set selected to lex("selected",true,"location",site_name,"runway_num",runway_num,
@@ -175,7 +179,12 @@ function recovery_edr_select_target {
         }
         dap:update().
         wait 0.
-        if time:seconds-search_started > 3 { break. }
+        if time:seconds-search_started > 3 { set search_complete to false. break. }
     }
+    set selected["candidates"] to candidate_rows.
+    set selected["assessment_ut"] to search_started.
+    set selected["search_complete"] to search_complete.
+    set selected["selection_rule"] to "footprint_distance".
+    if defined POS_LOG_LEVEL { flight_log_runway_candidates(selected,"edr"). }
     return selected.
 }

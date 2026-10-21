@@ -83,6 +83,7 @@ global reentry_lsit2_bug_calibration is lex(
 ).
 
 function update_readouts{
+    if defined ascent_display_state { ascent_recovery_handoff_tick(). }
     runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
 
 }

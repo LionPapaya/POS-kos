@@ -298,6 +298,7 @@ function ascent_display_collect {
         set sample[trend_key] to ascent_display_state[trend_key].
     }
     set sample["health"] to ascent_display_health(sample).
+    if defined abort_state and abort_state:haskey("mode") { ascent_recovery_collect(sample,abort_state). }
     return sample.
 }
 
@@ -332,6 +333,7 @@ function ascent_display_label_style {
 }
 
 function create_assent_gui {
+    RUNONCEPATH("0:/Libraries/Poseidon_SSTO/ascent_recovery_gui.ks").
     global assent_gui is gui(680).
     set assent_gui:style:width to 680.
     set assent_gui:style:bg to "Libraries/gui_images/ascent_window.png".
@@ -352,7 +354,15 @@ function create_assent_gui {
     set assent_minb:onclick to {
         set ascent_display_body:visible to not assent_minb:pressed.
     }.
-    set assent_quitb:onclick to { set step to "end". assent_gui:hide(). }.
+    set assent_quitb:onclick to {
+        // Recovery close is display-only: landing may own the global step.
+        local recovery_close is false.
+        if defined abort_state and abort_state:haskey("mode") {
+            set recovery_close to not ascent_recovery_get(abort_state,"nominal_insertion",false).
+        }
+        if not recovery_close { set step to "end". }
+        assent_gui:hide().
+    }.
     local mode_row is ascent_display_body:addhlayout().
     local mode_caption is mode_row:addlabel("DAP").
     set mode_caption:style:width to 30.
@@ -494,6 +504,7 @@ function create_assent_gui {
     for field_name in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading","Est. stop distance","Apoapsis","Periapsis","Inclination") {
         set ascent_display_rows[field_name] to ascent_display_row(ascent_display_flight,field_name).
     }
+    ascent_recovery_create(ascent_display_flight).
     global ascent_display_next is ascent_display_flight:addlabel().
     global ascent_display_footer is ascent_display_flight:addlabel().
     ascent_display_label_style(ascent_display_next,13).
@@ -715,6 +726,9 @@ function update_assent_gui {
     if menu_mode = "AUTO" { set assent_dap_mode_menu:index to 0. }
     if menu_mode = "CSS" { set assent_dap_mode_menu:index to 1. }
     if menu_mode = "OFF" { set assent_dap_mode_menu:index to 2. }
+    if inputs:haskey("abort_display") { ascent_recovery_render(inputs). return. }
+    set ascent_recovery_panel:visible to false.
+    set ascent_display_columns["box"]:visible to true.
     local air_page is inputs["page"] = "ASCENT 1 / 2".
     local circ_page is inputs["page"] = "CIRC".
     local takeoff_page is inputs["page"] = "TAKEOFF".

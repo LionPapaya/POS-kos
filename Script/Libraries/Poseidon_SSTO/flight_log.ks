@@ -893,8 +893,16 @@ function flight_log_maneuver_observe {
 function flight_log_ascent_display_observe {
     parameter snapshot, evidence.
     if POS_LOG_LEVEL = 0 { return. }
+    local recovery_key is "".
+    if snapshot:haskey("abort_display") {
+        set recovery_key to snapshot["abort_display"]["mode"]+"|"+snapshot["abort_display"]["owner"]+
+            "|"+snapshot["abort_snapshot"]["receiver_phase"]+"|"+snapshot["abort_display"]["target"].
+    }
     local changed is snapshot["page"] <> evidence["page"] or snapshot["phase"] <> evidence["phase"] or
         snapshot["health"] <> evidence["health"].
+    if evidence:haskey("recovery_key") {
+        if recovery_key <> evidence["recovery_key"] { set changed to true. }
+    } else if recovery_key <> "" { set changed to true. }
     // Include prediction availability / extrapolation changes at low level too.
     if not evidence:haskey("v1_reason") { set changed to true. }
     else if snapshot["v1_prediction"]["reason"] <> evidence["v1_reason"] or
@@ -939,6 +947,23 @@ function flight_log_ascent_display_observe {
         "|v1_marker_surface_mps="+snapshot["v1_marker_speed"]+
         "|stop_reference_valid="+snapshot["stop_reference_valid"]+"|stop_reference_m="+snapshot["stop_reference_m"]+
         "|alignment_deg="+snapshot["alignment"]+"|outcome="+snapshot["outcome"].
+    if snapshot:haskey("abort_display") {
+        local display_record is snapshot["abort_display"].
+        local recovery_snapshot is snapshot["abort_snapshot"].
+        set detail to detail+"|recovery_mode="+display_record["mode"]+"|recovery_owner="+display_record["owner"]+
+            "|receiver_phase="+recovery_snapshot["receiver_phase"]+"|recovery_target="+display_record["target"]+
+            "|recovery_clearance="+display_record["clearance"]+"|candidate_count="+display_record["candidate_count"]+
+            "|recovery_decision="+display_record["decision"]+
+            "|recovery_fraction="+display_record["fraction"]+"|recovery_next="+display_record["next"]+
+            "|reciprocal_error="+recovery_snapshot["reciprocal_error"]+
+            "|handoff_altitude="+recovery_snapshot["handoff_altitude"].
+        local recovery_state is recovery_snapshot["state"].
+        if recovery_state:haskey("display_handoff_position") {
+            set detail to detail+"|handoff_lat="+recovery_state["display_handoff_position"]:lat+
+                "|handoff_lng="+recovery_state["display_handoff_position"]:lng+
+                "|handoff_ut="+recovery_state["display_handoff_ut"].
+        }
+    }
     if changed {
         flight_log_event("ascent_display_state",detail).
         set evidence["page"] to snapshot["page"].
@@ -946,11 +971,38 @@ function flight_log_ascent_display_observe {
         set evidence["health"] to snapshot["health"].
         set evidence["v1_reason"] to snapshot["v1_prediction"]["reason"].
         set evidence["v1_limited"] to snapshot["v1_prediction"]["limited"].
+        set evidence["recovery_key"] to recovery_key.
     }
     if sample_due {
         set evidence["next_sample"] to time:seconds.
         if POS_LOG_LEVEL = 2 { set evidence["next_sample"] to time:seconds+1. }
         flight_log_event("ascent_display_sample",detail).
+    }
+}
+
+// Selection-time cached evidence only. Never called from trajectory predictors.
+// Low records the decision snapshot; medium/high retain their normal sample cadence.
+function flight_log_runway_candidates {
+    parameter selection, selection_mode.
+    if POS_LOG_LEVEL = 0 { return. }
+    flight_log_event("recovery_runway_screen","mode="+selection_mode+
+        "|rule="+selection["selection_rule"]+"|assessment_ut="+selection["assessment_ut"]+
+        "|complete="+selection["search_complete"]+"|evaluated="+selection["candidates"]:length+
+        "|selected="+selection["selected"]).
+    for candidate_record in selection["candidates"] {
+        local chosen is false.
+        if selection["selected"] {
+            set chosen to candidate_record["location"] = selection["location"] and
+                candidate_record["runway_num"] = selection["runway_num"].
+        }
+        local candidate_detail is "mode="+selection_mode+"|location="+candidate_record["location"]+
+            "|runway="+candidate_record["runway_num"]+"|range_m="+candidate_record["distance_m"]+
+            "|score="+candidate_record["score"]+"|eligible="+candidate_record["eligible"]+"|chosen="+chosen.
+        if candidate_record:haskey("heading_error") {
+            set candidate_detail to candidate_detail+"|heading_error="+candidate_record["heading_error"]+
+                "|penalty_m="+candidate_record["penalty_m"].
+        }
+        flight_log_event("recovery_runway_candidate",candidate_detail).
     }
 }
 
