@@ -253,8 +253,8 @@ function ascent_recovery_collect {
     if mode_name <> "runway_abort" and mode_name <> "rtls" and mode_name <> "atr" and mode_name <> "ato" and
        mode_name <> "aed" and mode_name <> "edr" and mode_name <> "contingency_abort" { return. }
     local receiver_phase is state["phase"]. local owner_name is "ASCENT".
-    local transfer is ascent_recovery_get(state,"handoff",lex("started",false,"complete",false)).
-    if transfer["started"] and not transfer["complete"] {
+    local handoff_state is ascent_recovery_get(state,"handoff",lex("started",false,"complete",false)).
+    if handoff_state["started"] and not handoff_state["complete"] {
         set owner_name to "LANDING / ENTRY". set receiver_phase to step.
         if defined terminal_route and (step = "TEAM" or step = "landing") {
             set receiver_phase to ascent_recovery_get(terminal_route,"phase",step).
@@ -398,8 +398,8 @@ function ascent_recovery_spatial {
     if state:haskey("display_handoff_position") {
         positions:add(state["display_handoff_position"]). point_kinds:add("handoff").
     }
-    local transfer is ascent_recovery_get(state,"handoff",lex("started",false,"complete",false)).
-    if transfer["started"] and not transfer["complete"] and defined terminal_route and
+    local handoff_state is ascent_recovery_get(state,"handoff",lex("started",false,"complete",false)).
+    if handoff_state["started"] and not handoff_state["complete"] and defined terminal_route and
        (step = "TEAM" or step = "landing") {
         local supplied_route is reentry_lsit_terminal_path().
         local route_count is 0.

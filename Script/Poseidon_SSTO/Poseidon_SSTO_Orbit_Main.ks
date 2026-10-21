@@ -1079,15 +1079,15 @@ until running = false{
                         set desired_aoa to max(0,min(10,abort_state["aed_aoa"])).
                     }
                     if abort_state["target"]["selected"] {
-                        local target is abort_state["target"].
-                        local intake is target["capture_interface"].
+                        local aed_target_site is abort_state["target"].
+                        local intake is aed_target_site["capture_interface"].
                         local distance_aed is calcdistance_m(ship:geoposition,intake["target_latlng"]).
                         local course_error is normalized_heading_error(heading_to_target(intake["target_latlng"]),compass_for_prograde()).
                         set desired_bank to max(-cfg["maximum_bank"],min(cfg["maximum_bank"],-0.6*course_error)).
                         local gravity_aed is ship:body:mu/ship:body:radius^2.
                         local energy_aed is recovery_aed_energy(ship:altitude,ship:airspeed,
                             intake["target_altitude"],cfg["capture_speed"],gravity_aed).
-                        local terminal_actual is ship:altitude-target["altitude"]+ship:airspeed^2/(2*gravity_aed).
+                        local terminal_actual is ship:altitude-aed_target_site["altitude"]+ship:airspeed^2/(2*gravity_aed).
                         local terminal_margin is terminal_actual-intake["terminal_required"].
                         set abort_state["aed_energy"] to energy_aed.
                         set abort_state["aed_energy_margin"] to terminal_margin.
@@ -1132,17 +1132,17 @@ until running = false{
                         local clearance_aed is ship:altitude-max(0,ship:geoposition:terrainheight).
                         local gate is recovery_aed_capture_gate(distance_aed,ship:altitude-intake["target_altitude"],
                             ship:airspeed,ship:verticalspeed,
-                            normalized_heading_error(target["heading"],compass_for_prograde()),roll_for(),
+                            normalized_heading_error(aed_target_site["heading"],compass_for_prograde()),roll_for(),
                             clearance_aed,terminal_margin,0,cfg).
-                        local provisional is target:haskey("provisional") and target["provisional"].
+                        local provisional is aed_target_site:haskey("provisional") and aed_target_site["provisional"].
                         local settle_aed is cfg["capture_settle"].
                         set abort_state["aed_capture_reason"] to "forecast_capture".
                         if provisional or abort_state["aed_powered"] {
-                            local runway_range is calcdistance_m(ship:geoposition,target["start"]).
-                            local live_intake is recovery_aed_terminal_intake(runway_range,target["altitude"],cfg).
+                            local runway_range is calcdistance_m(ship:geoposition,aed_target_site["start"]).
+                            local live_intake is recovery_aed_terminal_intake(runway_range,aed_target_site["altitude"],cfg).
                             local live_margin is terminal_actual-live_intake["required"].
                             local runway_course_error is normalized_heading_error(
-                                heading_to_target(target["start"]),compass_for_prograde()).
+                                heading_to_target(aed_target_site["start"]),compass_for_prograde()).
                             set gate to recovery_aed_team_gate(distance_aed,ship:altitude-intake["target_altitude"],
                                 ship:airspeed,ship:verticalspeed,runway_course_error,roll_for(),clearance_aed,
                                 live_margin,cfg,runway_range).
@@ -1168,7 +1168,7 @@ until running = false{
                                     "|provisional="+provisional+"|distance="+distance_aed+
                                     "|height_error="+(ship:altitude-intake["target_altitude"])+
                                     "|speed="+ship:airspeed+"|vs="+ship:verticalspeed+
-                                    "|runway_distance="+calcdistance_m(ship:geoposition,target["start"])+
+                                    "|runway_distance="+calcdistance_m(ship:geoposition,aed_target_site["start"])+
                                     "|energy_margin="+abort_state["aed_energy_margin"]).
                                 recovery_phase(abort_state,"TEAM").
                             }

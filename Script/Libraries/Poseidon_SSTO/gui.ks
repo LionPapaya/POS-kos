@@ -1431,8 +1431,8 @@ function get_inputs_rsvp {
         } else if target_type = "Vessel" {
             // Add all active vessels
             List Targets in all_vessels.
-            for vessel in all_vessels{
-                target_menu:addoption(vessel:name).
+            for listed_vessel in all_vessels{
+                target_menu:addoption(listed_vessel:name).
             }
         }
     }

@@ -7,9 +7,9 @@ function remove_spaces {
     parameter input_string.
     
     local result_string is "".
-    for char in input_string {
-        if not(char = " ") {
-            set result_string to result_string + char.
+    for input_character in input_string {
+        if not(input_character = " ") {
+            set result_string to result_string + input_character.
         }
     }
     return result_string.

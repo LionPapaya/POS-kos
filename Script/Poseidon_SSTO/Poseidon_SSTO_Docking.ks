@@ -74,11 +74,11 @@ function docking_is_docked {
 }
 
 function docking_vessel_radius {
-    parameter vessel.
+    parameter bounded_vessel.
     // Build the relatively expensive vessel bounds once during setup. The
     // centre offset plus half-diagonal encloses every corner around the CoM.
-    local vessel_bounds is vessel:bounds.
-    local radius is (vessel_bounds:abscenter - vessel:position):mag
+    local vessel_bounds is bounded_vessel:bounds.
+    local radius is (vessel_bounds:abscenter - bounded_vessel:position):mag
         + vessel_bounds:extents:mag.
     return max(5,radius).
 }
