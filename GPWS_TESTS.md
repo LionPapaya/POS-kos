@@ -17,9 +17,10 @@ or delaying every departure turn is not the intended solution.
   candidate with the smallest orbital-course penalty. Hold takeoff if none of
   these candidates passes, or if runway/takeoff geometry is unavailable.
 - Keep the existing 30 m transition into early alignment. Seed its AoA smoother
-  from the measured takeoff AoA and preserve pitch through the handoff. Reduce
-  bank continuously when climb weakens, request bank-compensated lift within
-  the existing AoA envelope, and restore full power when climb needs it. Resume
+  from the measured takeoff AoA. Limit the final normal alignment pitch command
+  to 20 degrees nose up, including the AoA steering output, and use configured
+  AoA rather than feeding measured AoA back into bank compensation. Reduce bank
+  continuously when climb weakens and restore full power when climb needs it. Resume
   normal acceleration as soon as the checked dogleg and alignment permit it;
   remaining straight verification waypoints do not impose a speed hold.
 - Keep the short 2/4/7-second GPWS probes, and add curved terrain corridors with
@@ -38,6 +39,13 @@ or delaying every departure turn is not the intended solution.
   current lateral candidate passes. A clear lateral exit can release in level
   flight after the stability dwell.
 
+During ascent alignment, upset pull-up recovery also limits pitch to 20 degrees
+and releases only after 2 continuous seconds of forward flight: at least 110 m/s,
+0–25 degrees pitch, at most 30 degrees bank, safe AoA and low AoA rate. The initial
+zero-AoA unloading stage is unchanged. GPWS terrain escape retains full pull-up
+authority; the alignment pitch cap must not suppress terrain avoidance.
+Heading guidance, waypoint tracking and the speed-build handoff are unchanged.
+
 All tuning is in `AVES["Ascent"]` and `AVES["Envelope"]["Terrain"]["Navigation"]`.
 The shared path math is in `terrain_navigation.ks`. The departure climb gradient
 is an explicit conservative assumption (2.5%, reduced above the reference mass),
@@ -48,7 +56,9 @@ queries also do not represent buildings or other vessels.
 
 ## Telemetry
 
-Schema 27 appends long-range margin, time to conflict, threat position/height,
+Schema 28 retains the schema 27 fields and adds `alignment_pitch_limit` alongside
+the actual pitch and final steering command, so a flight can distinguish the
+configured limit from tracking overshoot or GPWS override. Schema 27 appended long-range margin, time to conflict, threat position/height,
 scan age/range, escape mode/course/offset/margin/validity, departure route
 progress, and alignment commands. Low mode records plan/waypoint and escape
 state events; medium/high retain their existing sample cadence. Planning and

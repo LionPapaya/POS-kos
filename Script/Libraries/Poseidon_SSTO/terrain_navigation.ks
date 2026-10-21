@@ -207,12 +207,21 @@ function terrain_alignment_command {
         (ascent_config["alignment_full_bank_vs"]-ascent_config["alignment_min_vs"]))).
     local bank_limit is ascent_config["runway_alignment_bank"]*climb_fraction.
     local bank_command is max(-bank_limit,min(bank_limit,-course_error*2)).
-    local preserved_aoa is max(ascent_config["runway_alignment_target_aoa"],current_aoa).
-    local lift_aoa is min(ascent_config["alignment_max_aoa"],preserved_aoa/max(0.7,cos(bank_command))).
+    // Use the configured lift target, not measured AoA: feeding measured AoA
+    // back through bank compensation ratchets the request upward every tick.
+    local lift_aoa is min(ascent_config["alignment_max_aoa"],
+        ascent_config["runway_alignment_target_aoa"]/max(0.7,cos(bank_command))).
     local climb_bias is max(0,ascent_config["alignment_target_vs"]-current_vs)*ascent_config["alignment_vs_gain"].
-    local pitch_command is max(current_pitch,prograde_pitch+lift_aoa+climb_bias).
-    // This is an attitude floor, not a claim that the aircraft can attain it.
+    local pitch_command is max(0,prograde_pitch+lift_aoa+climb_bias).
+    // The controller also clamps the FINAL normal command to alignment_max_pitch.
     return lex("bank",bank_command,"aoa",lift_aoa,"pitch_floor",min(ascent_config["alignment_max_pitch"],pitch_command)).
+}
+
+// Apply after AoA/bank steering has produced its pitch demand, so the limit
+// constrains the final normal command rather than only a minimum pitch floor.
+function terrain_alignment_pitch {
+    parameter requested_pitch, alignment_command, ascent_config.
+    return min(ascent_config["alignment_max_pitch"],max(requested_pitch,alignment_command["pitch_floor"])).
 }
 
 function terrain_scan_state {

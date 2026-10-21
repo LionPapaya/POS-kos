@@ -272,7 +272,7 @@ class TerrainNavigationTest(unittest.TestCase):
                 self.assertFalse(result['valid'])
                 self.assertEqual(result['reason'],'invalid_takeoff_prediction')
 
-    def test_mass_penalty_is_local_and_early_turn_preserves_pitch_and_climb(self):
+    def test_mass_penalty_is_local_and_alignment_pitch_stays_capped(self):
         heavy = self.call('terrain_navigation_config',self.cfg,100)
         self.assertLess(heavy['departure_gradient'],self.cfg['departure_gradient'])
         self.assertEqual(self.cfg['departure_gradient'],.025)
@@ -282,9 +282,20 @@ class TerrainNavigationTest(unittest.TestCase):
         self.assertEqual(abs(good['bank']),45)
         self.assertLess(abs(weak['bank']),abs(good['bank']))
         self.assertEqual(descending['bank'],0)
-        self.assertGreaterEqual(good['pitch_floor'],14)
+        self.assertGreater(good['pitch_floor'],0)
+        self.assertLessEqual(good['pitch_floor'],ascent['alignment_max_pitch'])
         self.assertGreater(good['aoa'],12)
-        self.assertGreaterEqual(descending['pitch_floor'],good['pitch_floor'])
+        self.assertEqual(descending['pitch_floor'],ascent['alignment_max_pitch'])
+
+    def test_alignment_command_does_not_ratchet_with_measured_aoa_or_pitch(self):
+        ascent = self.aves['Ascent']
+        nominal = self.call('terrain_alignment_command',15,8,12,18,6,ascent)
+        high_measured = self.call('terrain_alignment_command',15,8,38,85,6,ascent)
+        low_measured = self.call('terrain_alignment_command',15,8,0,-10,6,ascent)
+        self.assertEqual(nominal,high_measured)
+        self.assertEqual(nominal,low_measured)
+        self.assertLessEqual(nominal['aoa'],ascent['alignment_max_aoa'])
+        self.assertLessEqual(nominal['pitch_floor'],ascent['alignment_max_pitch'])
 
     def test_passed_waypoint_is_not_flown_back_to(self):
         route = dict(valid=True,index=0,origin=self.point(0,0),
@@ -364,9 +375,104 @@ class TerrainControlTest(unittest.TestCase):
         self.assertEqual(self.env['terrain_navigation']['mode'],'idle')
 
 
+class AscentRecoveryControlTest(unittest.TestCase):
+    def setUp(self):
+        self.aves = production_config()
+        self.runtime = ScriptRuntime(ROOT,FixtureHost())
+        self.runtime.load_source(SOURCE,'terrain-navigation')
+        control = (LIB/'control.ks').read_text()
+        self.runtime.load_source('\n'.join(source_function(control,name) for name in
+            ('envelope_upset_release','envelope_run_recovery')),'upset-recovery-control')
+        aerostr = (ROOT/'Script/Libraries/lib_aerostr.ks').read_text()
+        self.runtime.load_source(source_function(aerostr,'aoa_bank_management'),'aoa-controller')
+        self.g = self.runtime.globals
+        self.g.update(aves=self.aves,step='ascent_alignment',
+            ship={'airspeed':150},time={'seconds':10},
+            compass_for_prograde=lambda:0,pitch_for_prograde=lambda:0,
+            heading=lambda *args:args)
+        self.release_config = self.aves['Envelope']
+
+    def call(self,name,*args):
+        return self.g.get_value(name)(*args)
+
+    def release(self,envelope=None,*,pitch=10,speed=150,bank=0,aoa=5,rate=0,dt=.5,
+                entry_recovery=False):
+        envelope = envelope or {'stable_timer':0,'max_aoa':30}
+        self.g['ship']={'airspeed':speed}
+        result = self.call('envelope_upset_release',envelope,self.release_config,
+            entry_recovery,aoa,rate,bank,pitch,dt)
+        return result,envelope
+
+    def recovery_pitch(self,state,*,prograde_pitch,maximum_aoa=30):
+        scan = self.g.get_value('terrain_scan_state')()
+        scan['mode']='climb'
+        envelope={'state':state,'max_aoa':maximum_aoa,'terrain_navigation':scan}
+        dap={'envelope':envelope,'aoa':{'aoa_yaw':0,'aoa_pitch':0,'aoa_roll':0}}
+        self.g.update(dap=dap,step='ascent_alignment',
+            pitch_for_prograde=lambda:prograde_pitch,compass_for_prograde=lambda:0)
+        self.call('envelope_run_recovery')
+        return dap['aoa']['aoa_pitch']
+
+    def test_ascent_release_rejects_vertical_slow_bank_and_unstable_states(self):
+        rejected = (
+            {'pitch':89},
+            {'speed':109},
+            {'bank':31},
+            {'aoa':16},
+            {'rate':2.1},
+            {'pitch':-1},
+        )
+        for condition in rejected:
+            with self.subTest(condition=condition):
+                envelope={'stable_timer':0,'max_aoa':30}
+                result,_=self.release(envelope,**condition)
+                self.assertFalse(result)
+                self.assertEqual(envelope['stable_timer'],0)
+
+    def test_ascent_release_requires_two_continuous_seconds_of_stability(self):
+        envelope={'stable_timer':0,'max_aoa':30}
+        result,_=self.release(envelope,dt=.5)
+        self.assertFalse(result)
+        self.assertEqual(envelope['stable_timer'],.5)
+        result,_=self.release(envelope,pitch=89,dt=.1)
+        self.assertFalse(result)
+        self.assertEqual(envelope['stable_timer'],0)
+        for _ in range(3):
+            result,_=self.release(envelope,dt=.5)
+            self.assertFalse(result)
+        result,_=self.release(envelope,dt=.5)
+        self.assertTrue(result)
+        self.assertEqual(envelope['stable_timer'],2)
+
+    def test_reentry_and_general_release_rules_are_unchanged(self):
+        self.g['step']='speed_build'
+        result,_=self.release(pitch=35,speed=0,bank=170,aoa=5,rate=100)
+        self.assertTrue(result)
+
+        self.g['step']='reentry_low'
+        envelope={'stable_timer':0,'max_aoa':30}
+        result,_=self.release(envelope,pitch=-20,speed=0,dt=.5,entry_recovery=True)
+        self.assertFalse(result)
+        self.assertEqual(envelope['stable_timer'],.5)
+        result,_=self.release(envelope,pitch=-20,speed=0,dt=.5,entry_recovery=True)
+        self.assertTrue(result)
+        self.assertEqual(envelope['stable_timer'],1)
+
+    def test_ascent_upset_pullup_is_capped_but_gpws_and_zero_aoa_are_exempt(self):
+        upset_pitch=self.recovery_pitch('upset_pullup',prograde_pitch=80)
+        self.assertLessEqual(upset_pitch,20)
+
+        gpws_pitch=self.recovery_pitch('terrain_pullup',prograde_pitch=10)
+        self.assertGreater(gpws_pitch,20)
+
+        zero_aoa_pitch=self.recovery_pitch('upset_zero_aoa',prograde_pitch=80)
+        self.assertEqual(zero_aoa_pitch,80)
+
+
 class TerrainLoggingTest(unittest.TestCase):
     def setUp(self):
         self.runtime = ScriptRuntime(ROOT,FixtureHost())
+        self.aves = production_config()
         logger = (LIB/'flight_log.ks').read_text()
         names = ('flight_log_terrain_header','flight_log_terrain_columns',
                  'flight_log_terrain_observe','flight_log_departure_plan')
@@ -374,7 +480,7 @@ class TerrainLoggingTest(unittest.TestCase):
         self.scan = self.runtime.globals.get_value('terrain_scan_state')()
         self.events = []
         self.g = self.runtime.globals
-        self.g.update(dap={'envelope':{'terrain_navigation':self.scan}},time={'seconds':10},
+        self.g.update(aves=self.aves,dap={'envelope':{'terrain_navigation':self.scan}},time={'seconds':10},
             pos_log_level=1,pos_log_last_terrain_choice='',
             flight_log_event=lambda *a:self.events.append(a))
 
@@ -382,13 +488,19 @@ class TerrainLoggingTest(unittest.TestCase):
         return self.g.get_value(name)(*args)
 
     def test_terrain_columns_match_header_with_and_without_departure(self):
-        for has_route in (False,True):
-            if has_route:
-                self.g['departure_route']={'valid':True,'index':2,'waypoints':[1,2,3],'margin':25}
-                self.g['ascent_alignment_debug']={'pitch_floor':18,'bank':20,'aoa':15}
-            self.assertEqual(len(self.call('flight_log_terrain_header').split(',')),
-                             len(self.call('flight_log_terrain_columns').split(',')))
-        self.assertIn(',True,2,3,25,18,20,15',self.call('flight_log_terrain_columns'))
+        self.assertIn('global POS_LOG_SCHEMA_VERSION is 28.',(LIB/'flight_log.ks').read_text())
+        header = self.call('flight_log_terrain_header').split(',')
+        default_columns = self.call('flight_log_terrain_columns').split(',')
+        self.assertEqual(header[-1],'alignment_pitch_limit')
+        self.assertEqual(len(header),len(default_columns))
+        self.assertEqual(default_columns[-1],'0')
+
+        self.g['departure_route']={'valid':True,'index':2,'waypoints':[1,2,3],'margin':25}
+        self.g['ascent_alignment_debug']={'pitch_floor':18,'bank':20,'aoa':15}
+        populated_columns = self.call('flight_log_terrain_columns').split(',')
+        self.assertEqual(len(header),len(populated_columns))
+        self.assertEqual(populated_columns[-4:],['18','20','15','20'])
+        self.assertIn(',True,2,3,25,18,20,15,20',','.join(populated_columns))
 
     def test_low_mode_logs_escape_transitions_once_and_none_has_no_events(self):
         self.g['pos_log_level']=0
@@ -537,7 +649,8 @@ class TerrainClosedLoopTest(unittest.TestCase):
 
 
 class DepartureIntegrationTest(unittest.TestCase):
-    def alignment(self, orbital_course=0, first_course=0, vs=11):
+    def alignment(self, orbital_course=0, first_course=0, vs=11,
+                  prograde_pitch=4,current_pitch=14,measured_aoa=12):
         runtime=ScriptRuntime(ROOT,FixtureHost())
         runtime.load_source(SOURCE,'terrain-navigation')
         navigation=(ROOT/'Script/Libraries/lib_navigation.ks').read_text()
@@ -553,7 +666,8 @@ class DepartureIntegrationTest(unittest.TestCase):
                                           body={'radius':600000}),
             dap={'aoa':{},'aerostr':{}},targetinclination=0,step='ascent_alignment',
             calculate_heading=lambda *a:orbital_course,compass_for_prograde=lambda:0,
-            pitch_for_prograde=lambda:4,pitch_for=lambda:14,calc_aoa=lambda:12,
+            pitch_for_prograde=lambda:prograde_pitch,pitch_for=lambda:current_pitch,
+            calc_aoa=lambda:measured_aoa,
             update_team_dap_gui=lambda:None,check_abort=lambda *a:{'abort':False},
             normalized_heading_error=lambda a,b:(a-b+180)%360-180,
             flight_log_event=lambda *a:None)
@@ -561,22 +675,39 @@ class DepartureIntegrationTest(unittest.TestCase):
         # Source helper counts nested braces; the tested block is production.
         from test_ascent_abort import source_block
         runtime.load_source(source_block(main,'if step = "ascent_alignment"{'),'actual-alignment-step')
-        return g
+        return runtime,g
 
     def test_clear_aligned_departure_resumes_acceleration_without_waypoint_speed_hold(self):
-        g=self.alignment()
+        _,g=self.alignment()
         self.assertEqual(g.get_value('step'),'speed_build')
         self.assertEqual(g.get_value('dapthrottle'),1)
 
     def test_planned_dogleg_cannot_be_skipped_by_initial_runway_alignment(self):
-        g=self.alignment(first_course=-15)
+        _,g=self.alignment(first_course=-15)
         self.assertEqual(g.get_value('step'),'ascent_alignment')
         self.assertEqual(g.get_value('departure_route')['index'],0)
 
-    def test_early_turn_preserves_pitch_and_unloads_bank_when_climb_is_lost(self):
-        g=self.alignment(orbital_course=45,first_course=45)
+    def test_early_turn_preserves_lift_and_unloads_bank_when_climb_is_lost(self):
+        _,g=self.alignment(orbital_course=45,first_course=45)
         self.assertLess(g.get_value('dap')['aoa']['target_bank'],0)
-        self.assertGreaterEqual(g.get_value('ascent_alignment_debug')['pitch_floor'],14)
-        weak=self.alignment(orbital_course=45,first_course=45,vs=-2)
+        self.assertGreater(g.get_value('ascent_alignment_debug')['pitch_floor'],0)
+        self.assertLessEqual(g.get_value('ascent_alignment_debug')['pitch_floor'],
+                             g.get_value('ascent')['alignment_max_pitch'])
+        _,weak=self.alignment(orbital_course=45,first_course=45,vs=-2)
         self.assertEqual(weak.get_value('dap')['aoa']['target_bank'],0)
         self.assertEqual(weak.get_value('dapthrottle'),1)
+
+    def test_final_controller_pitch_cap_handles_high_prograde_and_current_pitch(self):
+        runtime,g=self.alignment(prograde_pitch=80,current_pitch=85,measured_aoa=38)
+        aerostr=(ROOT/'Script/Libraries/lib_aerostr.ks').read_text()
+        runtime.load_source(source_function(aerostr,'aoa_bank_management'),'actual-aoa-controller')
+        aoa=g.get_value('dap')['aoa']
+        g.get_value('aoa_bank_management')(aoa['target_aoa'],aoa['target_bank'])
+        requested=aoa['aoa_pitch']
+        self.assertGreater(requested,20)
+        control=(LIB/'control.ks').read_text()
+        self.assertIn('set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(',control)
+        final_command=g.get_value('terrain_alignment_pitch')(
+            requested,g.get_value('ascent_alignment_debug'),g.get_value('ascent'))
+        self.assertLessEqual(final_command,20)
+        self.assertEqual(final_command,20)

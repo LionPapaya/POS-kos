@@ -47,7 +47,7 @@ global POS_LOG_EVENT_FILE is "".
 // Version 25 adds entry recovery clocks and completed-solve timing.
 // Version 26 adds final descent recovery, mass speed scaling and fuel dump floors.
 // Version 27 adds terrain corridors, escape selection and departure waypoints.
-global POS_LOG_SCHEMA_VERSION is 27.
+global POS_LOG_SCHEMA_VERSION is 28.
 global POS_LOG_ENTRY_BASIC_UT is -1.
 global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
@@ -1299,7 +1299,7 @@ function flight_log_recovery_sample {
 
 
 function flight_log_terrain_header {
-    return ",gpws_escape_mode,gpws_long_margin,gpws_time_to_conflict,gpws_long_range,gpws_scan_age,gpws_escape_heading,gpws_escape_offset,gpws_escape_margin,gpws_escape_valid,gpws_threat_latitude,gpws_threat_longitude,gpws_threat_height,departure_route_valid,departure_route_index,departure_route_count,departure_route_margin,alignment_pitch_floor,alignment_bank,alignment_aoa".
+    return ",gpws_escape_mode,gpws_long_margin,gpws_time_to_conflict,gpws_long_range,gpws_scan_age,gpws_escape_heading,gpws_escape_offset,gpws_escape_margin,gpws_escape_valid,gpws_threat_latitude,gpws_threat_longitude,gpws_threat_height,departure_route_valid,departure_route_index,departure_route_count,departure_route_margin,alignment_pitch_floor,alignment_bank,alignment_aoa,alignment_pitch_limit".
 }
 
 function flight_log_terrain_columns {
@@ -1320,6 +1320,9 @@ function flight_log_terrain_columns {
         set columns to columns+","+ascent_alignment_debug["pitch_floor"]+","+
             ascent_alignment_debug["bank"]+","+ascent_alignment_debug["aoa"].
     } else { set columns to columns+",0,0,0". }
+    if defined ascent_alignment_debug {
+        set columns to columns+","+AVES["Ascent"]["alignment_max_pitch"].
+    } else { set columns to columns+",0". }
     return columns.
 }
 

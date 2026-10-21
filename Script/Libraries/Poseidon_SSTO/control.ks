@@ -363,6 +363,19 @@ function envelope_terrain_refresh {
 // remain controllable with negative flight-path pitch throughout recovery.
 function envelope_upset_release {
     parameter envelope, recovery_config, entry_recovery, recovery_aoa, recovery_rate, recovery_bank, recovery_pitch, recovery_dt.
+    if defined step and step = "ascent_alignment" {
+        // A nose-up attitude alone is not recovered forward flight. This
+        // prevents the near-vertical roll ambiguity from repeatedly releasing
+        // and retriggering recovery while the aircraft loses all its speed.
+        if recovery_pitch >= 0 and recovery_pitch <= recovery_config["departure_recovery_max_pitch"] and
+           abs(recovery_bank) <= recovery_config["departure_recovery_max_bank"] and
+           abs(recovery_aoa) <= min(recovery_config["recovery_safe_aoa"],envelope["max_aoa"]) and
+           abs(recovery_rate) <= recovery_config["entry_recovery_max_aoa_rate"] and
+           ship:airspeed >= recovery_config["departure_recovery_min_speed"] {
+            set envelope["stable_timer"] to envelope["stable_timer"]+recovery_dt.
+        } else { set envelope["stable_timer"] to 0. }
+        return envelope["stable_timer"] >= recovery_config["departure_recovery_stable_time"].
+    }
     if not entry_recovery {
         return recovery_pitch >= recovery_config["recovery_exit_pitch"] and recovery_aoa <= envelope["max_aoa"].
     }
@@ -702,6 +715,11 @@ function envelope_run_recovery {
         aoa_bank_management(0,0).
     } else {
         aoa_bank_management(dap["envelope"]["max_aoa"],0).
+        if defined step and step = "ascent_alignment" {
+            // Upset recovery must restore forward flight, not another
+            // vertical climb. Terrain escape above retains full authority.
+            set dap["aoa"]["aoa_pitch"] to min(AVES["Ascent"]["alignment_max_pitch"],dap["aoa"]["aoa_pitch"]).
+        }
     }
     lock steering to heading(dap["aoa"]["aoa_yaw"],dap["aoa"]["aoa_pitch"],dap["aoa"]["aoa_roll"]).
 }
@@ -765,7 +783,7 @@ if not (dap:haskey("update")) {
                 set dap["aoa"]["base_pitch"] to 0.
             }
             if defined ascent_alignment_debug and step = "ascent_alignment" {
-                set dap["aoa"]["aoa_pitch"] to max(dap["aoa"]["aoa_pitch"],ascent_alignment_debug["pitch_floor"]).
+                set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(dap["aoa"]["aoa_pitch"],ascent_alignment_debug,AVES["Ascent"]).
             }
         }
         if dap["str_mode"] = "vector"{
