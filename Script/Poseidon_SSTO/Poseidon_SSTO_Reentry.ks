@@ -135,6 +135,9 @@ global entry_attitude_initialized is false.
 global entry_rejected_runways is lexicon().
 set deorbit_periapsis_set_flag to false.
 set landing_flare_started to false.
+global landing_preflare_active is false.
+global landing_preflare_escape_since is -1.
+global landing_ground_contact_seen is false.
 global entry_reference_time is -1.
 global entry_predictive_bank is 0.
 global entry_predictive_plan_bank is 0.
@@ -865,10 +868,16 @@ until running = false{
             if landing_commit["stable"] {
                 if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
                 abort_set_fuel_dump(false).
+                set landing_preflare_active to terminal_route["landing_handoff_kind"] = "preflare".
+                set landing_preflare_escape_since to -1.
+                set terminal_route_debug["landing_preflare_active"] to landing_preflare_active.
+                local handoff_exit_margin is 0.
+                if landing_commit:haskey("exit_margin") { set handoff_exit_margin to landing_commit["exit_margin"]. }
                 flight_log_event("landing_handoff","distance="+round(terminal_route["remaining_distance"],1)+
                     "|altitude="+round(ship:altitude-runway_altitude,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
                     "|target_vertical_speed="+round(terminal_route_debug["desired_vertical_speed"],2)+
-                    "|profile_region="+terminal_route["profile_region"]+"|glideslope_error="+round(landing_commit["glideslope_error"],1)).
+                    "|profile_region="+terminal_route["profile_region"]+"|glideslope_error="+round(landing_commit["glideslope_error"],1)+
+                    "|kind="+terminal_route["landing_handoff_kind"]+"|exit_margin="+round(handoff_exit_margin,1)).
                 set terminal_route_debug["preflare_pullup_active"] to false.
                 set terminal_route_debug["preflare_pullup_fraction"] to 0.
                 set step to "landing".
@@ -895,13 +904,46 @@ until running = false{
         local landing_config is AVES["Landing"].
         set dapthrottle to 0.
         gear on.
+        if ship:status = "LANDED" or ship:status = "SPLASHED" {
+            set landing_ground_contact_seen to true.
+            set landing_preflare_active to false.
+            set terminal_route_debug["landing_preflare_active"] to false.
+        }
         update_team_dap_gui().
         // The final flare deliberately remains a descent.  Interpolating the
         // desired sink rate by height produces a smooth flare without holding
         // the craft level over the runway.
         local desired_vs is landing_config["approach_vertical_speed"].
+        if landing_preflare_active and not landing_ground_contact_seen and ship:status = "FLYING" and
+           alt_ovr_runway > landing_config["flare_start_altitude"] {
+            local preflare_command is terminal_landing_preflare_guidance(terminal_route).
+            set desired_vs to preflare_command["desired_vs"].
+            if preflare_command["unsafe"] {
+                if landing_preflare_escape_since < 0 { set landing_preflare_escape_since to time:seconds. }
+            } else { set landing_preflare_escape_since to -1. }
+            if landing_preflare_escape_since >= 0 and time:seconds-landing_preflare_escape_since >=
+               AVES["TerminalRoute"]["PreflareCommit"]["escape_persistence"] {
+                set landing_preflare_active to false.
+                set terminal_route_debug["landing_preflare_active"] to false.
+                set terminal_route["go_around_reason"] to "committed_preflare_unstable".
+                set terminal_route["go_around_count"] to terminal_route["go_around_count"]+1.
+                flight_log_event("terminal_go_around","reason=committed_preflare_unstable|altitude="+round(alt_ovr_runway,1)+
+                    "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(preflare_command["profile_error"],1)+
+                    "|exit_margin="+round(preflare_command["exit_margin"],1)).
+                terminal_route_change_phase(terminal_route,"go_around").
+                set terminal_route["recovery_throttle_floor"] to AVES["TerminalRoute"]["GoAround"]["recovery_throttle"].
+                set terminal_route["propulsion_mode"] to "air".
+                set step to "TEAM".
+                terminal_route_fly(terminal_route).
+            }
+        }
+        // An escape has already transferred control back to TEAM; do not
+        // overwrite its commands with a final-flare command in the same tick.
+        if step = "landing" {
         local flare_fraction is 0.
         if alt_ovr_runway < landing_config["flare_start_altitude"] {
+            set landing_preflare_active to false.
+            set terminal_route_debug["landing_preflare_active"] to false.
             set flare_fraction to max(0,min(1,
                 (landing_config["flare_start_altitude"] - alt_ovr_runway) /
                 max(landing_config["flare_start_altitude"] - landing_config["touchdown_altitude"],1)
@@ -920,10 +962,7 @@ until running = false{
 
         // Keep aerostr control for final alignment.  Drive turn_pitch directly
         // so the flare has pitch authority without using distance_pitch.
-        local flare_pitch is max(landing_config["minimum_turn_pitch"],min(
-            landing_config["maximum_turn_pitch"],
-            (desired_vs - ship:verticalspeed) * landing_config["pitch_gain"]
-        )).
+        local flare_pitch is terminal_landing_pitch_command(desired_vs,ship:verticalspeed,landing_config).
         set dap["str_mode"] to "aerostr".
         set dap["aerostr"]["turn_pitch"] to flare_pitch.
         set dap["aerostr"]["distance_pitch"] to 0.
@@ -933,7 +972,22 @@ until running = false{
         local landing_speed_scale is terminal_mass_speed_scale(ship:mass,AVES["TerminalRoute"]).
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
             ship:status = "LANDED",alt_ovr_runway,landing_config,landing_speed_scale).
+        if landing_preflare_active {
+            set landing_brake_command to approach_brake_band(brakes,ship:airspeed,
+                AVES["TerminalRoute"]["ApproachSpeed"]["brake_on_speed"]*landing_speed_scale,
+                AVES["TerminalRoute"]["ApproachSpeed"]["brake_off_speed"]*landing_speed_scale).
+            if desired_vs-ship:verticalspeed > 4 or terminal_route_debug["profile_error"] > 5 {
+                set landing_brake_command to false.
+            }
+        }
+        local brake_on_threshold is landing_config["brake_on_speed"]*landing_speed_scale.
+        local brake_off_threshold is landing_config["brake_off_speed"]*landing_speed_scale.
+        if landing_preflare_active {
+            set brake_on_threshold to AVES["TerminalRoute"]["ApproachSpeed"]["brake_on_speed"]*landing_speed_scale.
+            set brake_off_threshold to AVES["TerminalRoute"]["ApproachSpeed"]["brake_off_speed"]*landing_speed_scale.
+        }
         local brake_reason is "speed_band".
+        if landing_preflare_active { set brake_reason to "committed_preflare". }
         if ship:status = "LANDED" or alt_ovr_runway <= landing_config["wheel_brake_altitude"] {
             set brake_reason to "wheel_contact_zone".
         }
@@ -941,7 +995,7 @@ until running = false{
            terminal_route_debug["brake_reason"] <> brake_reason {
             flight_log_approach_brake("landing",brake_reason,landing_brake_command,
                 AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"]*landing_speed_scale,
-                landing_config["brake_on_speed"]*landing_speed_scale,landing_config["brake_off_speed"]*landing_speed_scale,terminal_route["energy_margin"]).
+                brake_on_threshold,brake_off_threshold,terminal_route["energy_margin"]).
         }
         set terminal_route_debug["brake_mode"] to "landing".
         set terminal_route_debug["brake_reason"] to brake_reason.
@@ -963,6 +1017,7 @@ until running = false{
             set step to "end".
             log_status("Landing completed, switching to end phase").
         }
+        } // end landing owner guard
     }
     if step = "end" {
         if not recovery_result["complete"] {

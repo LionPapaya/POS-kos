@@ -912,14 +912,6 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "far_acceleration_safety",0.65,"far_maximum_acceleration",8,
         "minimum_clearance",75
     ),
-    // An approach is planned before final, never moved under the aircraft.
-    // Bound sink and curvature to measured lift plus a tracking allowance.
-    "AdaptiveApproach",lex(
-        "maximum_sink",22,"tracking_acceleration_limit",2,
-        "minimum_gradient",0.1051042353,"gradient_step",0.005,
-        "maximum_preflare_start",3500,"preflare_step",250,
-        "sample_height",300
-    ),
     "pitch_bias_gain",0.35,
     "nominal_target_aoa",16,
     "max_energy_aoa",20,
@@ -977,6 +969,18 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "maximum_heading_error",22,"maximum_cross_track",900,
         "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"climb_aoa",20,
         "turn_altitude",350,"passed_threshold",0
+    ),
+    // Commit on the established curved preflare, while there is still height
+    // to arrest sink. Waiting for shallow-glide sink before giving the landing
+    // controller ownership prevented the actual pull-up in flights 385/409.
+    "PreflareCommit",lex(
+        "distance",1500,"minimum_height",75,"maximum_height",350,
+        "gear_distance",2200,"gear_height",500,
+        "maximum_glideslope_error",20,"maximum_cross_track",150,
+        "maximum_heading_error",5,"maximum_bank",10,
+        "minimum_vertical_speed",-45,"maximum_vertical_speed",-3,
+        "stable_time",0.2,"minimum_exit_margin",15,"maximum_far_age",1.5,
+        "escape_profile_error",60,"escape_bank",30,"escape_persistence",0.5
     ),
     "LandingGate",lex(
         "distance",1500,"altitude",120,"heading_error",8,"cross_track",300,
