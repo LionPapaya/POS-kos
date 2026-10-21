@@ -103,3 +103,26 @@ to nominal ascent. Repeat with left/right terrain constraints and no clear
 candidate. Validate heavy-aircraft lift and roll authority in KSP; aerodynamic
 moments, control surfaces and other omitted dynamics cannot be certified by
 these offline tests.
+
+## Manual recording and rejected-route diagnostics
+
+On the main POS screen, select **Manual Flight Logging** from the program menu.
+Recording starts in **OFF**; select **CSS** in the DAP menu for the existing
+assisted controls. AUTO is unavailable in this recording mode. Engines, brakes,
+gear and throttle remain pilot operated. OFF records without running DAP control
+updates; CSS retains its normal envelope/terrain protection. No departure route
+approval is required. Select **Stop manual recording** or another program to end
+the recording. Files use the normal `/POS_logs/flight_N/` directory and
+`program=manual`. None/low logging is temporarily raised to medium (one sample
+per second); an existing high setting is retained. The previous logging setting
+is restored on exit.
+
+Departure checks now return diagnostic summaries to the caller for every tested
+candidate, including rejected ones. `departure_candidate` events contain initial
+course/offset, final course, turn distance, pass/fail, worst clearance margin,
+distance to the worst sample, predicted bottom altitude, required clearance,
+terrain height/position, first conflict time and the maximum climb gradient
+needed across the sampled path. A `departure_best_rejected` event identifies the
+closest-to-passing rejected candidate. These events are available in low,
+medium and high logging modes. Route scoring, assumed climb performance and
+acceptance criteria are unchanged; the path routines perform no logging or I/O.

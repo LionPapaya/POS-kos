@@ -1391,6 +1391,30 @@ function flight_log_departure_plan {
             "|speed="+route_plan["model_speed"]+"|sample_spacing="+route_plan["sample_spacing"]+
             "|model_valid="+route_plan["model_valid"]).
     }
+    if route_plan:haskey("candidates") {
+        local candidate_index is 0.
+        for route_candidate in route_plan["candidates"] {
+            flight_log_event("departure_candidate","index="+candidate_index+
+                "|course="+route_candidate["course"]+"|offset="+route_candidate["offset"]+
+                "|valid="+route_candidate["valid"]+"|margin="+route_candidate["margin"]+
+                "|clearance="+route_candidate["clearance"]+"|distance="+route_candidate["distance"]+
+                "|predicted_bottom="+route_candidate["predicted_bottom"]+
+                "|required_clearance="+route_candidate["required_clearance"]+
+                "|terrain_height="+route_candidate["terrain_height"]+
+                "|lat="+route_candidate["latitude"]+"|lng="+route_candidate["longitude"]+
+                "|first_conflict_seconds="+route_candidate["first_conflict_seconds"]+
+                "|required_gradient="+route_candidate["required_gradient"]+
+                "|turn_distance="+route_candidate["turn_distance"]+"|final_course="+route_candidate["final_course"]).
+            set candidate_index to candidate_index+1.
+        }
+        if route_plan["best_rejected"]:length > 0 {
+            local rejected_candidate is route_plan["best_rejected"].
+            flight_log_event("departure_best_rejected","course="+rejected_candidate["course"]+
+                "|margin="+rejected_candidate["margin"]+"|distance="+rejected_candidate["distance"]+
+                "|required_gradient="+rejected_candidate["required_gradient"]+
+                "|lat="+rejected_candidate["latitude"]+"|lng="+rejected_candidate["longitude"]).
+        }
+    }
     local waypoint_index is 0.
     for route_waypoint in route_plan["waypoints"] {
         flight_log_event("departure_plan_waypoint","index="+waypoint_index+

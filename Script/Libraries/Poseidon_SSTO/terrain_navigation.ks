@@ -25,7 +25,9 @@ function terrain_path_create {
         "gravity",local_gravity,"initial_roll",initial_roll,"departure",departure_mode,"distance",0,
         "elapsed",0,"range",path_range,"margin",999999,"clearance",999999,
         "conflict_time",999999,"threat_lat",0,"threat_lng",0,"threat_height",0,
-        "done",false,"waypoints",list(),"next_waypoint",1000).
+        "done",false,"waypoints",list(),"next_waypoint",1000,
+        "initial_bottom",bottom_height,"worst_distance",0,"worst_bottom",bottom_height,
+        "worst_required_clearance",0,"required_gradient",0).
 }
 
 // One station samples the centre and both corridor edges. Flight code budgets
@@ -98,9 +100,16 @@ function terrain_path_advance {
         if ship:body:hasocean { set probe_height to max(0,probe_height). }
         local probe_clearance is terrain_path_state["bottom"]-probe_height.
         local probe_margin is probe_clearance-station_floor.
+        if terrain_path_state["departure"] {
+            set terrain_path_state["required_gradient"] to max(terrain_path_state["required_gradient"],
+                (probe_height+station_floor-terrain_path_state["initial_bottom"])/max(1,terrain_path_state["distance"])).
+        }
         if probe_margin < terrain_path_state["margin"] {
             set terrain_path_state["margin"] to probe_margin.
             set terrain_path_state["clearance"] to probe_clearance.
+            set terrain_path_state["worst_distance"] to terrain_path_state["distance"].
+            set terrain_path_state["worst_bottom"] to terrain_path_state["bottom"].
+            set terrain_path_state["worst_required_clearance"] to station_floor.
             set terrain_path_state["threat_lat"] to probe_point:lat.
             set terrain_path_state["threat_lng"] to probe_point:lng.
             set terrain_path_state["threat_height"] to probe_height.
@@ -130,7 +139,8 @@ function terrain_departure_plan {
         "index",0,"margin",-999999,"first_course",0,"score",999999,
         "origin",ship:geoposition,"planned_ut",time:seconds,"mass",ship:mass,
         "model_gradient",navigation_config["departure_gradient"],"model_speed",navigation_config["departure_speed"],
-        "sample_spacing",navigation_config["sample_spacing"],"model_valid",false).
+        "sample_spacing",navigation_config["sample_spacing"],"model_valid",false,
+        "candidates",list(),"best_rejected",lex()).
     // find_active_runway() returns heading/altitude sentinels, not a
     // selected flag (that flag belongs to recovery runway candidates).
     if not(active_runway:haskey("heading")) or not(active_runway:haskey("altitude")) { return result_plan. }
@@ -164,6 +174,24 @@ function terrain_departure_plan {
                 set batch_index to batch_index+1.
             }
             wait 0.
+        }
+        // Return diagnostics to the caller. No logging or I/O in path math.
+        local candidate_diagnostic is lex("course",candidate_course,"offset",candidate_offset,
+            "valid",candidate_path["margin"] >= 0,"margin",candidate_path["margin"],
+            "clearance",candidate_path["clearance"],"distance",candidate_path["worst_distance"],
+            "predicted_bottom",candidate_path["worst_bottom"],
+            "required_clearance",candidate_path["worst_required_clearance"],
+            "terrain_height",candidate_path["threat_height"],"latitude",candidate_path["threat_lat"],
+            "longitude",candidate_path["threat_lng"],"first_conflict_seconds",candidate_path["conflict_time"],
+            "required_gradient",candidate_path["required_gradient"],
+            "turn_distance",navigation_config["departure_dogleg_distance"],"final_course",orbital_course).
+        result_plan["candidates"]:add(candidate_diagnostic).
+        if candidate_path["margin"] < 0 {
+            if result_plan["best_rejected"]:length = 0 {
+                set result_plan["best_rejected"] to candidate_diagnostic.
+            } else if candidate_path["margin"] > result_plan["best_rejected"]["margin"] {
+                set result_plan["best_rejected"] to candidate_diagnostic.
+            }
         }
         local candidate_score is abs(terrain_heading_delta(orbital_course,candidate_course))+
             0.15*abs(candidate_offset).

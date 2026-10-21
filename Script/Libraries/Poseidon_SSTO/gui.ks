@@ -1261,15 +1261,22 @@ function create_main_gui{
     
     function main_update_dap {
         parameter decoy is 1.
-        set dap["dap_mode"] to main_dap_mode_menu:value.
-        if (dap["dap_mode"] = "OFF") {
-			set main_dap_mode_menu:STYLE:BG to "Libraries/gui_images/abort_btn.png".
-		} else {
-			set main_dap_mode_menu:STYLE:BG to "Libraries/gui_images/default_btn.png". 
-		}
-	}
-    
-
+        if main_step = "manual_log" {
+            if main_dap_mode_menu:value = "CSS" {
+                set dap["str_mode"] to "aerostr".
+                set dap["l_t"] to time:seconds.
+                dap:set_css().
+            } else {
+                dap:set_off().
+                if main_dap_mode_menu:index <> 2 { set main_dap_mode_menu:index to 2. }
+            }
+        } else { set dap["dap_mode"] to main_dap_mode_menu:value. }
+        if dap["dap_mode"] = "off" {
+            set main_dap_mode_menu:style:bg to "Libraries/gui_images/abort_btn.png".
+        } else {
+            set main_dap_mode_menu:style:bg to "Libraries/gui_images/default_btn.png".
+        }
+    }
 
     local Programm_box is main_toggels_box:addhlayout().
     local Programm_label is Programm_box:addlabel("<b>Programm</b> ").
@@ -1277,6 +1284,8 @@ function create_main_gui{
     local Programm_popup is Programm_box:addpopupmenu().
     SET Programm_popup:STYLE:HEIGHT TO 25.
     SET Programm_popup:STYLE:width TO 170.
+    Programm_popup:addoption("Select program").
+    Programm_popup:addoption("Manual Flight Logging").
     Programm_popup:addoption("Launch").
     Programm_popup:addoption("Aerobraking").
     Programm_popup:addoption("Landing").
@@ -1290,6 +1299,8 @@ function create_main_gui{
 
     function changeProgramm{
         parameter decoy is 1.
+        if Programm_popup:value = "Select program" { set main_step to "ask_Step". }
+        if Programm_popup:value = "Manual Flight Logging" { set main_step to "manual_log". }
         if Programm_popup:value = "Launch"{
             set main_step to "POS1".
         }
@@ -1318,6 +1329,13 @@ function create_main_gui{
             set main_step to "Test".
         }
     }
+    global manual_log_status is poseidon_gui_main:addlabel("Manual flight: select Manual Flight Logging").
+    global manual_log_stop is poseidon_gui_main:addbutton("Stop manual recording").
+    set manual_log_stop:visible to false.
+    set manual_log_stop:onclick to {
+        set main_step to "ask_Step".
+        set Programm_popup:index to 0.
+    }.
 
 }
 function get_inputs_rsvp {
