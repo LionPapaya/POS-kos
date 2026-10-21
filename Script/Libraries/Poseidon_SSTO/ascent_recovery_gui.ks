@@ -537,9 +537,9 @@ function ascent_recovery_render {
 // Shared HUD ticks keep the existing ascent window current during synchronous
 // landing / entry calls. No GUI is created for standalone landing missions.
 function ascent_recovery_handoff_tick {
-    if not defined ascent_display_state or not defined abort_state or not defined ascent_recovery_panel { return. }
-    if not abort_state:haskey("mode") or not abort_state:haskey("handoff") { return. }
-    if not abort_state["handoff"]["started"] or abort_state["handoff"]["complete"] { return. }
+    if not(defined ascent_display_state) or not(defined abort_state) or not(defined ascent_recovery_panel) { return. }
+    if not(abort_state:haskey("mode")) or not(abort_state:haskey("handoff")) { return. }
+    if not(abort_state["handoff"]["started"]) or abort_state["handoff"]["complete"] { return. }
     if ascent_recovery_get(abort_state,"nominal_insertion",false) { return. }
     update_assent_gui().
     if defined POS_LOG_LEVEL { flight_log_ascent_display_observe(ascent_display_data,ascent_display_log). }
