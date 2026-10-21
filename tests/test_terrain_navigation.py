@@ -488,7 +488,7 @@ class TerrainLoggingTest(unittest.TestCase):
         return self.g.get_value(name)(*args)
 
     def test_terrain_columns_match_header_with_and_without_departure(self):
-        self.assertIn('global POS_LOG_SCHEMA_VERSION is 28.',(LIB/'flight_log.ks').read_text())
+        self.assertIn('global POS_LOG_SCHEMA_VERSION is 30.',(LIB/'flight_log.ks').read_text())
         header = self.call('flight_log_terrain_header').split(',')
         default_columns = self.call('flight_log_terrain_columns').split(',')
         self.assertEqual(header[-1],'alignment_pitch_limit')

@@ -858,10 +858,6 @@ until running = false{
             brakes off.
         }
 
-        if not reentry_preserve_propulsion and (terminal_route["phase"] = "final" or terminal_route["phase"] = "base"){
-            abort_set_fuel_dump(ship:mass > AVES["TerminalRoute"]["max_landing_mass"]).
-        }
-
         if terminal_route["landing_ready"]{
             // LandingGate has already been stable for its configured time.
             // Make one final LOC/GS/approach check here, without another timer.

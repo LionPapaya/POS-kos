@@ -216,13 +216,18 @@ function calculate_glideslope_pitch_command {
 // step or a second open-loop flare schedule.
 function calculate_preflare_pullup_command {
     parameter profile_region, profile_error, normal_pitch,
-        start_error, full_error, pullup_pitch.
-    local eligible_region is profile_region = "preflare" or profile_region = "shallow".
+        start_error, full_error, pullup_pitch, predictive_fraction is 0.
+    local eligible_region is profile_region = "preflare" or profile_region = "shallow" or
+        predictive_fraction > 0.
     local pullup_fraction is 0.
     if eligible_region {
-        set pullup_fraction to max(0,min(1,
-            (profile_error - start_error) / max(full_error - start_error,1)
-        )).
+        local profile_fraction is 0.
+        if profile_region = "preflare" or profile_region = "shallow" {
+            set profile_fraction to max(0,min(1,
+                (profile_error - start_error) / max(full_error - start_error,1)
+            )).
+        }
+        set pullup_fraction to max(profile_fraction,max(0,min(1,predictive_fraction))).
     }
     local pullup_floor is pullup_pitch * pullup_fraction.
     local commanded_pitch is normal_pitch.

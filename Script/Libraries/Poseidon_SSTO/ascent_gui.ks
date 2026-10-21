@@ -143,6 +143,7 @@ function ascent_display_v1_prediction {
 
 function ascent_display_init {
     global ascent_display_state is lex("next_update",0,"origin",ship:geoposition,
+        "recovery_display_closed",false,
         "trend_ut",-1,"trend_phase","","speed",0,"apo",0,"peri",0,
         "progress_valid",false,"speed_rate",0,"apo_rate",0,"peri_rate",0,
         "v1_called",false,"v1_actual_speed",-1,
@@ -691,6 +692,11 @@ function ascent_display_update_takeoff {
 
 function update_assent_gui {
     parameter inputs is "auto".
+    if defined ascent_display_state and ascent_display_state:haskey("recovery_display_closed") and
+       ascent_display_state["recovery_display_closed"] {
+        if defined assent_gui { assent_gui:hide(). }
+        return.
+    }
     if inputs = "auto" {
         if time:seconds < ascent_display_state["next_update"] and step <> "end" { return. }
         set ascent_display_state["next_update"] to time:seconds+0.5.

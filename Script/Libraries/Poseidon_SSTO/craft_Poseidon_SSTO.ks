@@ -892,12 +892,19 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_pitch_vertical_speed_gain",0.8,
     "final_pitch_command_max",25,
     "final_pitch_command_min",-20,
-    // Before GPWS becomes necessary, reproduce its 20-degree pull-up pitch
-    // with the engines left at idle.  Blend it in only while below the curved
-    // preflare/shallow profile so an on-profile approach keeps normal control.
+    // Before GPWS becomes necessary, reproduce its 20-degree pull-up pitch.
+    // A separate predictive floor starts the pull-up early enough to account
+    // for speed, mass, and conservative aircraft response during preflare.
     "final_preflare_pullup_start_error",5,
     "final_preflare_pullup_full_error",15,
     "final_preflare_pullup_pitch",20,
+    "PreflarePrediction",lex(
+        "response_delay_seconds",2.0,"heavy_mass_delay_seconds",1.0,
+        "reference_vertical_deceleration",1.5,
+        "minimum_capability_scale",0.60,"maximum_capability_scale",1.20,
+        "pullup_ramp_distance",700,"preflare_lead_distance",1000,"minimum_sink_excess",4,
+        "minimum_clearance",75
+    ),
     "pitch_bias_gain",0.35,
     "nominal_target_aoa",16,
     "max_energy_aoa",20,
@@ -924,9 +931,14 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     ),
     "debug_log_interval",0.5,
     "max_landing_mass", 36,
-    // Dump floors retain usable fuel; engines may spend it on a go-around.
+    // Keep the configured recovery floors, then preserve LF for one bounded
+    // 300-unit partial CC burn while excess LF drains. 1.25 LF per OX unit is
+    // a conservative pairing bound; it does not require consuming all OX.
     "RecoveryFuelDump",lex("minimum_lf",1000,"minimum_ox",300,
-        "arrival_fraction",0.20,"stop_margin",100),
+        "stop_margin",25,"minimum_dump_clearance",500,
+        "cc_lf_per_ox",1.25,"cc_lf_margin",100,
+        "cc_partial_ox_budget",300,"cc_min_lf_burn",250,"cc_min_ox_burn",100,
+        "cc_assist_throttle_limit",0.35),
     "Geometry",lex(
         "direct_final_cross_track",3000,"direct_final_heading_error",35,"direct_final_min_along_track",2500,
         "wide_final_distance",14000,"wide_base_offset",350,"wide_downwind_extension",14000,
@@ -938,11 +950,12 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "throttle_speed",120,"speed_assist_gain",0.04
     ),
     "GoAround",lex(
-        "enabled",true,"decision_distance",3500,"minimum_altitude",80,
+        "enabled",true,"decision_distance",3500,"minimum_altitude",15,
         // A low final with unarrested sink needs power before the landing gate.
         "vertical_decision_distance",10000,"vertical_profile_error",75,
-        "vertical_sink_limit",-15,"vertical_tracking_error",10,
-        "vertical_persistence",3,"recovery_throttle",0.70,
+        "vertical_sink_limit",-10,"vertical_tracking_error",8,
+        "vertical_recovery_arrest_margin",200,"vertical_critical_arrest_margin",125,
+        "vertical_persistence",3,"vertical_critical_persistence",0.25,"recovery_throttle",0.70,
         "minimum_turn_climb_rate",2,
         "maximum_heading_error",22,"maximum_cross_track",900,
         "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"climb_aoa",20,

@@ -26,6 +26,7 @@ global POS_LOG_LEVEL is 0.
 if POS_LOGGING_MODE = "low" { set POS_LOG_LEVEL to 1. }
 if POS_LOGGING_MODE = "medium" { set POS_LOG_LEVEL to 2. }
 if POS_LOGGING_MODE = "high" { set POS_LOG_LEVEL to 3. }
+global POS_LOG_ASCENT_DISPLAY_TRANSITION_READY is true.
 
 // The legacy boolean is kept false so old ad-hoc log statements do not create
 // extra files outside the per-flight folder.  A true legacy setting above still
@@ -47,7 +48,9 @@ global POS_LOG_EVENT_FILE is "".
 // Version 25 adds entry recovery clocks and completed-solve timing.
 // Version 26 adds final descent recovery, mass speed scaling and fuel dump floors.
 // Version 27 adds terrain corridors, escape selection and departure waypoints.
-global POS_LOG_SCHEMA_VERSION is 28.
+// Version 29 adds predictive preflare, sink-arrest margins and descent propulsion mode.
+// Version 30 distinguishes profile deficit from absolute arrest and records paired-fuel floors.
+global POS_LOG_SCHEMA_VERSION is 30.
 global POS_LOG_ENTRY_BASIC_UT is -1.
 global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
@@ -147,12 +150,19 @@ function flight_log_terminal_energy_header {
         "terminal_turn_sample_speed,terminal_turn_sample_pending,"+
         "terminal_descent_recovery_active,terminal_descent_recovery_elapsed,"+
         "terminal_descent_tracking_error,terminal_recovery_throttle_floor,"+
-        "terminal_mass_speed_scale,terminal_dump_lf_floor,terminal_dump_ox_floor,terminal_fuel_dump_active".
+        "terminal_mass_speed_scale,terminal_dump_lf_floor,terminal_dump_ox_floor,terminal_fuel_dump_active,"+
+        "terminal_preflare_anticipation_active,terminal_preflare_predictive_fraction,"+
+        "terminal_preflare_arrest_distance,terminal_preflare_profile_deficit_height,"+
+        "terminal_preflare_absolute_arrest_height,terminal_preflare_clearance_used,"+
+        "terminal_preflare_clearance_margin,terminal_preflare_target_vertical_speed,"+
+        "terminal_preflare_response_delay,terminal_preflare_vertical_deceleration,"+
+        "terminal_descent_arrest_margin,terminal_descent_arrest_height,"+
+        "terminal_dump_lf_paired_floor,terminal_propulsion_mode,terminal_propulsion_throttle".
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0".
+        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,idle,0".
     }
     local turn_pitch_active is 0.
     if terminal_route_debug["turn_pitch_limit_active"] { set turn_pitch_active to 1. }
@@ -162,6 +172,8 @@ function flight_log_terminal_energy_columns {
     if terminal_route_debug["descent_recovery_active"] { set descent_recovery_active to 1. }
     local fuel_dump_active is 0.
     if terminal_route_debug["fuel_dump_active"] { set fuel_dump_active to 1. }
+    local preflare_anticipation_active is 0.
+    if terminal_route_debug["preflare_anticipation_active"] { set preflare_anticipation_active to 1. }
     return ","+terminal_route_debug["energy_capture"]+","+terminal_route_debug["energy_drag_work"]+","+
         terminal_route_debug["energy_turn_work"]+","+terminal_route_debug["energy_reserve"]+","+
         terminal_route_debug["energy_clean_loss"]+","+terminal_route_debug["energy_margin_rate"]+","+
@@ -177,7 +189,22 @@ function flight_log_terminal_energy_columns {
         descent_recovery_active+","+terminal_route_debug["descent_recovery_elapsed"]+","+
         terminal_route_debug["descent_tracking_error"]+","+terminal_route_debug["recovery_throttle_floor"]+","+
         terminal_route_debug["mass_speed_scale"]+","+terminal_route_debug["dump_lf_floor"]+","+
-        terminal_route_debug["dump_ox_floor"]+","+fuel_dump_active.
+        terminal_route_debug["dump_ox_floor"]+","+fuel_dump_active+","+
+        preflare_anticipation_active+","+
+        terminal_route_debug["preflare_predictive_fraction"]+","+
+        terminal_route_debug["preflare_arrest_distance"]+","+
+        terminal_route_debug["preflare_profile_deficit_height"]+","+
+        terminal_route_debug["preflare_absolute_arrest_height"]+","+
+        terminal_route_debug["preflare_clearance_used"]+","+
+        terminal_route_debug["preflare_clearance_margin"]+","+
+        terminal_route_debug["preflare_target_vertical_speed"]+","+
+        terminal_route_debug["preflare_response_delay"]+","+
+        terminal_route_debug["preflare_vertical_deceleration"]+","+
+        terminal_route_debug["descent_arrest_margin"]+","+
+        terminal_route_debug["descent_arrest_height"]+","+
+        terminal_route_debug["dump_lf_paired_floor"]+","+
+        terminal_route_debug["propulsion_mode"]+","+
+        terminal_route_debug["propulsion_throttle"].
 }
 
 function flight_log_entry_predictive_header {
@@ -978,6 +1005,16 @@ function flight_log_ascent_display_observe {
         if POS_LOG_LEVEL = 2 { set evidence["next_sample"] to time:seconds+1. }
         flight_log_event("ascent_display_sample",detail).
     }
+}
+
+// Record the one-time display owner handoff without adding UI work or changing
+// medium/high sample cadence. Called only by the live recovery display lifecycle.
+function flight_log_ascent_display_transition {
+    parameter recovery_mode, recovery_phase, terminal_phase, flight_step.
+    if POS_LOG_LEVEL < 1 { return. }
+    flight_log_event("ascent_display_transition","action=close|display=ascent_recovery|owner=landing_reentry"+
+        "|mode="+recovery_mode+"|recovery_phase="+recovery_phase+
+        "|terminal_phase="+terminal_phase+"|step="+flight_step).
 }
 
 // Selection-time cached evidence only. Never called from trajectory predictors.

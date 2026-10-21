@@ -25,12 +25,28 @@ global terminal_route_debug is lex(
     "pitch_saturated", false,
     "preflare_pullup_active", false,
     "preflare_pullup_fraction", 0,
+    "preflare_pitch_floor_fraction", 0,
+    "preflare_anticipation_active", false,
+    "preflare_predictive_fraction", 0,
+    "preflare_arrest_distance", 0,
+    "preflare_profile_deficit_height", 0,
+    "preflare_absolute_arrest_height", 0,
+    "preflare_clearance_margin", 0,
+    "preflare_clearance_used", 0,
+    "preflare_target_vertical_speed", 0,
+    "preflare_response_delay", 0,
+    "preflare_vertical_deceleration", 0,
     "descent_recovery_active", false,
     "descent_recovery_elapsed", 0,
     "descent_tracking_error", 0,
+    "descent_arrest_margin", 0,
+    "descent_arrest_height", 0,
     "recovery_throttle_floor", 0,
+    "propulsion_mode", "idle",
+    "propulsion_throttle", 0,
     "mass_speed_scale", 1,
     "dump_lf_floor", 0,
+    "dump_lf_paired_floor", 0,
     "dump_ox_floor", 0,
     "fuel_dump_active", false,
     "landing_desired_vs", 0,
@@ -186,13 +202,160 @@ function terminal_mass_speed_scale {
     return sqrt(max(1,measured_mass/max(1,config_TR["max_landing_mass"]))).
 }
 
+// Estimate how much runway-distance and height are needed to unwind sink
+// toward a requested vertical speed.  The acceleration is intentionally
+// derated and scales with dynamic pressure per unit mass.
+function terminal_sink_arrest_prediction {
+    parameter measured_vs, target_vs, horizontal_speed, measured_mass, measured_airspeed, config_TR.
+    local prediction_config is config_TR["PreflarePrediction"].
+    local mass_scale is terminal_mass_speed_scale(measured_mass,config_TR).
+    local reference_speed is config_TR["ApproachSpeed"]["target_speed"]*mass_scale.
+    local capability_ratio is (measured_airspeed/max(reference_speed,1))^2.
+    set capability_ratio to max(prediction_config["minimum_capability_scale"],
+        min(prediction_config["maximum_capability_scale"],capability_ratio)).
+    local heavy_ratio is max(0,measured_mass/max(1,config_TR["max_landing_mass"])-1).
+    local response_delay is prediction_config["response_delay_seconds"]+
+        heavy_ratio*prediction_config["heavy_mass_delay_seconds"].
+    local vertical_deceleration is max(0.1,
+        prediction_config["reference_vertical_deceleration"]*capability_ratio).
+    local sink_speed is max(0,-measured_vs).
+    local target_sink_speed is max(0,-target_vs).
+    local sink_excess is max(0,sink_speed-target_sink_speed).
+    local arrest_time is sink_excess/vertical_deceleration.
+    // Relative profile deficit integrates only sink in excess of the target.
+    // Absolute height loss keeps target sink throughout delay and deceleration.
+    local profile_deficit_height is sink_excess*response_delay+
+        sink_excess^2/(2*vertical_deceleration).
+    local absolute_arrest_height is sink_speed*response_delay+
+        max(0,sink_speed^2-target_sink_speed^2)/(2*vertical_deceleration).
+    local arrest_distance is max(0,horizontal_speed)*(response_delay+arrest_time).
+    return lex("sink_excess",sink_excess,"arrest_time",arrest_time,
+        "profile_deficit_height",profile_deficit_height,
+        "absolute_arrest_height",absolute_arrest_height,"arrest_distance",arrest_distance,
+        "response_delay",response_delay,"vertical_deceleration",vertical_deceleration,
+        "capability_ratio",capability_ratio).
+}
+
+// Start raising the nose early enough to reach the shallow-profile sink rate
+// by the end of the curved transition, including a conservative aircraft
+// response delay and a speed/mass-dependent pull-up estimate.
+function terminal_preflare_predictive_fraction {
+    parameter measured_vs, target_vs, distance_to_threshold, preflare_start_distance, preflare_end_distance,
+        horizontal_speed, measured_mass, measured_airspeed, config_TR.
+    local arrest is terminal_sink_arrest_prediction(measured_vs,target_vs,horizontal_speed,
+        measured_mass,measured_airspeed,config_TR).
+    local available_distance is max(0,distance_to_threshold-preflare_end_distance).
+    local ramp_distance is max(1,config_TR["PreflarePrediction"]["pullup_ramp_distance"]).
+    local shortfall is arrest["arrest_distance"]-available_distance.
+    local response_fraction is max(0,min(1,(shortfall+ramp_distance)/ramp_distance)).
+    local minimum_excess is max(0.1,config_TR["PreflarePrediction"]["minimum_sink_excess"]).
+    local excess_scale is max(0,min(1,arrest["sink_excess"]/minimum_excess)).
+    set excess_scale to excess_scale^2*(3-2*excess_scale).
+    set response_fraction to response_fraction*excess_scale.
+    // Preview the curved profile continuously before its 1.5 km start. This
+    // keeps the sink target shallow as the deficit recovers, so the steep
+    // profile controller cannot immediately undo the anticipatory pull-up.
+    local preview_distance is max(1,config_TR["PreflarePrediction"]["preflare_lead_distance"])
+        + max(0,preflare_start_distance-preflare_end_distance).
+    local preview_fraction is 0.
+    if distance_to_threshold >= preflare_end_distance {
+        set preview_fraction to max(0,min(1,
+            (preflare_start_distance+config_TR["PreflarePrediction"]["preflare_lead_distance"]-
+                distance_to_threshold)/preview_distance)).
+    } else {
+        local shallow_fade is max(0,min(1,distance_to_threshold/max(preflare_end_distance,1))).
+        set preview_fraction to shallow_fade^2*(3-2*shallow_fade).
+    }
+    local fraction is max(response_fraction,preview_fraction).
+    return lex("fraction",fraction,"pitch_floor_fraction",response_fraction,
+        "response_fraction",response_fraction,
+        "preview_fraction",preview_fraction,"available_distance",available_distance,
+        "arrest_distance",arrest["arrest_distance"],
+        "profile_deficit_height",arrest["profile_deficit_height"],
+        "absolute_arrest_height",arrest["absolute_arrest_height"],
+        "response_delay",arrest["response_delay"],
+        "vertical_deceleration",arrest["vertical_deceleration"],
+        "sink_excess",arrest["sink_excess"]).
+}
+
+function terminal_route_surface_clearance {
+    parameter altitude_asl, runway_altitude_asl, terrain_height_asl.
+    return min(altitude_asl-runway_altitude_asl,altitude_asl-max(0,terrain_height_asl)).
+}
+
+function terminal_route_paired_lf_dump_floor {
+    parameter lf_floor, ox_remaining, ox_floor, healthy_rapiers, config_TR.
+    local dump_config is config_TR["RecoveryFuelDump"].
+    local available_ox is max(0,ox_remaining-ox_floor).
+    local preserved_ox is min(available_ox,dump_config["cc_partial_ox_budget"]).
+    local paired_lf is 0.
+    if healthy_rapiers > 0 and preserved_ox > 0 {
+        set paired_lf to preserved_ox*dump_config["cc_lf_per_ox"]+dump_config["cc_lf_margin"].
+    }
+    return lf_floor+paired_lf.
+}
+
+function terminal_route_healthy_rapier_count {
+    local healthy is 0.
+    if defined recovery_engines {
+        for identity in recovery_engines:keys {
+            local entry is recovery_engines[identity].
+            if entry["kind"] = "rapier" and entry["present"] and not entry["failed"] and
+               not entry["isolated"] and entry["part"]:thrustlimit > 0 and not entry["part"]:flameout {
+                set healthy to healthy+1.
+            }
+        }
+        return healthy.
+    }
+    if defined abort_state and abort_state:haskey("active") and abort_state["active"] and
+       abort_state:haskey("engines") and abort_state["engines"]:haskey("rapier") {
+        return abort_state["engines"]["rapier"]["working"].
+    }
+    for engine_part in ship:partstitledpattern("R.A.P.I.E.R") {
+        if engine_part:thrustlimit > 0 and not engine_part:flameout {
+            set healthy to healthy+1.
+        }
+    }
+    return healthy.
+}
+
+// Rocket mode is only an option when TEAM already requests thrust and enough
+// paired propellant remains above the recovery/orbit floors. Engine health,
+// isolation, and individual thrust limits are still applied by the engine
+// command helpers used by terminal_route_fly.
+function terminal_descent_rapier_mode {
+    parameter flight_step, route_phase, requested_throttle, atmospheric_descent,
+        clearance, healthy_rapiers, lf_remaining, ox_remaining, lf_floor, ox_floor, config_TR.
+    if requested_throttle <= 0.05 { return "idle". }
+    // AED/EDR reach this controller after the reentry handoff to TEAM. Keep
+    // engine-mode changes inside atmospheric terminal phases; orbital, entry,
+    // coast, and landing-flare owners retain their existing propulsion policy.
+    local terminal_descent_phase is route_phase = "reposition" or route_phase = "intercept" or
+        route_phase = "hold" or route_phase = "downwind" or route_phase = "base" or
+        route_phase = "final" or route_phase = "go_around".
+    local escape_phase is route_phase = "go_around".
+    if flight_step <> "TEAM" or not terminal_descent_phase or not atmospheric_descent or
+       (not escape_phase and clearance <= config_TR["LandingGate"]["altitude"]) or
+       (escape_phase and clearance <= config_TR["GoAround"]["minimum_altitude"]) { return "air". }
+    if healthy_rapiers <= 0 { return "air". }
+    local dump_config is config_TR["RecoveryFuelDump"].
+    local usable_ox is max(0,ox_remaining-ox_floor).
+    local usable_lf is max(0,lf_remaining-lf_floor).
+    local burnable_lf is min(usable_lf,usable_ox*dump_config["cc_lf_per_ox"]).
+    if burnable_lf < dump_config["cc_min_lf_burn"] or
+       usable_ox < dump_config["cc_min_ox_burn"] { return "air". }
+    return "closed".
+}
+
 function terminal_fuel_dump_decision {
-    parameter phase, measured_mass, lf_remaining, ox_remaining, lf_floor, ox_floor,
-        descent_recovery_active, config_TR.
+    parameter phase, measured_mass, lf_remaining, lf_floor, descent_recovery_active,
+        atmospheric_descent, clearance, vertical_speed, config_TR.
     local stop_margin is config_TR["RecoveryFuelDump"]["stop_margin"].
-    return phase <> "go_around" and not descent_recovery_active and
+    return atmospheric_descent and vertical_speed < 0 and
+        clearance > config_TR["RecoveryFuelDump"]["minimum_dump_clearance"] and
+        phase <> "go_around" and
         measured_mass > config_TR["max_landing_mass"] and
-        lf_remaining > lf_floor+stop_margin and ox_remaining > ox_floor+stop_margin.
+        lf_remaining > lf_floor+stop_margin.
 }
 
 function terminal_brake_decision {
@@ -443,11 +606,28 @@ function terminal_fast_turn_command {
 // Profile error alone is expected during preflare. Require both substantial
 // sink and failure to track the requested vertical speed before intervening.
 function terminal_final_descent_recovery {
-    parameter phase, profile_error, wanted_vs, measured_vs, config_TR.
+    parameter phase, profile_error, wanted_vs, measured_vs, config_TR,
+        sink_arrest_margin is 999999, clearance is 999999, contact is false.
     local config_GA is config_TR["GoAround"].
-    return phase = "final" and profile_error >= config_GA["vertical_profile_error"] and
+    local clearance_valid is clearance = 999999 or clearance > config_GA["minimum_altitude"].
+    local profile_recovery is profile_error >= config_GA["vertical_profile_error"].
+    local arrest_recovery is sink_arrest_margin <= config_GA["vertical_recovery_arrest_margin"] and
+        (clearance = 999999 or clearance > config_GA["minimum_altitude"]).
+    return phase = "final" and not contact and clearance_valid and (profile_recovery or arrest_recovery) and
         measured_vs < config_GA["vertical_sink_limit"] and
         wanted_vs - measured_vs >= config_GA["vertical_tracking_error"].
+}
+
+function terminal_vertical_go_around_decision {
+    parameter descent_recovery_active, distance_to_threshold, recovery_elapsed,
+        sink_arrest_margin, clearance, contact, config_TR.
+    local config_GA is config_TR["GoAround"].
+    local critical is sink_arrest_margin <= config_GA["vertical_critical_arrest_margin"].
+    return descent_recovery_active and not contact and
+        distance_to_threshold < config_GA["vertical_decision_distance"] and
+        clearance > config_GA["minimum_altitude"] and
+        (recovery_elapsed >= config_GA["vertical_persistence"] or
+         (critical and recovery_elapsed >= config_GA["vertical_critical_persistence"])).
 }
 
 function terminal_recovery_throttle_floor {
@@ -801,13 +981,29 @@ function terminal_route_init {
         "turn_diagnostic_reason", "",
         "turn_diagnostic_time", -100,
         "preflare_pullup_active", false,
+        "preflare_anticipation_active", false,
+        "preflare_predictive_fraction", 0,
+        "preflare_pitch_floor_fraction", 0,
+        "preflare_arrest_distance", 0,
+        "preflare_profile_deficit_height", 0,
+        "preflare_absolute_arrest_height", 0,
+        "preflare_clearance_margin", 0,
+        "preflare_clearance_used", 0,
+        "preflare_target_vertical_speed", 0,
+        "preflare_response_delay", 0,
+        "preflare_vertical_deceleration", 0,
         "descent_recovery_active", false,
         "descent_recovery_since", -1,
         "descent_recovery_elapsed", 0,
         "descent_tracking_error", 0,
+        "descent_arrest_margin", 0,
+        "descent_arrest_height", 0,
         "recovery_throttle_floor", 0,
-        "dump_lf_floor", 0,
-        "dump_ox_floor", 0,
+        "propulsion_mode", "idle",
+        "propulsion_throttle", 0,
+        "dump_lf_floor", config_TR["RecoveryFuelDump"]["minimum_lf"],
+        "dump_lf_paired_floor", config_TR["RecoveryFuelDump"]["minimum_lf"],
+        "dump_ox_floor", config_TR["RecoveryFuelDump"]["minimum_ox"],
         "fuel_dump", false,
         "energy_margin", 0,
         "clean_energy_loss", config_TR["EnergyPlan"]["initial_clean_loss"],
@@ -839,10 +1035,12 @@ function terminal_route_init {
     if defined abort_state and abort_state:haskey("active") and abort_state["active"] {
         local dump_config is config_TR["RecoveryFuelDump"].
         set route["dump_lf_floor"] to max(abort_state["lf_reserve"],
-            max(dump_config["minimum_lf"],ship:liquidfuel*dump_config["arrival_fraction"])).
+            dump_config["minimum_lf"]).
         set route["dump_ox_floor"] to max(abort_state["ox_reserve"],
-            max(dump_config["minimum_ox"],ship:oxidizer*dump_config["arrival_fraction"])).
+            dump_config["minimum_ox"]).
     }
+    set route["dump_lf_paired_floor"] to terminal_route_paired_lf_dump_floor(
+        route["dump_lf_floor"],ship:oxidizer,route["dump_ox_floor"],0,config_TR).
 
     // A well positioned arrival may join final directly.  All other arrival
     // orientations get a deliberately wide downwind/base/final setup.
@@ -1153,10 +1351,25 @@ function terminal_route_remaining_distance {
 function terminal_route_update {
     parameter route.
     local config_TR is AVES["TerminalRoute"].
+    local dump_config is config_TR["RecoveryFuelDump"].
 
+    set route["dump_lf_floor"] to dump_config["minimum_lf"].
+    set route["dump_ox_floor"] to dump_config["minimum_ox"].
     if defined abort_state and abort_state:haskey("active") and abort_state["active"] {
         set abort_state to abort_refresh_state(abort_state).
+        set route["dump_lf_floor"] to max(abort_state["lf_reserve"],dump_config["minimum_lf"]).
+        set route["dump_ox_floor"] to max(abort_state["ox_reserve"],dump_config["minimum_ox"]).
     }
+    local atmospheric_descent is false.
+    if defined step and step = "TEAM" and ship:body:atm:exists and
+       ship:altitude < ship:body:atm:height and ship:verticalspeed < 0 and
+       ship:status <> "LANDED" and ship:status <> "SPLASHED" {
+        set atmospheric_descent to true.
+    }
+    local healthy_rapiers is 0.
+    if atmospheric_descent { set healthy_rapiers to terminal_route_healthy_rapier_count(). }
+    set route["dump_lf_paired_floor"] to terminal_route_paired_lf_dump_floor(
+        route["dump_lf_floor"],ship:oxidizer,route["dump_ox_floor"],healthy_rapiers,config_TR).
     local speed_scale is terminal_mass_speed_scale(ship:mass,config_TR).
     set terminal_route_debug["mass_speed_scale"] to speed_scale.
     terminal_route_measure_energy(route).
@@ -1266,8 +1479,60 @@ function terminal_route_update {
             recovery_closure_speed,recovery_aim_profile["altitude"]-runway_altitude,config_TR["HighEnergyFinal"]).
         set recovery_wanted_vs to recovery_high_energy["desired_vertical_speed"].
     }
+    local preflare_end_distance is AVES["glideslope"]["preflare_end"].
+    local shallow_profile is calculate_glideslope_profile(preflare_end_distance).
+    local preflare_target_vs is -max(recovery_closure_speed,config_TR["time_to_go_min_speed"])*
+        shallow_profile["gradient"].
+    local preflare_prediction is lex("fraction",0,"pitch_floor_fraction",0,
+        "response_fraction",0,"preview_fraction",0,
+        "available_distance",0,"arrest_distance",0,"profile_deficit_height",0,
+        "absolute_arrest_height",0,"response_delay",0,"vertical_deceleration",0,
+        "sink_excess",0).
+    local contact is ship:status = "LANDED" or ship:status = "SPLASHED".
+    if route["phase"] = "final" and not route["high_energy_final_active"] and
+       not route["landing_ready"] and not contact {
+        set preflare_prediction to terminal_preflare_predictive_fraction(ship:verticalspeed,
+            preflare_target_vs,direct_distance,AVES["glideslope"]["preflare_start"],
+            preflare_end_distance,recovery_closure_speed,
+            ship:mass,ship:airspeed,config_TR).
+    }
+    // Escape margin uses the absolute height to reach near-zero sink, not the
+    // smaller relative profile-deficit height used for preflare anticipation.
+    local sink_arrest is terminal_sink_arrest_prediction(ship:verticalspeed,0,
+        recovery_closure_speed,ship:mass,ship:airspeed,config_TR).
+    local surface_clearance is terminal_route_surface_clearance(ship:altitude,runway_altitude,
+        ship:geoposition:terrainheight).
+    local sink_arrest_margin is surface_clearance-sink_arrest["absolute_arrest_height"]-
+        config_TR["PreflarePrediction"]["minimum_clearance"].
+    set route["preflare_predictive_fraction"] to preflare_prediction["fraction"].
+    set route["preflare_pitch_floor_fraction"] to preflare_prediction["pitch_floor_fraction"].
+    set route["preflare_arrest_distance"] to preflare_prediction["arrest_distance"].
+    set route["preflare_profile_deficit_height"] to preflare_prediction["profile_deficit_height"].
+    set route["preflare_absolute_arrest_height"] to preflare_prediction["absolute_arrest_height"].
+    set route["preflare_clearance_used"] to surface_clearance.
+    set route["preflare_clearance_margin"] to surface_clearance-
+        preflare_prediction["absolute_arrest_height"]-config_TR["PreflarePrediction"]["minimum_clearance"].
+    set route["preflare_target_vertical_speed"] to preflare_target_vs.
+    set route["preflare_response_delay"] to preflare_prediction["response_delay"].
+    set route["preflare_vertical_deceleration"] to preflare_prediction["vertical_deceleration"].
+    local preflare_anticipation_active is preflare_prediction["fraction"] > 0.05.
+    if preflare_anticipation_active <> route["preflare_anticipation_active"] {
+        flight_log_event("terminal_preflare_anticipation","active="+preflare_anticipation_active+
+            "|distance="+round(direct_distance,1)+"|altitude="+round(geometry["altitude"],1)+
+            "|clearance="+round(surface_clearance,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
+            "|target_vertical_speed="+round(preflare_target_vs,2)+
+            "|fraction="+round(preflare_prediction["fraction"],3)+
+            "|pitch_floor_fraction="+round(preflare_prediction["pitch_floor_fraction"],3)+
+            "|response_fraction="+round(preflare_prediction["response_fraction"],3)+
+            "|preview_fraction="+round(preflare_prediction["preview_fraction"],3)+
+            "|profile_deficit_height="+round(preflare_prediction["profile_deficit_height"],1)+
+            "|absolute_arrest_height="+round(preflare_prediction["absolute_arrest_height"],1)+
+            "|mass="+round(ship:mass,2)+"|airspeed="+round(ship:airspeed,1)).
+    }
+    set route["preflare_anticipation_active"] to preflare_anticipation_active.
     local descent_recovery_active is terminal_final_descent_recovery(route["phase"],
-        direct_profile["altitude"]-ship:altitude,recovery_wanted_vs,ship:verticalspeed,config_TR).
+        direct_profile["altitude"]-ship:altitude,recovery_wanted_vs,ship:verticalspeed,config_TR,
+        sink_arrest_margin,surface_clearance,contact).
     if descent_recovery_active {
         if route["descent_recovery_since"] < 0 { set route["descent_recovery_since"] to time:seconds. }
         set route["descent_recovery_elapsed"] to time:seconds-route["descent_recovery_since"].
@@ -1276,10 +1541,16 @@ function terminal_route_update {
         set route["descent_recovery_elapsed"] to 0.
     }
     set route["descent_tracking_error"] to recovery_wanted_vs-ship:verticalspeed.
+    set route["descent_arrest_margin"] to sink_arrest_margin.
+    set route["descent_arrest_height"] to sink_arrest["absolute_arrest_height"].
     if descent_recovery_active <> route["descent_recovery_active"] {
         flight_log_event("terminal_descent_recovery","active="+descent_recovery_active+
             "|distance="+round(direct_distance,1)+"|profile_error="+round(direct_profile["altitude"]-ship:altitude,1)+
-            "|vertical_speed="+round(ship:verticalspeed,2)+"|target_vertical_speed="+round(recovery_wanted_vs,2)).
+            "|vertical_speed="+round(ship:verticalspeed,2)+"|target_vertical_speed="+round(recovery_wanted_vs,2)+
+            "|clearance="+round(surface_clearance,1)+
+            "|arrest_height="+round(sink_arrest["absolute_arrest_height"],1)+
+            "|arrest_margin="+round(sink_arrest_margin,1)+"|response_delay="+round(sink_arrest["response_delay"],2)+
+            "|vertical_deceleration="+round(sink_arrest["vertical_deceleration"],2)).
     }
     set route["descent_recovery_active"] to descent_recovery_active.
 
@@ -1287,9 +1558,10 @@ function terminal_route_update {
     local unstable_final is abs(geometry["heading_error"]) > go_around_config["maximum_heading_error"] or
         abs(geometry["cross_track"]) > go_around_config["maximum_cross_track"] or
         geometry["along_track"] < go_around_config["passed_threshold"].
-    local vertical_unstable is descent_recovery_active and
-        route["descent_recovery_elapsed"] >= go_around_config["vertical_persistence"] and
-        direct_distance < go_around_config["vertical_decision_distance"].
+    local vertical_critical is sink_arrest_margin <= go_around_config["vertical_critical_arrest_margin"].
+    local vertical_unstable is terminal_vertical_go_around_decision(descent_recovery_active,
+        direct_distance,route["descent_recovery_elapsed"],sink_arrest_margin,
+        surface_clearance,contact,config_TR).
     local lateral_unstable is unstable_final and direct_distance < go_around_config["decision_distance"].
     local powered_vertical_escape is false.
     if vertical_unstable and defined abort_state and abort_state:haskey("active") and abort_state["active"] {
@@ -1297,16 +1569,23 @@ function terminal_route_update {
             ship:liquidfuel > abort_state["lf_reserve"].
     }
     if route["phase"] = "final" and go_around_config["enabled"] and
-       geometry["altitude"] > go_around_config["minimum_altitude"] and (vertical_unstable or lateral_unstable) and
+       surface_clearance > go_around_config["minimum_altitude"] and not contact and
+       (vertical_unstable or lateral_unstable) and
        (energy_margin > go_around_config["minimum_reposition_energy"] or powered_vertical_escape) {
         set route["go_around_count"] to route["go_around_count"] + 1.
         set route["go_around_reason"] to "unstable_final".
         if vertical_unstable { set route["go_around_reason"] to "unrecovered_descent". }
+        if vertical_unstable and sink_arrest_margin <= go_around_config["vertical_recovery_arrest_margin"] {
+            set route["go_around_reason"] to "sink_arrest_margin".
+        }
         flight_log_event("terminal_go_around","reason="+route["go_around_reason"]+
             "|distance="+round(direct_distance,1)+"|altitude="+round(geometry["altitude"],1)+
+            "|clearance="+round(surface_clearance,1)+
             "|profile_error="+round(direct_profile["altitude"]-ship:altitude,1)+
             "|vertical_speed="+round(ship:verticalspeed,2)+"|tracking_error="+round(route["descent_tracking_error"],2)+
-            "|recovery_elapsed="+round(route["descent_recovery_elapsed"],2)+"|powered_escape="+powered_vertical_escape).
+            "|recovery_elapsed="+round(route["descent_recovery_elapsed"],2)+"|arrest_height="+
+            round(sink_arrest["absolute_arrest_height"],1)+"|arrest_margin="+round(sink_arrest_margin,1)+
+            "|critical="+vertical_critical+"|powered_escape="+powered_vertical_escape).
         terminal_route_change_phase(route,"go_around").
     }
 
@@ -1398,24 +1677,60 @@ function terminal_route_update {
     set terminal_route_debug["descent_recovery_active"] to descent_recovery_active.
     set terminal_route_debug["descent_recovery_elapsed"] to route["descent_recovery_elapsed"].
     set terminal_route_debug["descent_tracking_error"] to route["descent_tracking_error"].
+    set terminal_route_debug["descent_arrest_margin"] to route["descent_arrest_margin"].
+    set terminal_route_debug["descent_arrest_height"] to route["descent_arrest_height"].
     set terminal_route_debug["recovery_throttle_floor"] to route["recovery_throttle_floor"].
-    if defined abort_state and abort_state:haskey("active") and abort_state["active"] {
-        local dump_command is false.
-        if abort_state["engines"]["rapier"]["working"] > 0 {
-            set dump_command to terminal_fuel_dump_decision(route["phase"],ship:mass,
-                ship:liquidfuel,ship:oxidizer,route["dump_lf_floor"],route["dump_ox_floor"],
-                descent_recovery_active,config_TR).
-        }
-        if dump_command <> route["fuel_dump"] {
-            flight_log_event("terminal_fuel_dump","active="+dump_command+"|phase="+route["phase"]+
-                "|mass="+round(ship:mass,2)+"|lf="+round(ship:liquidfuel,1)+"|ox="+round(ship:oxidizer,1)+
-                "|lf_floor="+round(route["dump_lf_floor"],1)+"|ox_floor="+round(route["dump_ox_floor"],1)+
-                "|speed_scale="+round(speed_scale,3)+"|descent_recovery="+descent_recovery_active).
-        }
-        set route["fuel_dump"] to dump_command.
-        abort_set_fuel_dump(dump_command).
+    local propulsion_assist is terminal_energy_throttle(route["energy_margin"],ship:airspeed,
+        config_TR,speed_scale).
+    local requested_throttle is max(propulsion_assist["command"],route["recovery_throttle_floor"]).
+    local propulsion_mode is "idle".
+    if requested_throttle > 0.05 { set propulsion_mode to "air". }
+    if atmospheric_descent and requested_throttle > 0.05 {
+        set propulsion_mode to terminal_descent_rapier_mode(step,route["phase"],requested_throttle,
+            atmospheric_descent,surface_clearance,healthy_rapiers,ship:liquidfuel,
+            ship:oxidizer,route["dump_lf_floor"],route["dump_ox_floor"],config_TR).
     }
+    local commanded_propulsion_throttle is requested_throttle.
+    if propulsion_mode = "closed" and
+       route["phase"] <> "go_around" and not descent_recovery_active {
+        set commanded_propulsion_throttle to min(requested_throttle,
+            config_TR["RecoveryFuelDump"]["cc_assist_throttle_limit"]).
+    }
+    if propulsion_mode <> route["propulsion_mode"] {
+        flight_log_event("terminal_propulsion_mode","from="+route["propulsion_mode"]+
+            "|to="+propulsion_mode+"|phase="+route["phase"]+
+            "|requested_throttle="+round(requested_throttle,3)+
+            "|commanded_throttle="+round(commanded_propulsion_throttle,3)+
+            "|healthy_rapiers="+healthy_rapiers+
+            "|lf="+round(ship:liquidfuel,1)+"|ox="+round(ship:oxidizer,1)+
+            "|lf_floor="+round(route["dump_lf_floor"],1)+
+            "|lf_paired_floor="+round(route["dump_lf_paired_floor"],1)+
+            "|ox_floor="+round(route["dump_ox_floor"],1)).
+    }
+    set route["propulsion_mode"] to propulsion_mode.
+    set route["propulsion_throttle"] to commanded_propulsion_throttle.
+    set terminal_route_debug["propulsion_mode"] to propulsion_mode.
+    local dump_command is false.
+    if propulsion_mode <> "closed" {
+        // Dump only LF that is above both the true recovery floor and a
+        // bounded reserve for a future partial CC burn. OX remains untouched.
+        set dump_command to terminal_fuel_dump_decision(route["phase"],ship:mass,
+            ship:liquidfuel,route["dump_lf_paired_floor"],descent_recovery_active,
+            atmospheric_descent,surface_clearance,ship:verticalspeed,config_TR).
+    }
+    if dump_command <> route["fuel_dump"] {
+        flight_log_event("terminal_fuel_dump","active="+dump_command+"|phase="+route["phase"]+
+            "|mass="+round(ship:mass,2)+"|lf="+round(ship:liquidfuel,1)+"|ox="+round(ship:oxidizer,1)+
+            "|lf_floor="+round(route["dump_lf_floor"],1)+
+            "|lf_paired_floor="+round(route["dump_lf_paired_floor"],1)+
+            "|ox_floor="+round(route["dump_ox_floor"],1)+
+            "|speed_scale="+round(speed_scale,3)+"|descent_recovery="+descent_recovery_active+
+            "|propulsion_mode="+propulsion_mode).
+    }
+    set route["fuel_dump"] to dump_command.
+    abort_set_fuel_dump(dump_command).
     set terminal_route_debug["dump_lf_floor"] to route["dump_lf_floor"].
+    set terminal_route_debug["dump_lf_paired_floor"] to route["dump_lf_paired_floor"].
     set terminal_route_debug["dump_ox_floor"] to route["dump_ox_floor"].
     set terminal_route_debug["fuel_dump_active"] to route["fuel_dump"].
     if brake_decision["command"] <> route["airbrake"] or brake_decision["mode"] <> route["brake_mode"] or
@@ -1567,6 +1882,13 @@ function terminal_route_fly {
         set desired_vertical_speed to profile_feedforward_vs + altitude_error / config_TR["final_profile_correction_time"].
         set desired_vertical_speed to max(config_TR["final_profile_min_vertical_speed"],
             min(config_TR["final_profile_max_vertical_speed"],desired_vertical_speed)).
+        if route["preflare_predictive_fraction"] > 0 {
+            set desired_vertical_speed to desired_vertical_speed*
+                (1-route["preflare_predictive_fraction"])+
+                route["preflare_target_vertical_speed"]*route["preflare_predictive_fraction"].
+            set desired_vertical_speed to max(config_TR["final_profile_min_vertical_speed"],
+                min(config_TR["final_profile_max_vertical_speed"],desired_vertical_speed)).
+        }
         set route["profile_altitude"] to profile["altitude"].
         set route["profile_gradient"] to profile["gradient"].
     } else {
@@ -1612,7 +1934,7 @@ function terminal_route_fly {
         local pullup_solution is calculate_preflare_pullup_command(
             active_profile_region,profile_altitude_error,pitch_bias,
             config_TR["final_preflare_pullup_start_error"],config_TR["final_preflare_pullup_full_error"],
-            config_TR["final_preflare_pullup_pitch"]
+            config_TR["final_preflare_pullup_pitch"],route["preflare_pitch_floor_fraction"]
         ).
         set pitch_bias to pullup_solution["command"].
         set preflare_pullup_active to pullup_solution["active"].
@@ -1621,7 +1943,17 @@ function terminal_route_fly {
             flight_log_event("terminal_preflare_pullup","active="+preflare_pullup_active+
                 "|distance="+round(distance,1)+"|altitude="+round(ship:altitude-runway_altitude,1)+
                 "|profile_error="+round(profile_altitude_error,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
-                "|pitch_command="+round(pitch_bias,2)+"|fraction="+round(preflare_pullup_fraction,2)).
+                "|pitch_command="+round(pitch_bias,2)+"|fraction="+round(preflare_pullup_fraction,2)+
+                "|predictive_fraction="+round(route["preflare_predictive_fraction"],2)+
+                "|pitch_floor_fraction="+round(route["preflare_pitch_floor_fraction"],2)+
+                "|arrest_distance="+round(route["preflare_arrest_distance"],1)+
+                "|profile_deficit_height="+round(route["preflare_profile_deficit_height"],1)+
+                "|absolute_arrest_height="+round(route["preflare_absolute_arrest_height"],1)+
+                "|clearance="+round(route["preflare_clearance_used"],1)+
+                "|clearance_margin="+round(route["preflare_clearance_margin"],1)+
+                "|response_delay="+round(route["preflare_response_delay"],2)+
+                "|vertical_deceleration="+round(route["preflare_vertical_deceleration"],2)+
+                "|mass="+round(ship:mass,2)+"|airspeed="+round(ship:airspeed,1)).
         }
         set route["preflare_pullup_active"] to preflare_pullup_active.
         if pitch_saturated <> route["pitch_saturated"] {
@@ -1684,6 +2016,9 @@ function terminal_route_fly {
     local speed_throttle is assist["speed"].
     set dapthrottle to assist["command"].
     set dapthrottle to max(dapthrottle,route["recovery_throttle_floor"]).
+    if route["propulsion_mode"] = "closed" {
+        set dapthrottle to min(dapthrottle,route["propulsion_throttle"]).
+    }
     local assist_reason is "idle".
     if energy_throttle > 0 { set assist_reason to "route_deficit". }
     if speed_throttle > energy_throttle { set assist_reason to "speed_floor". }
@@ -1695,9 +2030,18 @@ function terminal_route_fly {
             "|speed_request="+round(speed_throttle,3)+"|throttle="+round(dapthrottle,3)).
         set route["energy_assist_reason"] to assist_reason.
     }
-    if dapthrottle > 0 {
+    if route["propulsion_mode"] = "closed" and dapthrottle > 0 {
+        rapierson().
+        togglerapiermode("closed").
+    } else if dapthrottle > 0 {
         rapierson().
         togglerapiermode("air").
+    } else if defined rapier_mode and rapier_mode = "ClosedCycle" {
+        // Return to air mode after the requested descent assist ends; do not
+        // keep the vessel in rocket mode while the route is coasting.
+        togglerapiermode("air").
+    }
+    if dapthrottle > 0 {
         if defined abort_state and abort_state:haskey("policy") and abort_state["policy"]["use_nervs"] { nervson(). }
     }
 
@@ -1790,6 +2134,24 @@ function terminal_route_fly {
     set terminal_route_debug["pitch_saturated"] to pitch_saturated.
     set terminal_route_debug["preflare_pullup_active"] to preflare_pullup_active.
     set terminal_route_debug["preflare_pullup_fraction"] to preflare_pullup_fraction.
+    set terminal_route_debug["preflare_anticipation_active"] to route["preflare_anticipation_active"].
+    set terminal_route_debug["preflare_predictive_fraction"] to route["preflare_predictive_fraction"].
+    set terminal_route_debug["preflare_pitch_floor_fraction"] to route["preflare_pitch_floor_fraction"].
+    set terminal_route_debug["preflare_arrest_distance"] to route["preflare_arrest_distance"].
+    set terminal_route_debug["preflare_profile_deficit_height"] to route["preflare_profile_deficit_height"].
+    set terminal_route_debug["preflare_absolute_arrest_height"] to route["preflare_absolute_arrest_height"].
+    set terminal_route_debug["preflare_clearance_margin"] to route["preflare_clearance_margin"].
+    set terminal_route_debug["preflare_clearance_used"] to route["preflare_clearance_used"].
+    set terminal_route_debug["preflare_target_vertical_speed"] to route["preflare_target_vertical_speed"].
+    set terminal_route_debug["preflare_response_delay"] to route["preflare_response_delay"].
+    set terminal_route_debug["preflare_vertical_deceleration"] to route["preflare_vertical_deceleration"].
+    set terminal_route_debug["descent_arrest_margin"] to route["descent_arrest_margin"].
+    set terminal_route_debug["descent_arrest_height"] to route["descent_arrest_height"].
+    set terminal_route_debug["propulsion_mode"] to route["propulsion_mode"].
+    set terminal_route_debug["propulsion_throttle"] to route["propulsion_throttle"].
+    set terminal_route_debug["dump_lf_floor"] to route["dump_lf_floor"].
+    set terminal_route_debug["dump_lf_paired_floor"] to route["dump_lf_paired_floor"].
+    set terminal_route_debug["dump_ox_floor"] to route["dump_ox_floor"].
     set terminal_route_debug["pitch_bias"] to pitch_bias.
     set terminal_route_debug["turn_pitch_limit_active"] to turn_pitch_limit_active.
     set terminal_route_debug["turn_pitch_raw_bias"] to turn_pitch_raw_bias.

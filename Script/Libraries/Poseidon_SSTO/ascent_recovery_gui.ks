@@ -536,11 +536,39 @@ function ascent_recovery_render {
 
 // Shared HUD ticks keep the existing ascent window current during synchronous
 // landing / entry calls. No GUI is created for standalone landing missions.
+function ascent_recovery_close_display {
+    parameter recovery_state, terminal_phase.
+    local newly_closed is not ascent_recovery_get(ascent_display_state,"recovery_display_closed",false).
+    if newly_closed {
+        set ascent_display_state["recovery_display_closed"] to true.
+        if defined reentry_gui { reentry_gui:show(). }
+        if defined POS_LOG_ASCENT_DISPLAY_TRANSITION_READY and POS_LOG_ASCENT_DISPLAY_TRANSITION_READY {
+            flight_log_ascent_display_transition(recovery_state["mode"],recovery_state["phase"],
+                terminal_phase,step).
+        }
+    }
+    if defined assent_gui { assent_gui:hide(). }
+}
+
 function ascent_recovery_handoff_tick {
     if not(defined ascent_display_state) or not(defined abort_state) or not(defined ascent_recovery_panel) { return. }
     if not(abort_state:haskey("mode")) or not(abort_state:haskey("handoff")) { return. }
-    if not(abort_state["handoff"]["started"]) or abort_state["handoff"]["complete"] { return. }
     if ascent_recovery_get(abort_state,"nominal_insertion",false) { return. }
+    local terminal_phase is "unavailable".
+    local close_for_landing is step = "landing" or step = "contingency_abort".
+    if defined terminal_route and terminal_route:haskey("phase") {
+        set terminal_phase to terminal_route["phase"].
+        if terminal_phase = "final" or terminal_phase = "go_around" { set close_for_landing to true. }
+    }
+    if ascent_recovery_get(ascent_display_state,"recovery_display_closed",false) {
+        ascent_recovery_close_display(abort_state,terminal_phase).
+        return.
+    }
+    if close_for_landing and abort_state["handoff"]["started"] {
+        ascent_recovery_close_display(abort_state,terminal_phase).
+        return.
+    }
+    if not(abort_state["handoff"]["started"]) or abort_state["handoff"]["complete"] { return. }
     update_assent_gui().
     if defined POS_LOG_LEVEL { flight_log_ascent_display_observe(ascent_display_data,ascent_display_log). }
 }
