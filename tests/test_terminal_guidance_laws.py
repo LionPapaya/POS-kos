@@ -1,10 +1,12 @@
 """Real-KerboScript regression tests for terminal descent safety laws."""
 from pathlib import Path
+import math
 import re
 import unittest
 
-from tools.pos_sim.kos_runtime import Runtime
+from tools.pos_sim.kos_runtime import OpcodeScheduler, Runtime
 from tools.pos_sim.terminal_energy_replay import EnergyReplay
+from test_glideslope import glideslope_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,13 +84,13 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         )
         steep_triggered = self.kos.call(
             "calculate_preflare_pullup_command", "steep", 14, 0, 5, 15, 20,
-            prediction["fraction"],
+            prediction["pitch_floor_fraction"],
         )
         self.assertFalse(steep_untriggered["active"])
-        self.assertAlmostEqual(steep_triggered["fraction"], prediction["fraction"])
+        self.assertAlmostEqual(steep_triggered["fraction"], prediction["pitch_floor_fraction"])
         pullup = self.kos.call(
             "calculate_preflare_pullup_command",
-            "steep", 0, -8, 5, 15, 20, prediction["fraction"],
+            "steep", 0, -8, 5, 15, 20, prediction["pitch_floor_fraction"],
         )
         self.assertTrue(pullup["active"])
         self.assertGreater(pullup["command"], 0)
@@ -111,6 +113,27 @@ class TerminalGuidanceLawTest(unittest.TestCase):
                             for distance, fraction in zip(distances, fractions)))
         self.assertTrue(any(distance < 1500 and fraction > 0
                             for distance, fraction in zip(distances, fractions)))
+
+    def test_recovered_shallow_sink_keeps_guidance_preview_without_a_pitch_floor(self):
+        for distance, region in ((1500, "preflare"), (1000, "preflare"),
+                                 (400, "shallow"), (200, "shallow")):
+            prediction = self.kos.call(
+                "terminal_preflare_predictive_fraction", -6.5, -6.5, distance,
+                1500, 400, 125, 36, 125, self.config,
+            )
+            self.assertGreater(prediction["fraction"], 0)
+            self.assertEqual(prediction["pitch_floor_fraction"], 0)
+            command = self.kos.call(
+                "calculate_preflare_pullup_command", region, 0, -2, 5, 15, 20,
+                prediction["pitch_floor_fraction"],
+            )
+            self.assertEqual(command["command"], -2)
+            self.assertFalse(command["active"])
+        at_shallow_start = self.kos.call(
+            "terminal_preflare_predictive_fraction", -6.5, -6.5, 400,
+            1500, 400, 125, 36, 125, self.config,
+        )
+        self.assertAlmostEqual(at_shallow_start["fraction"], 1)
 
     def test_independent_delayed_response_stays_above_clearance_for_light_and_heavy_cases(self):
         def integrate(mass, airspeed, initial_vs):
@@ -141,7 +164,7 @@ class TerminalGuidanceLawTest(unittest.TestCase):
                 if distance <= 400:
                     region = "shallow"
                 pullup = self.kos.call("calculate_preflare_pullup_command",region,0,
-                    pitch["command"],5,15,20,preview["fraction"])
+                    pitch["command"],5,15,20,preview["pitch_floor_fraction"])
                 delayed.append(pullup["command"])
                 applied_pitch = delayed.pop(0)
                 # Independent conservative plant: delayed pitch authority, a
@@ -159,8 +182,10 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         heavy = integrate(46.73,149,-38)
         self.assertGreater(light[1],75)
         self.assertGreater(heavy[1],75)
-        self.assertGreater(light[0],-18)
-        self.assertGreater(heavy[0],-18)
+        for actual_vs, airspeed in ((light[0],125),(heavy[0],149)):
+            target_vs = -airspeed * 0.0524077793
+            self.assertGreaterEqual(actual_vs,target_vs-10)
+            self.assertLessEqual(actual_vs,target_vs+6)
         self.assertLess(max(abs(b-a) for a,b in zip(light[2],light[2][1:])),2.5)
         self.assertLess(max(abs(b-a) for a,b in zip(heavy[2],heavy[2][1:])),2.5)
 
@@ -223,11 +248,15 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         self.assertFalse(go_around)
         self.assertFalse(flare_clearance)
 
-    def test_paired_floor_preserves_a_finite_cc_burn_budget(self):
-        floor = self.kos.call("terminal_route_paired_lf_dump_floor",1000,1320,300,self.config)
-        low_ox_floor = self.kos.call("terminal_route_paired_lf_dump_floor",1000,350,300,self.config)
-        self.assertEqual(floor,1475)
-        self.assertAlmostEqual(low_ox_floor,1162.5)
+    def test_paired_floor_preserves_a_finite_cc_burn_budget_only_when_usable(self):
+        floor = self.kos.call("terminal_route_paired_lf_dump_floor",300,1320,300,2,self.config)
+        low_ox_floor = self.kos.call("terminal_route_paired_lf_dump_floor",300,350,300,2,self.config)
+        no_engine_floor = self.kos.call("terminal_route_paired_lf_dump_floor",300,1320,300,0,self.config)
+        no_ox_floor = self.kos.call("terminal_route_paired_lf_dump_floor",300,250,300,2,self.config)
+        self.assertEqual(floor,775)
+        self.assertAlmostEqual(low_ox_floor,462.5)
+        self.assertEqual(no_engine_floor,300)
+        self.assertEqual(no_ox_floor,300)
         self.assertEqual(self.kos.call("terminal_route_surface_clearance",300,25,100),200)
 
     def test_closed_cycle_requires_thrust_demand_and_paired_reserve_margins(self):
@@ -246,7 +275,47 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         self.assertEqual(mode(ox=350), "air")
         self.assertEqual(mode(clearance=100), "air")
         self.assertEqual(mode(clearance=100,phase="go_around"), "closed")
-        self.assertEqual(mode(phase="hold"), "air")
+        for phase in ("reposition", "intercept", "hold"):
+            self.assertEqual(mode(phase=phase), "closed")
+        self.assertEqual(mode(phase="entry"), "air")
+        self.assertEqual(mode(atmospheric=False), "air")
+        for phase in ("entry", "coast", "landing", "ground"):
+            self.assertEqual(mode(phase=phase), "air")
+        self.assertEqual(mode(step="landing"), "air")
+        self.assertEqual(mode(clearance=100), "air")
+
+    def test_flight385_known_reserve_dump_and_partial_cc_budget(self):
+        lf_reserve = 555.997
+        ox_floor = 300
+        paired_floor = self.kos.call(
+            "terminal_route_paired_lf_dump_floor", lf_reserve, 1320, ox_floor, 2, self.config
+        )
+        self.assertAlmostEqual(paired_floor, 1030.997)
+        dump_eligibility = self.kos.call(
+            "terminal_fuel_dump_decision", "reposition", 46.73, 1100, paired_floor,
+            False, True, 900, -20, self.config,
+        )
+        self.assertTrue(dump_eligibility)
+        self.assertLess(1100,1115)  # prior flight-385 cutoff: 1015 LF floor + 100
+        self.assertGreater(paired_floor,lf_reserve)
+
+        def mode(lf, ox):
+            return self.kos.call(
+                "terminal_descent_rapier_mode", "TEAM", "reposition", 0.3, True,
+                900, 2, lf, ox, lf_reserve, ox_floor, self.config,
+            )
+
+        self.assertEqual(mode(900,550),"closed")
+        self.assertEqual(mode(800,450),"air")
+        self.assertEqual(mode(lf_reserve,450),"air")
+        self.assertEqual(self.kos.call(
+            "terminal_descent_rapier_mode", "TEAM", "reposition", 0.3, True,
+            900, 0, 900, 550, lf_reserve, ox_floor, self.config,
+        ),"air")
+        self.assertEqual(self.kos.call(
+            "terminal_descent_rapier_mode", "TEAM", "reposition", 0.3, True,
+            900, 2, 900, 250, lf_reserve, ox_floor, self.config,
+        ),"air")
 
     def test_terminal_logger_schema_records_arrest_predictor_and_propulsion_mode(self):
         logger = LIB / "flight_log.ks"
@@ -260,7 +329,7 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         column_source = column_source.replace(
             "if not(defined terminal_route_debug) {", "if false {", 1
         )
-        self.assertIn("global POS_LOG_SCHEMA_VERSION is 30.", logger.read_text())
+        self.assertIn("global POS_LOG_SCHEMA_VERSION is 31.", logger.read_text())
         logger_runtime = EnergyReplay()
         row = dict(latitude=0, longitude=-4, runway_start_latitude=0,
                    runway_start_longitude=0, runway_heading=90,
@@ -279,13 +348,61 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         logger_runtime.kos.globals.get_value("terminal_route_debug")["propulsion_mode"] = "closed"
         header = logger_runtime.call("flight_log_terminal_energy_header").split(",")[1:]
         values = logger_runtime.call("flight_log_terminal_energy_columns").split(",")[1:]
-        self.assertEqual(len(header), 46)
+        self.assertEqual(len(header), 47)
         self.assertEqual(len(values), len(header))
-        self.assertEqual(values[-2], "closed")
+        self.assertEqual(values[-3], "closed")
+        logger_runtime.kos.globals.get_value("terminal_route_debug")["preflare_pitch_floor_fraction"] = 0.35
+        values = logger_runtime.call("flight_log_terminal_energy_columns").split(",")[1:]
+        self.assertEqual(values[-1], "0.35")
+        fallback_source = column_source.replace("if false {", "if true {", 1)
+        logger_runtime.kos.load_source(fallback_source,"terminal_logger_default_fields")
+        fallback_values = logger_runtime.call("flight_log_terminal_energy_columns").split(",")[1:]
+        self.assertEqual(len(fallback_values),len(header))
         self.assertIn("terminal_preflare_profile_deficit_height", header)
         self.assertIn("terminal_preflare_absolute_arrest_height", header)
         self.assertIn("terminal_dump_lf_paired_floor", header)
         self.assertIn("terminal_descent_arrest_margin", header)
+        self.assertIn("terminal_preflare_pitch_floor_fraction", header)
+
+
+class TerminalDescentRepositionIntegrationTest(unittest.TestCase):
+    def test_descending_team_reposition_uses_bounded_closed_cycle_command(self):
+        host = EnergyReplay()
+        host.kos.load_source(glideslope_source(), "real-glideslope-controllers")
+        g = host.kos.globals
+        commands = []
+        g.update({
+            "step": "TEAM",
+            "dap": {"aoa": {}, "aerostr": {"turn_pitch": 0}},
+            "terminal_route_target_arrow_enabled": False,
+            "terminal_route_target_arrow_active": False,
+            "rapierson": lambda: commands.append("rapiers"),
+            "togglerapiermode": lambda mode: commands.append(mode),
+            "recovery_engines": {"r": {"kind": "rapier", "present": True,
+                "failed": False, "isolated": False,
+                "part": {"thrustlimit": 1, "flameout": False}}},
+        })
+        row = dict(
+            latitude=0, longitude=-8000/600000*180/math.pi,
+            runway_start_latitude=0, runway_start_longitude=0,
+            runway_heading=90, runway_altitude=25, altitude=9000,
+            airspeed=125, surface_speed=125, vertical_speed=-20,
+            thrust=0, ut=0, throttle_actual=0, mass=46.73,
+            liquidfuel=5000, oxidizer=1320, terminal_airbrake="False",
+            terminal_gear="False", terminal_runway_heading_error=0,
+            roll=0, aoa_actual=13,
+        )
+        host.set_row(row)
+        route = host.call("terminal_route_init")
+        route["phase"] = "reposition"
+        host.kos.scheduler = OpcodeScheduler(ipu=2000, tick_seconds=0.02)
+        host.call("terminal_route_update", route)
+        self.assertEqual(route["phase"], "reposition")
+        self.assertEqual(route["propulsion_mode"], "closed")
+        self.assertEqual(route["propulsion_throttle"], 0.35)
+        host.call("terminal_route_fly", route)
+        self.assertEqual(g.get_value("dapthrottle"), 0.35)
+        self.assertEqual(commands, ["rapiers", "closed"])
 
 
 if __name__ == "__main__":

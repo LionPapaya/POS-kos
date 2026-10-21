@@ -931,10 +931,12 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     ),
     "debug_log_interval",0.5,
     "max_landing_mass", 36,
-    // Keep the configured recovery floors, then preserve LF for one bounded
-    // 300-unit partial CC burn while excess LF drains. 1.25 LF per OX unit is
-    // a conservative pairing bound; it does not require consuming all OX.
-    "RecoveryFuelDump",lex("minimum_lf",1000,"minimum_ox",300,
+    // Retain 300 LF for an airbreathing recovery if OX or CC engines are
+    // unavailable. The managed abort's computed lf_reserve remains a higher
+    // floor whenever needed. Above that, preserve LF for a bounded 300-unit
+    // partial CC burn while excess LF drains; the 1.25 pairing plus margin
+    // keeps this optional budget separate from the true recovery reserve.
+    "RecoveryFuelDump",lex("minimum_lf",300,"minimum_ox",300,
         "stop_margin",25,"minimum_dump_clearance",500,
         "cc_lf_per_ox",1.25,"cc_lf_margin",100,
         "cc_partial_ox_budget",300,"cc_min_lf_burn",250,"cc_min_ox_burn",100,
