@@ -912,6 +912,14 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "far_acceleration_safety",0.65,"far_maximum_acceleration",8,
         "minimum_clearance",75
     ),
+    // An approach is planned before final, never moved under the aircraft.
+    // Bound sink and curvature to measured lift plus a tracking allowance.
+    "AdaptiveApproach",lex(
+        "maximum_sink",22,"tracking_acceleration_limit",2,
+        "minimum_gradient",0.1051042353,"gradient_step",0.005,
+        "maximum_preflare_start",3500,"preflare_step",250,
+        "sample_height",300
+    ),
     "pitch_bias_gain",0.35,
     "nominal_target_aoa",16,
     "max_energy_aoa",20,

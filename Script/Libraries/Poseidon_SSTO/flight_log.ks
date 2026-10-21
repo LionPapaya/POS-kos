@@ -52,7 +52,8 @@ global POS_LOG_EVENT_FILE is "".
 // Version 30 distinguishes profile deficit from absolute arrest and records paired-fuel floors.
 // Version 31 records the predictive sink-guidance blend separately from its pitch floor.
 // Version 32 records bounded profile preview, retained altitude correction and FAR pull-up capability.
-global POS_LOG_SCHEMA_VERSION is 32.
+// Version 33 adds the route-local reachable approach plan and capability decision.
+global POS_LOG_SCHEMA_VERSION is 33.
 global POS_LOG_ENTRY_BASIC_UT is -1.
 global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
@@ -164,12 +165,15 @@ function flight_log_terminal_energy_header {
         "terminal_preflare_preview_seconds,terminal_preflare_preview_distance,"+
         "terminal_preflare_preview_feedforward_vs,terminal_preflare_altitude_correction,"+
         "terminal_pullup_far_valid,terminal_pullup_far_age,terminal_pullup_far_lift,"+
-        "terminal_pullup_far_raw_accel,terminal_pullup_far_accel".
+        "terminal_pullup_far_raw_accel,terminal_pullup_far_accel,"+
+        "terminal_approach_gradient,terminal_approach_preflare_start,terminal_approach_plan_speed,"+
+        "terminal_approach_required_acceleration,terminal_approach_acceleration_limit,"+
+        "terminal_approach_plan_valid,terminal_approach_plan_far".
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,idle,0,0,0,0,0,0,0,0,-1,0,0,0".
+        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,idle,0,0,0,0,0,0,0,0,-1,0,0,0,0,0,0,0,0,False,False".
     }
     local turn_pitch_active is 0.
     if terminal_route_debug["turn_pitch_limit_active"] { set turn_pitch_active to 1. }
@@ -221,7 +225,11 @@ function flight_log_terminal_energy_columns {
         terminal_route_debug["preflare_altitude_correction"]+","+
         pullup_far_valid+","+terminal_route_debug["pullup_far_age"]+","+
         terminal_route_debug["pullup_far_lift"]+","+
-        terminal_route_debug["pullup_far_raw_accel"]+","+terminal_route_debug["pullup_far_accel"].
+        terminal_route_debug["pullup_far_raw_accel"]+","+terminal_route_debug["pullup_far_accel"]+","+
+        terminal_route_debug["approach_gradient"]+","+terminal_route_debug["approach_preflare_start"]+","+
+        terminal_route_debug["approach_plan_speed"]+","+terminal_route_debug["approach_required_acceleration"]+","+
+        terminal_route_debug["approach_acceleration_limit"]+","+terminal_route_debug["approach_plan_valid"]+","+
+        terminal_route_debug["approach_plan_far"].
 }
 
 function flight_log_entry_predictive_header {

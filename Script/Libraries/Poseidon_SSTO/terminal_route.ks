@@ -8,6 +8,13 @@
 // Shared telemetry for the terminal-route GUI and diagnostic log.
 global terminal_route_debug is lex(
     "active", false,
+    "approach_gradient", 0,
+    "approach_preflare_start", 0,
+    "approach_plan_speed", 0,
+    "approach_required_acceleration", 0,
+    "approach_acceleration_limit", 0,
+    "approach_plan_valid", false,
+    "approach_plan_far", false,
     "phase", "inactive",
     "side", "",
     "target_location", "unknown",
@@ -259,6 +266,99 @@ function terminal_sink_arrest_prediction {
 // full sink-arrest time belongs to escape protection, not the approach path.
 // Altitude correction is always applied after the feedforward preview: even
 // maximum anticipation must still command descent back toward the profile.
+function terminal_route_glideslope {
+    parameter route.
+    if route:haskey("glideslope") { return route["glideslope"]. }
+    return AVES["glideslope"].
+}
+
+// Exact extrema of the Hermite profile's curvature are at its endpoints.
+// Vertical reference acceleration is closure_speed^2 * d(gradient)/d(distance).
+function terminal_profile_curvature {
+    parameter profile_config, closure_speed.
+    local span is profile_config["preflare_start"]-profile_config["preflare_end"].
+    local lower_height is (profile_config["preflare_end"]+profile_config["shallow_aimpoint"])*profile_config["angle2"].
+    local upper_height is (profile_config["preflare_start"]-profile_config["target1"])*profile_config["angle1"].
+    local cubic_a is 2*lower_height-2*upper_height+span*(profile_config["angle2"]+profile_config["angle1"]).
+    local cubic_b is -3*lower_height+3*upper_height-span*(2*profile_config["angle2"]+profile_config["angle1"]).
+    local lower_curvature is 2*cubic_b/max(1,span^2).
+    local upper_curvature is (6*cubic_a+2*cubic_b)/max(1,span^2).
+    return lex("monotonic",span > 0 and min(lower_curvature,upper_curvature) >= -0.0000001,
+        "acceleration",max(0,max(lower_curvature,upper_curvature))*closure_speed^2).
+}
+
+function terminal_reachable_glideslope {
+    parameter nominal, planned_speed, available_acceleration, planning_config.
+    local chosen is lex("angle1",nominal["angle1"],"angle2",nominal["angle2"],
+        "target1",nominal["target1"],"preflare_start",nominal["preflare_start"],
+        "preflare_end",nominal["preflare_end"],"shallow_aimpoint",nominal["shallow_aimpoint"]).
+    local acceleration_limit is max(0,min(available_acceleration,planning_config["tracking_acceleration_limit"])).
+    local candidate_gradient is min(nominal["angle1"],planning_config["maximum_sink"]/max(1,planned_speed)).
+    until candidate_gradient < planning_config["minimum_gradient"] {
+        set chosen["angle1"] to candidate_gradient.
+        set chosen["preflare_start"] to nominal["preflare_start"].
+        until chosen["preflare_start"] > planning_config["maximum_preflare_start"] {
+            local curvature is terminal_profile_curvature(chosen,planned_speed).
+            if curvature["monotonic"] and curvature["acceleration"] <= acceleration_limit {
+                return lex("valid",true,"profile",chosen,"acceleration",curvature["acceleration"],
+                    "limit",acceleration_limit,"speed",planned_speed).
+            }
+            set chosen["preflare_start"] to chosen["preflare_start"]+planning_config["preflare_step"].
+        }
+        set candidate_gradient to candidate_gradient-planning_config["gradient_step"].
+    }
+    // Keep a bounded conservative reference, but flag the failed capability
+    // decision. It cannot be reported as a certified reachable profile.
+    set chosen["angle1"] to planning_config["minimum_gradient"].
+    set chosen["preflare_start"] to planning_config["maximum_preflare_start"].
+    return lex("valid",false,"profile",chosen,"acceleration",terminal_profile_curvature(chosen,planned_speed)["acceleration"],
+        "limit",acceleration_limit,"speed",planned_speed).
+}
+
+function terminal_route_plan_approach {
+    parameter route.
+    local config_TR is AVES["TerminalRoute"].
+    local planning_config is config_TR["AdaptiveApproach"].
+    local prediction_config is config_TR["PreflarePrediction"].
+    local planned_speed is config_TR["ApproachSpeed"]["brake_on_speed"]*
+        terminal_mass_speed_scale(ship:mass,config_TR).
+    local capability is prediction_config["reference_vertical_deceleration"].
+    local far_used is false.
+    // Query at planned final height/speed, using the live craft configuration.
+    // The margin and tracking cap account for response and later gear changes.
+    if addons:available("FAR") {
+        if addons:far:hassuffix("AEROFORCEAT") {
+            local vessel_forward is ship:facing:forevector:normalized.
+            local vessel_top is ship:facing:topvector:normalized.
+            local vessel_right is vcrs(vessel_top,vessel_forward):normalized.
+            local pitch_axis is vcrs(vessel_right,vessel_forward):normalized.
+            local sample_aoa is prediction_config["far_sample_aoa"].
+            local sample_velocity is planned_speed*(vessel_forward*cos(sample_aoa)+pitch_axis*sin(sample_aoa)).
+            local planned_height is runway_altitude+planning_config["sample_height"].
+            local sampled_force is addons:far:aeroforceat(planned_height,sample_velocity).
+            local lift_force is terminal_pullup_lift_force(sampled_force,sample_velocity,vessel_top).
+            local gravity_value is ship:body:mu/(ship:body:radius+planned_height)^2.
+            local result is terminal_pullup_acceleration(lift_force,ship:mass,gravity_value,
+                planned_speed,-min(planning_config["maximum_sink"],planned_speed),0,prediction_config).
+            set capability to result["usable"].
+            set far_used to true.
+        }
+    }
+    local plan is terminal_reachable_glideslope(AVES["glideslope"],planned_speed,capability,planning_config).
+    set route["glideslope"] to plan["profile"].
+    set route["approach_plan_valid"] to plan["valid"].
+    set route["approach_plan_far"] to far_used.
+    set route["approach_plan_speed"] to planned_speed.
+    set route["approach_plan_acceleration"] to plan["acceleration"].
+    set route["approach_plan_limit"] to plan["limit"].
+    flight_log_event("terminal_approach_plan","valid="+plan["valid"]+"|far="+far_used+
+        "|gradient="+round(plan["profile"]["angle1"],4)+
+        "|preflare_start="+plan["profile"]["preflare_start"]+
+        "|planned_speed="+round(planned_speed,1)+"|mass="+round(ship:mass,2)+
+        "|required_acceleration="+round(plan["acceleration"],2)+"|available_acceleration="+round(capability,2)+
+        "|tracking_limit="+plan["limit"]+"|gear="+gear+"|brakes="+brakes).
+}
+
 function terminal_final_profile_command {
     parameter distance_to_threshold, measured_altitude_asl, horizontal_speed,
         measured_mass, config_TR, glideslope_config, runway_height_asl,
@@ -335,19 +435,17 @@ function terminal_route_refresh_pullup_force {
         set route["pullup_far_valid"] to false.
         return.
     }
-    if brakes <> route["pullup_far_brakes"] or gear <> route["pullup_far_gear"] {
+    local configuration_changed is brakes <> route["pullup_far_brakes"] or gear <> route["pullup_far_gear"].
+    if configuration_changed {
         set route["pullup_far_brakes"] to brakes.
         set route["pullup_far_gear"] to gear.
         set route["pullup_far_configuration_ut"] to time:seconds.
-        set route["pullup_far_valid"] to false.
     }
-    if time:seconds-route["pullup_far_configuration_ut"] <
-       prediction_config["far_configuration_settle"] {
-        set route["pullup_far_valid"] to false.
-        return.
-    }
-    if route["pullup_far_valid"] and
-       time:seconds-route["pullup_far_time"] < prediction_config["far_refresh_seconds"] and
+    local refresh_seconds is prediction_config["far_refresh_seconds"].
+    local settling is time:seconds-route["pullup_far_configuration_ut"] < prediction_config["far_configuration_settle"].
+    if settling { set refresh_seconds to min(refresh_seconds,0.25). }
+    if route["pullup_far_valid"] and not configuration_changed and
+       time:seconds-route["pullup_far_time"] < refresh_seconds and
        abs(ship:altitude-route["pullup_far_altitude"]) < prediction_config["far_altitude_drift"] and
        abs(ship:airspeed-route["pullup_far_speed"]) < prediction_config["far_speed_drift"] { return. }
     local vessel_forward is ship:facing:forevector:normalized.
@@ -357,7 +455,13 @@ function terminal_route_refresh_pullup_force {
     local sample_aoa is prediction_config["far_sample_aoa"].
     local sample_velocity is ship:airspeed*(vessel_forward*cos(sample_aoa)+pitch_axis*sin(sample_aoa)).
     local sampled_force is addons:far:aeroforceat(ship:altitude,sample_velocity).
-    set route["pullup_far_lift"] to terminal_pullup_lift_force(sampled_force,sample_velocity,vessel_top).
+    local measured_lift is terminal_pullup_lift_force(sampled_force,sample_velocity,vessel_top).
+    if settling and route["pullup_far_valid"] and
+       abs(ship:airspeed-route["pullup_far_speed"]) < prediction_config["far_speed_drift"] and
+       abs(ship:altitude-route["pullup_far_altitude"]) < prediction_config["far_altitude_drift"] {
+        set measured_lift to min(measured_lift,route["pullup_far_lift"]).
+    }
+    set route["pullup_far_lift"] to measured_lift.
     set route["pullup_far_time"] to time:seconds.
     set route["pullup_far_altitude"] to ship:altitude.
     set route["pullup_far_speed"] to ship:airspeed.
@@ -758,7 +862,7 @@ function terminal_route_energy_plan {
     local route_distance is terminal_route_remaining_distance(route).
     local final_leg_distance is calcdistance_m(route["final_fix"],runway_start).
     if route["phase"] = "final" { set final_leg_distance to route_distance. }
-    local capture_profile is calculate_glideslope_profile(min(route_distance,final_leg_distance)).
+    local capture_profile is calculate_glideslope_profile(min(route_distance,final_leg_distance),runway_altitude,terminal_route_glideslope(route)).
     local points is list(terminal_route_current_target(route)).
     if route["phase"] = "intercept" or route["phase"] = "hold" {
         local point_index is route["hold_index"]+1.
@@ -891,8 +995,18 @@ function calculate_high_energy_final_command {
 
 function terminal_route_change_phase {
     parameter route, new_phase.
+    if new_phase = "final" and route:haskey("approach_plan_valid") and not route["approach_plan_valid"] {
+        set route["go_around_reason"] to "approach_capability_unavailable".
+        set route["go_around_count"] to route["go_around_count"]+1.
+        flight_log_event("terminal_go_around","reason=approach_capability_unavailable|phase="+route["phase"]+
+            "|planned_speed="+route["approach_plan_speed"]+"|acceleration_limit="+route["approach_plan_limit"]).
+        set new_phase to "go_around".
+    }
     if route["phase"] <> new_phase {
         flight_log_event("terminal_phase","from=" + route["phase"] + "|to=" + new_phase).
+    }
+    if new_phase = "base" and route["phase"] = "go_around" {
+        terminal_route_plan_approach(route).
     }
     set route["phase"] to new_phase.
     set route["last_phase_change_time"] to time:seconds.
@@ -909,7 +1023,7 @@ function terminal_route_final_approach_capture {
     local commit_gate is config_TR["LandingCommit"].
     local speed_scale is terminal_mass_speed_scale(ship:mass,config_TR).
     local geometry is terminal_route_geometry().
-    local glideslope_altitude is calculate_glideslope_alt(geometry["distance"]).
+    local glideslope_altitude is calculate_glideslope_alt(geometry["distance"],runway_altitude,terminal_route_glideslope(route)).
     local glideslope_error is ship:altitude - glideslope_altitude.
     local glideslope_captured is glideslope_error >= minimum_glideslope_error.
     if use_upper_glideslope_limit {
@@ -1142,6 +1256,7 @@ function terminal_route_init {
     }
     set route["dump_lf_paired_floor"] to terminal_route_paired_lf_dump_floor(
         route["dump_lf_floor"],ship:oxidizer,route["dump_ox_floor"],0,config_TR).
+    terminal_route_plan_approach(route).
 
     // A well positioned arrival may join final directly.  All other arrival
     // orientations get a deliberately wide downwind/base/final setup.
@@ -1157,6 +1272,10 @@ function terminal_route_init {
     set terminal_route_debug["active"] to true.
     set terminal_route_debug["phase"] to route["phase"].
     set terminal_route_debug["side"] to route["side"].
+    if route["phase"] = "final" and not route["approach_plan_valid"] {
+        set route["phase"] to "base".
+        terminal_route_change_phase(route,"final").
+    }
     return route.
 }
 
@@ -1473,6 +1592,13 @@ function terminal_route_update {
         route["dump_lf_floor"],ship:oxidizer,route["dump_ox_floor"],healthy_rapiers,config_TR).
     local speed_scale is terminal_mass_speed_scale(ship:mass,config_TR).
     set terminal_route_debug["mass_speed_scale"] to speed_scale.
+    set terminal_route_debug["approach_gradient"] to terminal_route_glideslope(route)["angle1"].
+    set terminal_route_debug["approach_preflare_start"] to terminal_route_glideslope(route)["preflare_start"].
+    set terminal_route_debug["approach_plan_speed"] to route["approach_plan_speed"].
+    set terminal_route_debug["approach_required_acceleration"] to route["approach_plan_acceleration"].
+    set terminal_route_debug["approach_acceleration_limit"] to route["approach_plan_limit"].
+    set terminal_route_debug["approach_plan_valid"] to route["approach_plan_valid"].
+    set terminal_route_debug["approach_plan_far"] to route["approach_plan_far"].
     terminal_route_measure_energy(route).
     local energy_phase is route["phase"].
     local energy_hold_index is route["hold_index"].
@@ -1480,7 +1606,7 @@ function terminal_route_update {
     local target_distance is calcdistance_m(ship:geoposition, route_target).
     terminal_route_choose_turn(route,route_target,target_distance).
     local remaining_distance is terminal_route_remaining_distance(route).
-    local profile is calculate_glideslope_profile(remaining_distance).
+    local profile is calculate_glideslope_profile(remaining_distance,runway_altitude,terminal_route_glideslope(route)).
     local profile_altitude is profile["altitude"].
     local speed_active is terminal_speed_control_active(route["phase"],remaining_distance,config_TR["ApproachSpeed"]).
     local reference_speed is config_TR["target_speed"].
@@ -1567,23 +1693,23 @@ function terminal_route_update {
     }
 
     local direct_distance is geometry["distance"].
-    local direct_profile is calculate_glideslope_profile(direct_distance).
+    local direct_profile is calculate_glideslope_profile(direct_distance,runway_altitude,terminal_route_glideslope(route)).
     local recovery_closure_speed is sqrt(max(0,ship:velocity:surface:mag^2-ship:verticalspeed^2)) *
         max(0,cos(geometry["heading_error"])).
     local contact is ship:status = "LANDED" or ship:status = "SPLASHED".
     local preview_enabled is route["phase"] = "final" and
         not route["high_energy_final_active"] and not route["landing_ready"] and not contact.
     local final_profile_command is terminal_final_profile_command(direct_distance,ship:altitude,
-        recovery_closure_speed,ship:mass,config_TR,AVES["glideslope"],runway_altitude,preview_enabled).
+        recovery_closure_speed,ship:mass,config_TR,terminal_route_glideslope(route),runway_altitude,preview_enabled).
     local recovery_wanted_vs is final_profile_command["desired_vs"].
     if route["high_energy_final_active"] {
-        local recovery_aim_profile is calculate_glideslope_profile(config_TR["HighEnergyFinal"]["aim_distance"]).
+        local recovery_aim_profile is calculate_glideslope_profile(config_TR["HighEnergyFinal"]["aim_distance"],runway_altitude,terminal_route_glideslope(route)).
         local recovery_high_energy is calculate_high_energy_final_command(geometry["altitude"],direct_distance,
             recovery_closure_speed,recovery_aim_profile["altitude"]-runway_altitude,config_TR["HighEnergyFinal"]).
         set recovery_wanted_vs to recovery_high_energy["desired_vertical_speed"].
     }
-    local preflare_end_distance is AVES["glideslope"]["preflare_end"].
-    local shallow_profile is calculate_glideslope_profile(preflare_end_distance).
+    local preflare_end_distance is terminal_route_glideslope(route)["preflare_end"].
+    local shallow_profile is calculate_glideslope_profile(preflare_end_distance,runway_altitude,terminal_route_glideslope(route)).
     local preflare_target_vs is -max(recovery_closure_speed,config_TR["time_to_go_min_speed"])*
         shallow_profile["gradient"].
     local prior_far_valid is route["pullup_far_valid"].
@@ -1940,7 +2066,7 @@ function terminal_route_fly {
     local turn_pitch_gs_altitude is 0.
     local fast_turn_active is false.
     if route["phase"] <> "final" and route["phase"] <> "go_around" {
-        set turn_pitch_gs_altitude to calculate_glideslope_alt(target_distance).
+        set turn_pitch_gs_altitude to calculate_glideslope_alt(target_distance,runway_altitude,terminal_route_glideslope(route)).
         if route["turn_model_valid"] {
             if turn_bank_command > 0 { set turn_bank_command to route["turn_model_bank"]. }
             if turn_bank_command < 0 { set turn_bank_command to -route["turn_model_bank"]. }
@@ -1961,7 +2087,7 @@ function terminal_route_fly {
     local active_profile_region is "inactive".
     local pid_log is "none".
     local high_energy_config is config_TR["HighEnergyFinal"].
-    local high_energy_aim_profile is calculate_glideslope_profile(high_energy_config["aim_distance"]).
+    local high_energy_aim_profile is calculate_glideslope_profile(high_energy_config["aim_distance"],runway_altitude,terminal_route_glideslope(route)).
     local high_energy_horizontal_speed is sqrt(max(0,ship:velocity:surface:mag^2 - ship:verticalspeed^2)).
     local high_energy_closure_speed is high_energy_horizontal_speed *
         max(0,cos(route["geometry"]["heading_error"])).
@@ -2011,7 +2137,7 @@ function terminal_route_fly {
         local horizontal_groundspeed is sqrt(max(0,ship:velocity:surface:mag^2 - ship:verticalspeed^2)).
         local runway_closure_speed is horizontal_groundspeed * max(0,cos(route["geometry"]["heading_error"])).
         local profile_command is terminal_final_profile_command(distance,ship:altitude,
-            runway_closure_speed,ship:mass,config_TR,AVES["glideslope"],runway_altitude,
+            runway_closure_speed,ship:mass,config_TR,terminal_route_glideslope(route),runway_altitude,
             not route["landing_ready"] and ship:status <> "LANDED" and ship:status <> "SPLASHED").
         set profile_feedforward_vs to profile_command["feedforward_vs"].
         set profile_altitude_error to profile_command["profile_error"].
