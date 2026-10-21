@@ -8,9 +8,9 @@
 set CONFIG:IPU to 2000.
 
 function calibration_reset_file {
-    parameter path, header.
-    if exists(path) { deletepath(path). }
-    log header to path.
+    parameter calibration_path, header.
+    if exists(calibration_path) { deletepath(calibration_path). }
+    log header to calibration_path.
 }
 
 function calibration_set_aero_configuration {

@@ -1349,9 +1349,9 @@ function flight_log_departure_plan {
             "|model_valid="+route_plan["model_valid"]).
     }
     local waypoint_index is 0.
-    for waypoint in route_plan["waypoints"] {
+    for route_waypoint in route_plan["waypoints"] {
         flight_log_event("departure_plan_waypoint","index="+waypoint_index+
-            "|lat="+waypoint:lat+"|lng="+waypoint:lng).
+            "|lat="+route_waypoint:lat+"|lng="+route_waypoint:lng).
         set waypoint_index to waypoint_index+1.
     }
 }

@@ -31,87 +31,87 @@ function terrain_path_create {
 // One station samples the centre and both corridor edges. Flight code budgets
 // stations per update; preflight yields between batches with brakes held.
 function terrain_path_advance {
-    parameter path, navigation_config.
-    if path["done"] { return. }
-    local station_distance is min(navigation_config["sample_spacing"],path["range"]-path["distance"]).
+    parameter terrain_path_state, navigation_config.
+    if terrain_path_state["done"] { return. }
+    local station_distance is min(navigation_config["sample_spacing"],terrain_path_state["range"]-terrain_path_state["distance"]).
     local station_acceleration is navigation_config["scan_acceleration"].
-    if path["departure"] { set station_acceleration to 0. }
-    local next_speed is sqrt(path["speed"]^2+2*station_acceleration*station_distance).
-    local station_dt is 2*station_distance/(path["speed"]+next_speed).
-    local desired_course is path["first_course"].
-    if path["departure"] and path["distance"] >= navigation_config["departure_dogleg_distance"] {
-        set desired_course to path["final_course"].
+    if terrain_path_state["departure"] { set station_acceleration to 0. }
+    local next_speed is sqrt(terrain_path_state["speed"]^2+2*station_acceleration*station_distance).
+    local station_dt is 2*station_distance/(terrain_path_state["speed"]+next_speed).
+    local desired_course is terrain_path_state["first_course"].
+    if terrain_path_state["departure"] and terrain_path_state["distance"] >= navigation_config["departure_dogleg_distance"] {
+        set desired_course to terrain_path_state["final_course"].
     }
-    local course_error is terrain_heading_delta(desired_course,path["course"]).
+    local course_error is terrain_heading_delta(desired_course,terrain_path_state["course"]).
     local heading_gain is navigation_config["escape_heading_gain"].
-    if path["departure"] { set heading_gain to navigation_config["departure_heading_gain"]. }
+    if terrain_path_state["departure"] { set heading_gain to navigation_config["departure_heading_gain"]. }
     local model_bank is min(navigation_config["prediction_bank"],abs(course_error)*heading_gain).
-    local turn_rate is path["gravity"]*tan(model_bank)/next_speed*constant:radtodeg.
+    local turn_rate is terrain_path_state["gravity"]*tan(model_bank)/next_speed*constant:radtodeg.
     local turn_angle is 0.
     local response_delay is navigation_config["response_seconds"].
-    if path["departure"] { set response_delay to navigation_config["departure_response_seconds"]. }
-    if not path["departure"] and path["elapsed"] < response_delay {
+    if terrain_path_state["departure"] { set response_delay to navigation_config["departure_response_seconds"]. }
+    if not terrain_path_state["departure"] and terrain_path_state["elapsed"] < response_delay {
         // Retain the initial bank during sensing/command delay, then roll it
         // out. A lateral escape cannot start from an already level aircraft.
-        local roll_fraction is max(0,min(1,1-max(0,path["elapsed"]-navigation_config["roll_hold_seconds"])/
+        local roll_fraction is max(0,min(1,1-max(0,terrain_path_state["elapsed"]-navigation_config["roll_hold_seconds"])/
             navigation_config["rollout_seconds"])).
-        set turn_angle to path["gravity"]*tan(max(-60,min(60,path["initial_roll"]))*roll_fraction)/
+        set turn_angle to terrain_path_state["gravity"]*tan(max(-60,min(60,terrain_path_state["initial_roll"]))*roll_fraction)/
             next_speed*constant:radtodeg*station_dt.
     }
-    if path["elapsed"] >= response_delay {
+    if terrain_path_state["elapsed"] >= response_delay {
         set turn_angle to max(-turn_rate*station_dt,min(turn_rate*station_dt,
-            terrain_heading_delta(desired_course,path["course"]))).
+            terrain_heading_delta(desired_course,terrain_path_state["course"]))).
     }
     // Midpoint integration approximates the curved track; corridor width
     // includes position/tracking uncertainty. Never teleport onto a new ray.
-    set path["point"] to get_geoposition_along_heading(path["point"],path["course"]+turn_angle/2,station_distance).
-    set path["course"] to path["course"]+turn_angle.
-    set path["speed"] to next_speed.
-    set path["elapsed"] to path["elapsed"]+station_dt.
-    set path["distance"] to path["distance"]+station_distance.
+    set terrain_path_state["point"] to get_geoposition_along_heading(terrain_path_state["point"],terrain_path_state["course"]+turn_angle/2,station_distance).
+    set terrain_path_state["course"] to terrain_path_state["course"]+turn_angle.
+    set terrain_path_state["speed"] to next_speed.
+    set terrain_path_state["elapsed"] to terrain_path_state["elapsed"]+station_dt.
+    set terrain_path_state["distance"] to terrain_path_state["distance"]+station_distance.
     local station_floor is navigation_config["clearance"].
-    if path["departure"] {
-        set path["bottom"] to path["bottom"]+navigation_config["departure_gradient"]*station_distance.
+    if terrain_path_state["departure"] {
+        set terrain_path_state["bottom"] to terrain_path_state["bottom"]+navigation_config["departure_gradient"]*station_distance.
         set station_floor to navigation_config["departure_initial_clearance"] +
             (navigation_config["clearance"]-navigation_config["departure_initial_clearance"])*
-            min(1,path["distance"]/navigation_config["departure_clearance_ramp"]).
+            min(1,terrain_path_state["distance"]/navigation_config["departure_clearance_ramp"]).
     } else {
         // No credit for commanded AoA. Cap observed positive climb; turning
         // candidates additionally reserve sink while banked.
-        set path["bottom"] to path["bottom"]+min(path["vs"],navigation_config["climb_credit"])*station_dt.
+        set terrain_path_state["bottom"] to terrain_path_state["bottom"]+min(terrain_path_state["vs"],navigation_config["climb_credit"])*station_dt.
         if abs(turn_angle) > 0.01 {
-            set path["bottom"] to path["bottom"]-navigation_config["turn_sink_reserve"]*station_dt.
+            set terrain_path_state["bottom"] to terrain_path_state["bottom"]-navigation_config["turn_sink_reserve"]*station_dt.
         }
     }
-    local corridor_width is navigation_config["corridor_width"] + path["distance"]*navigation_config["corridor_growth"].
+    local corridor_width is navigation_config["corridor_width"] + terrain_path_state["distance"]*navigation_config["corridor_growth"].
     local corridor_sides is list(0,-1,1).
     local corridor_index is 0.
     until corridor_index >= corridor_sides:length {
         local corridor_side is corridor_sides[corridor_index].
         set corridor_index to corridor_index+1.
-        local probe_point is path["point"].
+        local probe_point is terrain_path_state["point"].
         if corridor_side <> 0 {
-            set probe_point to get_geoposition_along_heading(path["point"],path["course"]+90,
+            set probe_point to get_geoposition_along_heading(terrain_path_state["point"],terrain_path_state["course"]+90,
                 corridor_side*corridor_width).
         }
         local probe_height is probe_point:terrainheight.
         if ship:body:hasocean { set probe_height to max(0,probe_height). }
-        local probe_clearance is path["bottom"]-probe_height.
+        local probe_clearance is terrain_path_state["bottom"]-probe_height.
         local probe_margin is probe_clearance-station_floor.
-        if probe_margin < path["margin"] {
-            set path["margin"] to probe_margin.
-            set path["clearance"] to probe_clearance.
-            set path["threat_lat"] to probe_point:lat.
-            set path["threat_lng"] to probe_point:lng.
-            set path["threat_height"] to probe_height.
+        if probe_margin < terrain_path_state["margin"] {
+            set terrain_path_state["margin"] to probe_margin.
+            set terrain_path_state["clearance"] to probe_clearance.
+            set terrain_path_state["threat_lat"] to probe_point:lat.
+            set terrain_path_state["threat_lng"] to probe_point:lng.
+            set terrain_path_state["threat_height"] to probe_height.
         }
-        if probe_margin < 0 { set path["conflict_time"] to min(path["conflict_time"],path["elapsed"]). }
+        if probe_margin < 0 { set terrain_path_state["conflict_time"] to min(terrain_path_state["conflict_time"],terrain_path_state["elapsed"]). }
     }
-    if path["departure"] and (path["distance"] >= path["next_waypoint"] or path["distance"] >= path["range"]) {
-        path["waypoints"]:add(path["point"]).
-        set path["next_waypoint"] to path["next_waypoint"]+1000.
+    if terrain_path_state["departure"] and (terrain_path_state["distance"] >= terrain_path_state["next_waypoint"] or terrain_path_state["distance"] >= terrain_path_state["range"]) {
+        terrain_path_state["waypoints"]:add(terrain_path_state["point"]).
+        set terrain_path_state["next_waypoint"] to terrain_path_state["next_waypoint"]+1000.
     }
-    set path["done"] to path["distance"] >= path["range"].
+    set terrain_path_state["done"] to terrain_path_state["distance"] >= terrain_path_state["range"].
 }
 
 function terrain_navigation_config {
@@ -177,13 +177,13 @@ function terrain_departure_course {
     if not route_plan["valid"] { return orbital_course. }
     local waypoints is route_plan["waypoints"].
     until route_plan["index"] >= waypoints:length {
-        local waypoint is waypoints[route_plan["index"]].
+        local route_waypoint is waypoints[route_plan["index"]].
         local leg_origin is route_plan["origin"].
         if route_plan["index"] > 0 { set leg_origin to waypoints[route_plan["index"]-1]. }
-        local leg_course is heading_between(leg_origin,waypoint).
-        local current_course is heading_between(current_point,waypoint).
-        // Passed the waypoint's normal plane, or close enough to capture it.
-        if calcdistance_m(current_point,waypoint) <= navigation_config["waypoint_capture"] or
+        local leg_course is heading_between(leg_origin,route_waypoint).
+        local current_course is heading_between(current_point,route_waypoint).
+        // Passed the route_waypoint's normal plane, or close enough to capture it.
+        if calcdistance_m(current_point,route_waypoint) <= navigation_config["waypoint_capture"] or
            abs(terrain_heading_delta(current_course,leg_course)) > 90 {
             set route_plan["index"] to route_plan["index"]+1.
         } else { return current_course. }
