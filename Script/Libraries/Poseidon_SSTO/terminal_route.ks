@@ -34,8 +34,23 @@ global terminal_route_debug is lex(
     "preflare_clearance_margin", 0,
     "preflare_clearance_used", 0,
     "preflare_target_vertical_speed", 0,
+    "preflare_preview_seconds", 0,
+    "preflare_preview_distance", 0,
+    "preflare_preview_feedforward_vs", 0,
+    "preflare_altitude_correction", 0,
     "preflare_response_delay", 0,
     "preflare_vertical_deceleration", 0,
+    "pullup_far_valid", false,
+    "pullup_far_age", -1,
+    "pullup_far_time", -100,
+    "pullup_far_altitude", 0,
+    "pullup_far_speed", 0,
+    "pullup_far_lift", 0,
+    "pullup_far_raw_accel", 0,
+    "pullup_far_accel", 0,
+    "pullup_far_configuration_ut", -100,
+    "pullup_far_brakes", false,
+    "pullup_far_gear", false,
     "descent_recovery_active", false,
     "descent_recovery_elapsed", 0,
     "descent_tracking_error", 0,
@@ -206,7 +221,8 @@ function terminal_mass_speed_scale {
 // toward a requested vertical speed.  The acceleration is intentionally
 // derated and scales with dynamic pressure per unit mass.
 function terminal_sink_arrest_prediction {
-    parameter measured_vs, target_vs, horizontal_speed, measured_mass, measured_airspeed, config_TR.
+    parameter measured_vs, target_vs, horizontal_speed, measured_mass, measured_airspeed, config_TR,
+        available_vertical_acceleration is -1.
     local prediction_config is config_TR["PreflarePrediction"].
     local mass_scale is terminal_mass_speed_scale(measured_mass,config_TR).
     local reference_speed is config_TR["ApproachSpeed"]["target_speed"]*mass_scale.
@@ -218,6 +234,9 @@ function terminal_sink_arrest_prediction {
         heavy_ratio*prediction_config["heavy_mass_delay_seconds"].
     local vertical_deceleration is max(0.1,
         prediction_config["reference_vertical_deceleration"]*capability_ratio).
+    if available_vertical_acceleration >= 0 {
+        set vertical_deceleration to max(0.1,available_vertical_acceleration).
+    }
     local sink_speed is max(0,-measured_vs).
     local target_sink_speed is max(0,-target_vs).
     local sink_excess is max(0,sink_speed-target_sink_speed).
@@ -236,46 +255,113 @@ function terminal_sink_arrest_prediction {
         "capability_ratio",capability_ratio).
 }
 
-// Start raising the nose early enough to reach the shallow-profile sink rate
-// by the end of the curved transition, including a conservative aircraft
-// response delay and a speed/mass-dependent pull-up estimate.
-function terminal_preflare_predictive_fraction {
-    parameter measured_vs, target_vs, distance_to_threshold, preflare_start_distance, preflare_end_distance,
-        horizontal_speed, measured_mass, measured_airspeed, config_TR.
-    local arrest is terminal_sink_arrest_prediction(measured_vs,target_vs,horizontal_speed,
-        measured_mass,measured_airspeed,config_TR).
-    local available_distance is max(0,distance_to_threshold-preflare_end_distance).
-    local ramp_distance is max(1,config_TR["PreflarePrediction"]["pullup_ramp_distance"]).
-    local shortfall is arrest["arrest_distance"]-available_distance.
-    local response_fraction is max(0,min(1,(shortfall+ramp_distance)/ramp_distance)).
-    local minimum_excess is max(0.1,config_TR["PreflarePrediction"]["minimum_sink_excess"]).
-    local excess_scale is max(0,min(1,arrest["sink_excess"]/minimum_excess)).
-    set excess_scale to excess_scale^2*(3-2*excess_scale).
-    set response_fraction to response_fraction*excess_scale.
-    // Preview the curved profile continuously before its 1.5 km start. This
-    // keeps the sink target shallow as the deficit recovers, so the steep
-    // profile controller cannot immediately undo the anticipatory pull-up.
-    local preview_distance is max(1,config_TR["PreflarePrediction"]["preflare_lead_distance"])
-        + max(0,preflare_start_distance-preflare_end_distance).
-    local preview_fraction is 0.
-    if distance_to_threshold >= preflare_end_distance {
-        set preview_fraction to max(0,min(1,
-            (preflare_start_distance+config_TR["PreflarePrediction"]["preflare_lead_distance"]-
-                distance_to_threshold)/preview_distance)).
-    } else {
-        local shallow_fade is max(0,min(1,distance_to_threshold/max(preflare_end_distance,1))).
-        set preview_fraction to shallow_fade^2*(3-2*shallow_fade).
+// Preview only the upcoming profile over the aircraft response delay. The
+// full sink-arrest time belongs to escape protection, not the approach path.
+// Altitude correction is always applied after the feedforward preview: even
+// maximum anticipation must still command descent back toward the profile.
+function terminal_final_profile_command {
+    parameter distance_to_threshold, measured_altitude_asl, horizontal_speed,
+        measured_mass, config_TR, glideslope_config, runway_height_asl,
+        preview_enabled is true.
+    local profile is calculate_glideslope_profile(distance_to_threshold,
+        runway_height_asl,glideslope_config).
+    local prediction_config is config_TR["PreflarePrediction"].
+    local closure_speed is max(horizontal_speed,config_TR["time_to_go_min_speed"]).
+    local heavy_ratio is max(0,measured_mass/max(1,config_TR["max_landing_mass"])-1).
+    local lookahead_seconds is 0.
+    if preview_enabled {
+        set lookahead_seconds to max(0,min(prediction_config["maximum_preview_seconds"],
+            prediction_config["response_delay_seconds"]+
+            heavy_ratio*prediction_config["heavy_mass_delay_seconds"])).
     }
-    local fraction is max(response_fraction,preview_fraction).
-    return lex("fraction",fraction,"pitch_floor_fraction",response_fraction,
-        "response_fraction",response_fraction,
-        "preview_fraction",preview_fraction,"available_distance",available_distance,
-        "arrest_distance",arrest["arrest_distance"],
-        "profile_deficit_height",arrest["profile_deficit_height"],
-        "absolute_arrest_height",arrest["absolute_arrest_height"],
-        "response_delay",arrest["response_delay"],
-        "vertical_deceleration",arrest["vertical_deceleration"],
-        "sink_excess",arrest["sink_excess"]).
+    local lookahead_distance is closure_speed*lookahead_seconds.
+    local preview_profile is calculate_glideslope_profile(
+        distance_to_threshold-lookahead_distance,runway_height_asl,glideslope_config).
+    local profile_error is profile["altitude"]-measured_altitude_asl.
+    // Release anticipation smoothly when above the reference. It must never
+    // mask the need to descend back onto the path (flight 407).
+    local preview_weight is max(0,min(1,1+profile_error/
+        max(1,prediction_config["above_profile_preview_fade"]))).
+    set preview_weight to preview_weight^2*(3-2*preview_weight).
+    local feedforward_vs is -closure_speed*profile["gradient"].
+    local preview_feedforward_vs is feedforward_vs+
+        (-closure_speed*preview_profile["gradient"]-feedforward_vs)*preview_weight.
+    local altitude_correction is profile_error/max(1,config_TR["final_profile_correction_time"]).
+    local desired_vs is max(config_TR["final_profile_min_vertical_speed"],
+        min(config_TR["final_profile_max_vertical_speed"],preview_feedforward_vs+altitude_correction)).
+    local anticipation_fraction is min(1,abs(preview_feedforward_vs-feedforward_vs)/
+        max(1,closure_speed*abs(glideslope_config["angle1"]-glideslope_config["angle2"]))).
+    return lex("altitude",profile["altitude"],"gradient",profile["gradient"],
+        "region",profile["region"],"profile_error",profile_error,
+        "feedforward_vs",feedforward_vs,"preview_feedforward_vs",preview_feedforward_vs,
+        "altitude_correction",altitude_correction,"desired_vs",desired_vs,
+        "lookahead_seconds",lookahead_seconds,"lookahead_distance",lookahead_distance,
+        "preview_weight",preview_weight,"fraction",anticipation_fraction).
+}
+
+// Lift is signed in the sampled relative-wind frame; never turn a negative
+// FAR force into usable pull-up authority with ABS. kN / vessel tonnes = m/s^2.
+function terminal_pullup_lift_force {
+    parameter sampled_force, sample_velocity, vessel_top.
+    local wind_direction is sample_velocity:normalized.
+    local lift_axis is vessel_top-wind_direction*vdot(vessel_top,wind_direction).
+    if lift_axis:mag < 0.001 { return 0. }
+    return vdot(sampled_force,lift_axis:normalized).
+}
+
+function terminal_pullup_acceleration {
+    parameter lift_force_kn, vessel_mass, gravity_value, surface_speed,
+        measured_vs, bank_angle, prediction_config.
+    local gamma_ratio is max(-1,min(1,measured_vs/max(1,surface_speed))).
+    local vertical_lift_fraction is sqrt(max(0,1-gamma_ratio^2))*max(0,cos(bank_angle)).
+    // Do not credit thrust or the upward component of drag in descent.
+    local raw_acceleration is lift_force_kn/max(0.001,vessel_mass)*vertical_lift_fraction-gravity_value.
+    return lex("raw",raw_acceleration,"usable",max(0,min(
+        prediction_config["far_maximum_acceleration"],
+        raw_acceleration*prediction_config["far_acceleration_safety"]))).
+}
+
+// One live FAR query per refresh, only on normal final. Cached force is
+// invalidated by configuration or state drift; no trajectory integration or
+// logger is involved. The familiar calibrated kOS left-handed sampling
+// frame is shared with POS_Calibrate, not with the independent test physics.
+function terminal_route_refresh_pullup_force {
+    parameter route, prediction_config, eligible.
+    if not eligible or not addons:available("FAR") {
+        set route["pullup_far_valid"] to false.
+        return.
+    }
+    if not addons:far:hassuffix("AEROFORCEAT") {
+        set route["pullup_far_valid"] to false.
+        return.
+    }
+    if brakes <> route["pullup_far_brakes"] or gear <> route["pullup_far_gear"] {
+        set route["pullup_far_brakes"] to brakes.
+        set route["pullup_far_gear"] to gear.
+        set route["pullup_far_configuration_ut"] to time:seconds.
+        set route["pullup_far_valid"] to false.
+    }
+    if time:seconds-route["pullup_far_configuration_ut"] <
+       prediction_config["far_configuration_settle"] {
+        set route["pullup_far_valid"] to false.
+        return.
+    }
+    if route["pullup_far_valid"] and
+       time:seconds-route["pullup_far_time"] < prediction_config["far_refresh_seconds"] and
+       abs(ship:altitude-route["pullup_far_altitude"]) < prediction_config["far_altitude_drift"] and
+       abs(ship:airspeed-route["pullup_far_speed"]) < prediction_config["far_speed_drift"] { return. }
+    local vessel_forward is ship:facing:forevector:normalized.
+    local vessel_top is ship:facing:topvector:normalized.
+    local vessel_right is vcrs(vessel_top,vessel_forward):normalized.
+    local pitch_axis is vcrs(vessel_right,vessel_forward):normalized.
+    local sample_aoa is prediction_config["far_sample_aoa"].
+    local sample_velocity is ship:airspeed*(vessel_forward*cos(sample_aoa)+pitch_axis*sin(sample_aoa)).
+    local sampled_force is addons:far:aeroforceat(ship:altitude,sample_velocity).
+    set route["pullup_far_lift"] to terminal_pullup_lift_force(sampled_force,sample_velocity,vessel_top).
+    set route["pullup_far_time"] to time:seconds.
+    set route["pullup_far_altitude"] to ship:altitude.
+    set route["pullup_far_speed"] to ship:airspeed.
+    set route["pullup_far_valid"] to true.
 }
 
 function terminal_route_surface_clearance {
@@ -990,8 +1076,23 @@ function terminal_route_init {
         "preflare_clearance_margin", 0,
         "preflare_clearance_used", 0,
         "preflare_target_vertical_speed", 0,
+    "preflare_preview_seconds", 0,
+    "preflare_preview_distance", 0,
+    "preflare_preview_feedforward_vs", 0,
+    "preflare_altitude_correction", 0,
         "preflare_response_delay", 0,
         "preflare_vertical_deceleration", 0,
+    "pullup_far_valid", false,
+    "pullup_far_age", -1,
+    "pullup_far_time", -100,
+    "pullup_far_altitude", 0,
+    "pullup_far_speed", 0,
+    "pullup_far_lift", 0,
+    "pullup_far_raw_accel", 0,
+    "pullup_far_accel", 0,
+    "pullup_far_configuration_ut", -100,
+    "pullup_far_brakes", brakes,
+    "pullup_far_gear", gear,
         "descent_recovery_active", false,
         "descent_recovery_since", -1,
         "descent_recovery_elapsed", 0,
@@ -1469,10 +1570,12 @@ function terminal_route_update {
     local direct_profile is calculate_glideslope_profile(direct_distance).
     local recovery_closure_speed is sqrt(max(0,ship:velocity:surface:mag^2-ship:verticalspeed^2)) *
         max(0,cos(geometry["heading_error"])).
-    local recovery_wanted_vs is -max(recovery_closure_speed,config_TR["time_to_go_min_speed"]) *
-        direct_profile["gradient"] + (direct_profile["altitude"]-ship:altitude) / config_TR["final_profile_correction_time"].
-    set recovery_wanted_vs to max(config_TR["final_profile_min_vertical_speed"],
-        min(config_TR["final_profile_max_vertical_speed"],recovery_wanted_vs)).
+    local contact is ship:status = "LANDED" or ship:status = "SPLASHED".
+    local preview_enabled is route["phase"] = "final" and
+        not route["high_energy_final_active"] and not route["landing_ready"] and not contact.
+    local final_profile_command is terminal_final_profile_command(direct_distance,ship:altitude,
+        recovery_closure_speed,ship:mass,config_TR,AVES["glideslope"],runway_altitude,preview_enabled).
+    local recovery_wanted_vs is final_profile_command["desired_vs"].
     if route["high_energy_final_active"] {
         local recovery_aim_profile is calculate_glideslope_profile(config_TR["HighEnergyFinal"]["aim_distance"]).
         local recovery_high_energy is calculate_high_energy_final_command(geometry["altitude"],direct_distance,
@@ -1483,23 +1586,48 @@ function terminal_route_update {
     local shallow_profile is calculate_glideslope_profile(preflare_end_distance).
     local preflare_target_vs is -max(recovery_closure_speed,config_TR["time_to_go_min_speed"])*
         shallow_profile["gradient"].
-    local preflare_prediction is lex("fraction",0,"pitch_floor_fraction",0,
-        "response_fraction",0,"preview_fraction",0,
-        "available_distance",0,"arrest_distance",0,"profile_deficit_height",0,
-        "absolute_arrest_height",0,"response_delay",0,"vertical_deceleration",0,
-        "sink_excess",0).
-    local contact is ship:status = "LANDED" or ship:status = "SPLASHED".
-    if route["phase"] = "final" and not route["high_energy_final_active"] and
-       not route["landing_ready"] and not contact {
-        set preflare_prediction to terminal_preflare_predictive_fraction(ship:verticalspeed,
-            preflare_target_vs,direct_distance,AVES["glideslope"]["preflare_start"],
-            preflare_end_distance,recovery_closure_speed,
-            ship:mass,ship:airspeed,config_TR).
+    local prior_far_valid is route["pullup_far_valid"].
+    terminal_route_refresh_pullup_force(route,config_TR["PreflarePrediction"],preview_enabled).
+    local pullup_acceleration is -1.
+    set route["pullup_far_age"] to -1.
+    set route["pullup_far_raw_accel"] to 0.
+    set route["pullup_far_accel"] to 0.
+    if route["pullup_far_valid"] {
+        local gravity_value is ship:body:mu/(ship:body:radius+ship:altitude)^2.
+        local capability is terminal_pullup_acceleration(route["pullup_far_lift"],ship:mass,
+            gravity_value,ship:velocity:surface:mag,ship:verticalspeed,roll_for(),config_TR["PreflarePrediction"]).
+        set route["pullup_far_age"] to time:seconds-route["pullup_far_time"].
+        set route["pullup_far_raw_accel"] to capability["raw"].
+        set route["pullup_far_accel"] to capability["usable"].
+        set pullup_acceleration to capability["usable"].
     }
+    if prior_far_valid <> route["pullup_far_valid"] {
+        flight_log_event("terminal_pullup_capability","far_valid="+route["pullup_far_valid"]+
+            "|sample_aoa="+config_TR["PreflarePrediction"]["far_sample_aoa"]+
+            "|lift_kn="+round(route["pullup_far_lift"],2)+
+            "|raw_acceleration="+round(route["pullup_far_raw_accel"],2)+
+            "|usable_acceleration="+round(route["pullup_far_accel"],2)+
+            "|mass="+round(ship:mass,2)+"|airspeed="+round(ship:airspeed,1)).
+    }
+    local preflare_prediction is terminal_sink_arrest_prediction(ship:verticalspeed,
+        preflare_target_vs,recovery_closure_speed,ship:mass,ship:airspeed,config_TR,pullup_acceleration).
+    local anticipation_fraction is 0.
+    if preview_enabled { set anticipation_fraction to final_profile_command["fraction"]. }
+    set preflare_prediction["fraction"] to anticipation_fraction.
+    // No predictive pitch floor: retain only the existing below-profile
+    // feedback floor in terminal_route_fly. A short feedforward preview is
+    // enough to anticipate the curve without an independent pitch schedule.
+    set preflare_prediction["pitch_floor_fraction"] to 0.
+    set preflare_prediction["response_fraction"] to 0.
+    set preflare_prediction["preview_fraction"] to anticipation_fraction.
+    set route["preflare_preview_seconds"] to final_profile_command["lookahead_seconds"].
+    set route["preflare_preview_distance"] to final_profile_command["lookahead_distance"].
+    set route["preflare_preview_feedforward_vs"] to final_profile_command["preview_feedforward_vs"].
+    set route["preflare_altitude_correction"] to final_profile_command["altitude_correction"].
     // Escape margin uses the absolute height to reach near-zero sink, not the
     // smaller relative profile-deficit height used for preflare anticipation.
     local sink_arrest is terminal_sink_arrest_prediction(ship:verticalspeed,0,
-        recovery_closure_speed,ship:mass,ship:airspeed,config_TR).
+        recovery_closure_speed,ship:mass,ship:airspeed,config_TR,pullup_acceleration).
     local surface_clearance is terminal_route_surface_clearance(ship:altitude,runway_altitude,
         ship:geoposition:terrainheight).
     local sink_arrest_margin is surface_clearance-sink_arrest["absolute_arrest_height"]-
@@ -1512,7 +1640,7 @@ function terminal_route_update {
     set route["preflare_clearance_used"] to surface_clearance.
     set route["preflare_clearance_margin"] to surface_clearance-
         preflare_prediction["absolute_arrest_height"]-config_TR["PreflarePrediction"]["minimum_clearance"].
-    set route["preflare_target_vertical_speed"] to preflare_target_vs.
+    set route["preflare_target_vertical_speed"] to final_profile_command["desired_vs"].
     set route["preflare_response_delay"] to preflare_prediction["response_delay"].
     set route["preflare_vertical_deceleration"] to preflare_prediction["vertical_deceleration"].
     local preflare_anticipation_active is preflare_prediction["fraction"] > 0.05.
@@ -1520,7 +1648,11 @@ function terminal_route_update {
         flight_log_event("terminal_preflare_anticipation","active="+preflare_anticipation_active+
             "|distance="+round(direct_distance,1)+"|altitude="+round(geometry["altitude"],1)+
             "|clearance="+round(surface_clearance,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
-            "|target_vertical_speed="+round(preflare_target_vs,2)+
+            "|target_vertical_speed="+round(final_profile_command["desired_vs"],2)+
+            "|preview_seconds="+round(final_profile_command["lookahead_seconds"],2)+
+            "|preview_distance="+round(final_profile_command["lookahead_distance"],1)+
+            "|profile_error="+round(final_profile_command["profile_error"],1)+
+            "|altitude_correction="+round(final_profile_command["altitude_correction"],2)+
             "|fraction="+round(preflare_prediction["fraction"],3)+
             "|pitch_floor_fraction="+round(preflare_prediction["pitch_floor_fraction"],3)+
             "|response_fraction="+round(preflare_prediction["response_fraction"],3)+
@@ -1679,6 +1811,11 @@ function terminal_route_update {
     set terminal_route_debug["descent_tracking_error"] to route["descent_tracking_error"].
     set terminal_route_debug["descent_arrest_margin"] to route["descent_arrest_margin"].
     set terminal_route_debug["descent_arrest_height"] to route["descent_arrest_height"].
+    set terminal_route_debug["pullup_far_valid"] to route["pullup_far_valid"].
+    set terminal_route_debug["pullup_far_age"] to route["pullup_far_age"].
+    set terminal_route_debug["pullup_far_lift"] to route["pullup_far_lift"].
+    set terminal_route_debug["pullup_far_raw_accel"] to route["pullup_far_raw_accel"].
+    set terminal_route_debug["pullup_far_accel"] to route["pullup_far_accel"].
     set terminal_route_debug["recovery_throttle_floor"] to route["recovery_throttle_floor"].
     local propulsion_assist is terminal_energy_throttle(route["energy_margin"],ship:airspeed,
         config_TR,speed_scale).
@@ -1871,26 +2008,23 @@ function terminal_route_fly {
         set active_profile_region to route["profile_region"].
         set pid_log to "high_energy_final".
     } else if route["phase"] = "final" {
-        local profile is calculate_glideslope_profile(distance).
         local horizontal_groundspeed is sqrt(max(0,ship:velocity:surface:mag^2 - ship:verticalspeed^2)).
         local runway_closure_speed is horizontal_groundspeed * max(0,cos(route["geometry"]["heading_error"])).
-        set runway_closure_speed to max(runway_closure_speed,config_TR["time_to_go_min_speed"]).
-        set profile_feedforward_vs to -runway_closure_speed * profile["gradient"].
-        local altitude_error is profile["altitude"] - ship:altitude.
-        set profile_altitude_error to altitude_error.
-        set active_profile_region to profile["region"].
-        set desired_vertical_speed to profile_feedforward_vs + altitude_error / config_TR["final_profile_correction_time"].
-        set desired_vertical_speed to max(config_TR["final_profile_min_vertical_speed"],
-            min(config_TR["final_profile_max_vertical_speed"],desired_vertical_speed)).
-        if route["preflare_predictive_fraction"] > 0 {
-            set desired_vertical_speed to desired_vertical_speed*
-                (1-route["preflare_predictive_fraction"])+
-                route["preflare_target_vertical_speed"]*route["preflare_predictive_fraction"].
-            set desired_vertical_speed to max(config_TR["final_profile_min_vertical_speed"],
-                min(config_TR["final_profile_max_vertical_speed"],desired_vertical_speed)).
-        }
-        set route["profile_altitude"] to profile["altitude"].
-        set route["profile_gradient"] to profile["gradient"].
+        local profile_command is terminal_final_profile_command(distance,ship:altitude,
+            runway_closure_speed,ship:mass,config_TR,AVES["glideslope"],runway_altitude,
+            not route["landing_ready"] and ship:status <> "LANDED" and ship:status <> "SPLASHED").
+        set profile_feedforward_vs to profile_command["feedforward_vs"].
+        set profile_altitude_error to profile_command["profile_error"].
+        set active_profile_region to profile_command["region"].
+        set desired_vertical_speed to profile_command["desired_vs"].
+        set route["profile_altitude"] to profile_command["altitude"].
+        set route["profile_gradient"] to profile_command["gradient"].
+        set route["preflare_preview_seconds"] to profile_command["lookahead_seconds"].
+        set route["preflare_preview_distance"] to profile_command["lookahead_distance"].
+        set route["preflare_preview_feedforward_vs"] to profile_command["preview_feedforward_vs"].
+        set route["preflare_altitude_correction"] to profile_command["altitude_correction"].
+        set route["preflare_predictive_fraction"] to profile_command["fraction"].
+        set route["preflare_target_vertical_speed"] to desired_vertical_speed.
     } else {
         set desired_vertical_speed to (route["target_altitude"] - ship:altitude) / time_to_go.
     }
@@ -1934,7 +2068,7 @@ function terminal_route_fly {
         local pullup_solution is calculate_preflare_pullup_command(
             active_profile_region,profile_altitude_error,pitch_bias,
             config_TR["final_preflare_pullup_start_error"],config_TR["final_preflare_pullup_full_error"],
-            config_TR["final_preflare_pullup_pitch"],route["preflare_pitch_floor_fraction"]
+            config_TR["final_preflare_pullup_pitch"]
         ).
         set pitch_bias to pullup_solution["command"].
         set preflare_pullup_active to pullup_solution["active"].
@@ -2143,10 +2277,19 @@ function terminal_route_fly {
     set terminal_route_debug["preflare_clearance_margin"] to route["preflare_clearance_margin"].
     set terminal_route_debug["preflare_clearance_used"] to route["preflare_clearance_used"].
     set terminal_route_debug["preflare_target_vertical_speed"] to route["preflare_target_vertical_speed"].
+    set terminal_route_debug["preflare_preview_seconds"] to route["preflare_preview_seconds"].
+    set terminal_route_debug["preflare_preview_distance"] to route["preflare_preview_distance"].
+    set terminal_route_debug["preflare_preview_feedforward_vs"] to route["preflare_preview_feedforward_vs"].
+    set terminal_route_debug["preflare_altitude_correction"] to route["preflare_altitude_correction"].
     set terminal_route_debug["preflare_response_delay"] to route["preflare_response_delay"].
     set terminal_route_debug["preflare_vertical_deceleration"] to route["preflare_vertical_deceleration"].
     set terminal_route_debug["descent_arrest_margin"] to route["descent_arrest_margin"].
     set terminal_route_debug["descent_arrest_height"] to route["descent_arrest_height"].
+    set terminal_route_debug["pullup_far_valid"] to route["pullup_far_valid"].
+    set terminal_route_debug["pullup_far_age"] to route["pullup_far_age"].
+    set terminal_route_debug["pullup_far_lift"] to route["pullup_far_lift"].
+    set terminal_route_debug["pullup_far_raw_accel"] to route["pullup_far_raw_accel"].
+    set terminal_route_debug["pullup_far_accel"] to route["pullup_far_accel"].
     set terminal_route_debug["propulsion_mode"] to route["propulsion_mode"].
     set terminal_route_debug["propulsion_throttle"] to route["propulsion_throttle"].
     set terminal_route_debug["dump_lf_floor"] to route["dump_lf_floor"].

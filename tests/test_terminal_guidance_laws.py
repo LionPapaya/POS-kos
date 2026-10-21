@@ -5,6 +5,7 @@ import re
 import unittest
 
 from tools.pos_sim.kos_runtime import OpcodeScheduler, Runtime
+from tools.pos_sim.math3d import Vec
 from tools.pos_sim.terminal_energy_replay import EnergyReplay
 from test_glideslope import glideslope_source
 
@@ -31,6 +32,14 @@ def terminal_config():
     return Runtime("function config { return " + source[start:end] + ". }").call("config")
 
 
+def glideslope_config():
+    source = (LIB / "craft_Poseidon_SSTO.ks").read_text(encoding="utf-8-sig")
+    start = source.index('Poseidon_SSTO:add("Glideslope",lex(')
+    start = source.index("lex(", start)
+    end = source.index(")).", start) + 1
+    return Runtime("function config { return " + source[start:end] + ". }").call("config")
+
+
 class TerminalGuidanceLawTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -39,7 +48,9 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         names = (
             "terminal_mass_speed_scale",
             "terminal_sink_arrest_prediction",
-            "terminal_preflare_predictive_fraction",
+            "terminal_final_profile_command",
+            "terminal_pullup_lift_force",
+            "terminal_pullup_acceleration",
             "terminal_final_descent_recovery",
             "terminal_vertical_go_around_decision",
             "terminal_descent_rapier_mode",
@@ -50,13 +61,12 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         cls.kos = Runtime(
             "\n".join(function_source(route, name) for name in names)
             + "\n"
-            + function_source(aero, "calculate_glideslope_pitch_command")
-            + "\n"
-            + function_source(aero, "calculate_preflare_pullup_command")
+            + glideslope_source()
         )
         cls.config = terminal_config()
+        cls.gs = glideslope_config()
 
-    def test_heavy_fast_aircraft_gets_earlier_predictive_pullup(self):
+    def test_sink_arrest_prediction_retains_mass_and_speed_sensitivity(self):
         light = self.kos.call(
             "terminal_sink_arrest_prediction", -38, -8, 125, 36, 125, self.config
         )
@@ -73,121 +83,143 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         self.assertAlmostEqual(zero_sink["absolute_arrest_height"], 557 + 1 / 3)
         self.assertAlmostEqual(zero_sink["profile_deficit_height"], zero_sink["absolute_arrest_height"])
 
-        prediction = self.kos.call(
-            "terminal_preflare_predictive_fraction",
-            -38, -8, 3800, 1500, 400, 149, 46.73, 149, self.config,
-        )
-        self.assertGreater(prediction["fraction"], 0)
-        self.assertLess(prediction["fraction"], 1)
-        steep_untriggered = self.kos.call(
-            "calculate_preflare_pullup_command", "steep", 14, 0, 5, 15, 20, 0,
-        )
-        steep_triggered = self.kos.call(
-            "calculate_preflare_pullup_command", "steep", 14, 0, 5, 15, 20,
-            prediction["pitch_floor_fraction"],
-        )
-        self.assertFalse(steep_untriggered["active"])
-        self.assertAlmostEqual(steep_triggered["fraction"], prediction["pitch_floor_fraction"])
-        pullup = self.kos.call(
-            "calculate_preflare_pullup_command",
-            "steep", 0, -8, 5, 15, 20, prediction["pitch_floor_fraction"],
-        )
-        self.assertTrue(pullup["active"])
-        self.assertGreater(pullup["command"], 0)
+    def profile_command(self, distance, profile_error, speed, mass, runway_altitude=0):
+        profile = self.kos.call("calculate_glideslope_profile", distance,
+            runway_altitude, self.gs)
+        altitude = profile["altitude"] - profile_error
+        return self.kos.call("terminal_final_profile_command", distance, altitude,
+            speed, mass, self.config, self.gs, runway_altitude, True)
 
-    def test_preview_blends_continuously_across_preflare_start(self):
-        distances = tuple(range(2500, 399, -200)) + tuple(range(400, -1, -25))
-        fractions = [self.kos.call(
-            "terminal_preflare_predictive_fraction", -6.5, -6.5, distance,
-            1500, 400, 125, 36, 125, self.config,
-        )["fraction"] for distance in distances]
-        self.assertEqual(fractions[0], 0)
-        self.assertGreater(fractions[1], 0)
-        self.assertGreater(fractions[4], 0)
-        self.assertGreater(fractions[5], fractions[4])
-        self.assertAlmostEqual(fractions[distances.index(400)], 1)
-        self.assertAlmostEqual(fractions[-1], 0)
-        self.assertTrue(all(abs(later-earlier) < 0.12
-                            for earlier, later in zip(fractions, fractions[1:])))
-        self.assertTrue(any(distance > 1500 and fraction > 0
-                            for distance, fraction in zip(distances, fractions)))
-        self.assertTrue(any(distance < 1500 and fraction > 0
-                            for distance, fraction in zip(distances, fractions)))
+    def test_flight_407_high_profile_states_command_descent_without_predictive_pitch_floor(self):
+        # Recorded flight 407 states: 3.448 km is near profile; at 1.270 km
+        # the craft is 163 m above it, and at 57 m it remains about 211 m high.
+        near = self.kos.call("terminal_final_profile_command", 3448.22,
+            1978.7046, 133.1537, 37.4523, self.config, self.gs, 1183.0, True)
+        high = self.kos.call("terminal_final_profile_command", 1270.20,
+            1570.8842, 118.3933, 37.4518, self.config, self.gs, 1183.0, True)
+        threshold = self.kos.call("terminal_final_profile_command", 56.59,
+            1447.0664, 116.4513, 37.4379, self.config, self.gs, 1183.0, True)
 
-    def test_recovered_shallow_sink_keeps_guidance_preview_without_a_pitch_floor(self):
-        for distance, region in ((1500, "preflare"), (1000, "preflare"),
-                                 (400, "shallow"), (200, "shallow")):
-            prediction = self.kos.call(
-                "terminal_preflare_predictive_fraction", -6.5, -6.5, distance,
-                1500, 400, 125, 36, 125, self.config,
-            )
-            self.assertGreater(prediction["fraction"], 0)
-            self.assertEqual(prediction["pitch_floor_fraction"], 0)
-            command = self.kos.call(
-                "calculate_preflare_pullup_command", region, 0, -2, 5, 15, 20,
-                prediction["pitch_floor_fraction"],
-            )
-            self.assertEqual(command["command"], -2)
-            self.assertFalse(command["active"])
-        at_shallow_start = self.kos.call(
-            "terminal_preflare_predictive_fraction", -6.5, -6.5, 400,
-            1500, 400, 125, 36, 125, self.config,
-        )
-        self.assertAlmostEqual(at_shallow_start["fraction"], 1)
+        self.assertAlmostEqual(near["profile_error"], 7.8, delta=1.0)
+        self.assertLess(near["desired_vs"], -30)
+        self.assertLess(high["profile_error"], -150)
+        self.assertEqual(high["preview_weight"], 0)
+        self.assertLess(high["altitude_correction"], -50)
+        self.assertEqual(high["fraction"], 0)
+        self.assertEqual(high["desired_vs"], self.config["final_profile_min_vertical_speed"])
+        self.assertLess(threshold["profile_error"], -200)
+        self.assertEqual(threshold["desired_vs"], self.config["final_profile_min_vertical_speed"])
 
-    def test_independent_delayed_response_stays_above_clearance_for_light_and_heavy_cases(self):
-        def integrate(mass, airspeed, initial_vs):
-            target_vs = -airspeed * 0.0524077793
+        high_pitch = self.kos.call("calculate_glideslope_pitch_command", high["desired_vs"],
+            -13.8658, 118.3933, self.config["final_pitch_trim_aoa"],
+            self.config["final_pitch_vertical_speed_gain"],
+            self.config["final_pitch_command_min"], self.config["final_pitch_command_max"])
+        feedback = self.kos.call("calculate_preflare_pullup_command", high["region"],
+            high["profile_error"], high_pitch["command"],
+            self.config["final_preflare_pullup_start_error"],
+            self.config["final_preflare_pullup_full_error"],
+            self.config["final_preflare_pullup_pitch"])
+        self.assertLess(high_pitch["command"], 0)
+        self.assertFalse(feedback["active"])
+        self.assertLess(feedback["command"], 0)
+
+    def test_near_curve_preview_and_altitude_correction_are_continuous_and_bounded(self):
+        preview = {}
+        for mass in (37.45, 46.70):
+            command = self.profile_command(1000, 0, 125, mass)
+            preview[mass] = command
+            self.assertGreater(command["lookahead_seconds"], 0)
+            self.assertGreater(command["preview_weight"], 0)
+            self.assertGreater(command["preview_feedforward_vs"], command["feedforward_vs"])
+        self.assertGreater(preview[46.70]["lookahead_seconds"], preview[37.45]["lookahead_seconds"])
+
+        errors = (-200, -50, 0, 50, 200)
+        commands = [self.profile_command(1000, error, 125, 46.70) for error in errors]
+        corrections = [command["altitude_correction"] for command in commands]
+        desired = [command["desired_vs"] for command in commands]
+        self.assertTrue(all(a < b for a, b in zip(corrections, corrections[1:])))
+        self.assertTrue(all(a <= b for a, b in zip(desired, desired[1:])))
+        self.assertTrue(all(self.config["final_profile_min_vertical_speed"] <= value <=
+                            self.config["final_profile_max_vertical_speed"] for value in desired))
+
+        for boundary in (self.gs["preflare_start"], self.gs["preflare_end"]):
+            left = self.profile_command(boundary - 0.1, 0, 125, 46.70)
+            right = self.profile_command(boundary + 0.1, 0, 125, 46.70)
+            self.assertLess(abs(left["desired_vs"] - right["desired_vs"]), 0.05)
+            self.assertLess(abs(left["preview_feedforward_vs"] -
+                                right["preview_feedforward_vs"]), 0.05)
+
+    def test_delayed_independent_response_checks_profile_corridor_and_sink(self):
+        # Independent plant: a delayed pitch-to-vertical-acceleration map with
+        # finite authority and a mass penalty. It does not use the onboard
+        # sink-arrest acceleration or predict its commanded path.
+        def integrate(distance, altitude, vertical_speed, airspeed, mass):
             dt = 0.1
-            delay = 2.0 + max(0, mass / self.config["max_landing_mass"] - 1)
-            delayed = [-8.0] * int(round(delay / dt))
-            distance = 5200.0
-            # Start on the independent steep glide path (the production
-            # planner's geometry is not reused by this plant model).
-            altitude = distance * 0.268
-            vertical_speed = initial_vs
-            min_altitude = altitude
-            desired_history = []
-            while distance > 400:
-                gradient_fraction = max(0, min(1, (1500-distance)/1100))
-                gradient = 0.268 + (0.0524077793-0.268)*gradient_fraction
-                normal_vs = -airspeed*gradient
-                preview = self.kos.call("terminal_preflare_predictive_fraction",
-                    vertical_speed,target_vs,distance,1500,400,airspeed,mass,airspeed,self.config)
-                desired_vs = normal_vs*(1-preview["fraction"])+target_vs*preview["fraction"]
-                desired_history.append(desired_vs)
+            response_delay = 2.0 + max(0, mass - 37.45) / 10.0
+            delayed_pitch = [-8.0] * int(round(response_delay / dt))
+            at_400 = None
+            minimum_altitude = (altitude, distance, vertical_speed)
+            while distance > 0:
+                profile = self.kos.call("calculate_glideslope_profile", distance, 0, self.gs)
+                command = self.kos.call("terminal_final_profile_command", distance,
+                    altitude, airspeed, mass, self.config, self.gs, 0, True)
                 pitch = self.kos.call("calculate_glideslope_pitch_command",
-                    desired_vs,vertical_speed,airspeed,7,0.8,-20,25)
-                region = "steep"
-                if distance <= 1500:
-                    region = "preflare"
-                if distance <= 400:
-                    region = "shallow"
-                pullup = self.kos.call("calculate_preflare_pullup_command",region,0,
-                    pitch["command"],5,15,20,preview["pitch_floor_fraction"])
-                delayed.append(pullup["command"])
-                applied_pitch = delayed.pop(0)
-                # Independent conservative plant: delayed pitch authority, a
-                # bounded sink response, and a mass penalty. It does not reuse
-                # the onboard arrest acceleration predictor.
-                acceleration = max(-0.25,min(1.25,applied_pitch*0.06))
-                acceleration *= (36/max(36,mass))**0.25
-                vertical_speed += acceleration*dt
-                altitude += vertical_speed*dt
-                min_altitude = min(min_altitude,altitude)
-                distance -= airspeed*dt
-            return vertical_speed,min_altitude,desired_history
+                    command["desired_vs"], vertical_speed, airspeed,
+                    self.config["final_pitch_trim_aoa"],
+                    self.config["final_pitch_vertical_speed_gain"],
+                    self.config["final_pitch_command_min"],
+                    self.config["final_pitch_command_max"])
+                pullup = self.kos.call("calculate_preflare_pullup_command",
+                    profile["region"], command["profile_error"], pitch["command"],
+                    self.config["final_preflare_pullup_start_error"],
+                    self.config["final_preflare_pullup_full_error"],
+                    self.config["final_preflare_pullup_pitch"])
+                delayed_pitch.append(pullup["command"])
+                applied_pitch = delayed_pitch.pop(0)
+                acceleration = max(-3.0, min(4.0, applied_pitch * 0.15))
+                acceleration *= (37.45 / max(37.45, mass)) ** 0.25
+                vertical_speed += acceleration * dt
+                altitude += vertical_speed * dt
+                distance -= airspeed * dt
+                if altitude < minimum_altitude[0]:
+                    minimum_altitude = (altitude, distance, vertical_speed)
+                if at_400 is None and distance <= 400:
+                    at_400 = (altitude, vertical_speed, distance)
+            return at_400, (altitude, vertical_speed, distance), minimum_altitude
 
-        light = integrate(36,125,-32)
-        heavy = integrate(46.73,149,-38)
-        self.assertGreater(light[1],75)
-        self.assertGreater(heavy[1],75)
-        for actual_vs, airspeed in ((light[0],125),(heavy[0],149)):
-            target_vs = -airspeed * 0.0524077793
-            self.assertGreaterEqual(actual_vs,target_vs-10)
-            self.assertLessEqual(actual_vs,target_vs+6)
-        self.assertLess(max(abs(b-a) for a,b in zip(light[2],light[2][1:])),2.5)
-        self.assertLess(max(abs(b-a) for a,b in zip(heavy[2],heavy[2][1:])),2.5)
+        cases = (
+            # Recorded flight 407 at 3.448 km, relative to runway altitude.
+            ("407", 3448.22, 1978.7046 - 1183.0, -33.5444, 133.1537, 37.4523),
+            # Heavy 46.7 t approach, initially on the steep profile.
+            ("heavy", 3800.0,
+             self.kos.call("calculate_glideslope_profile", 3800, 0, self.gs)["altitude"],
+             -149 * self.gs["angle1"], 149.0, 46.70),
+        )
+        for label, distance, altitude, vertical_speed, airspeed, mass in cases:
+            with self.subTest(case=label):
+                at_400, at_threshold, minimum_altitude = integrate(
+                    distance, altitude, vertical_speed, airspeed, mass
+                )
+                for measured_altitude, measured_vs, measured_distance in (at_400, at_threshold):
+                    profile_altitude = self.kos.call("calculate_glideslope_profile",
+                        max(0, measured_distance), 0, self.gs)["altitude"]
+                    self.assertLessEqual(abs(measured_altitude - profile_altitude), 80)
+                target_sink = -airspeed * self.gs["angle2"]
+                self.assertLessEqual(abs(at_threshold[1] - target_sink), 6)
+                clearance_floor = 15
+                clearances = (
+                    ("400 m", at_400[0]),
+                    ("threshold", at_threshold[0]),
+                    ("minimum over approach", minimum_altitude[0]),
+                )
+                violations = [
+                    f"{point}={height:.3f} m" for point, height in clearances
+                    if height < clearance_floor
+                ]
+                self.assertEqual(
+                    violations, [],
+                    f"clearance below {clearance_floor} m: {', '.join(violations)}",
+                )
 
     def test_clearance_arrest_margin_triggers_recovery_before_profile_error_threshold(self):
         recover = self.kos.call(
@@ -329,7 +361,7 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         column_source = column_source.replace(
             "if not(defined terminal_route_debug) {", "if false {", 1
         )
-        self.assertIn("global POS_LOG_SCHEMA_VERSION is 31.", logger.read_text())
+        self.assertIn("global POS_LOG_SCHEMA_VERSION is 32.", logger.read_text())
         logger_runtime = EnergyReplay()
         row = dict(latitude=0, longitude=-4, runway_start_latitude=0,
                    runway_start_longitude=0, runway_heading=90,
@@ -348,12 +380,12 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         logger_runtime.kos.globals.get_value("terminal_route_debug")["propulsion_mode"] = "closed"
         header = logger_runtime.call("flight_log_terminal_energy_header").split(",")[1:]
         values = logger_runtime.call("flight_log_terminal_energy_columns").split(",")[1:]
-        self.assertEqual(len(header), 47)
+        self.assertEqual(len(header), 56)
         self.assertEqual(len(values), len(header))
-        self.assertEqual(values[-3], "closed")
+        self.assertEqual(values[header.index("terminal_propulsion_mode")], "closed")
         logger_runtime.kos.globals.get_value("terminal_route_debug")["preflare_pitch_floor_fraction"] = 0.35
         values = logger_runtime.call("flight_log_terminal_energy_columns").split(",")[1:]
-        self.assertEqual(values[-1], "0.35")
+        self.assertEqual(values[header.index("terminal_preflare_pitch_floor_fraction")], "0.35")
         fallback_source = column_source.replace("if false {", "if true {", 1)
         logger_runtime.kos.load_source(fallback_source,"terminal_logger_default_fields")
         fallback_values = logger_runtime.call("flight_log_terminal_energy_columns").split(",")[1:]
@@ -363,6 +395,127 @@ class TerminalGuidanceLawTest(unittest.TestCase):
         self.assertIn("terminal_dump_lf_paired_floor", header)
         self.assertIn("terminal_descent_arrest_margin", header)
         self.assertIn("terminal_preflare_pitch_floor_fraction", header)
+        self.assertIn("terminal_preflare_preview_seconds", header)
+        self.assertIn("terminal_preflare_altitude_correction", header)
+        self.assertIn("terminal_pullup_far_valid", header)
+        self.assertIn("terminal_pullup_far_accel", header)
+
+
+class TerminalFarCapabilityTest(unittest.TestCase):
+    def setUp(self):
+        self.host = EnergyReplay()
+        self.config = terminal_config()["PreflarePrediction"]
+        self.calls = []
+
+        def positive_lift(altitude, velocity):
+            self.calls.append((altitude, velocity))
+            return Vec(0, 250, 0)
+
+        self.host.far_force = positive_lift
+        self.host.set_row(dict(latitude=0, longitude=0, runway_start_latitude=0,
+            runway_start_longitude=0, runway_heading=90, runway_altitude=0,
+            altitude=10000, airspeed=120, surface_speed=120, vertical_speed=-5,
+            thrust=0, ut=1000, throttle_actual=0, mass=30, liquidfuel=0,
+            oxidizer=0, terminal_airbrake="False", terminal_gear="False",
+            terminal_runway_heading_error=0, roll=0, aoa_actual=16))
+        self.route = self.host.call("terminal_route_init")
+
+    def set_state(self, ut, altitude=10000, airspeed=120, brakes=False, gear=False):
+        row = dict(self.host.row, ut=ut, altitude=altitude, airspeed=airspeed,
+                   terminal_airbrake="True" if brakes else "False",
+                   terminal_gear="True" if gear else "False")
+        self.host.set_row(row)
+
+    def refresh(self, eligible=True):
+        return self.host.call("terminal_route_refresh_pullup_force",
+            self.route, self.config, eligible)
+
+    def test_far_projection_is_signed_and_rotation_invariant(self):
+        angle = math.radians(16)
+        wind = Vec(0, -math.sin(angle), math.cos(angle))
+        top = Vec(0, 1, 0)
+        lift_axis = top - wind * (top.x * wind.x + top.y * wind.y + top.z * wind.z)
+        lift_axis = lift_axis.normalized
+        force = lift_axis * 123 + wind * -17
+        positive = self.host.call("terminal_pullup_lift_force", force, wind, top)
+        negative = self.host.call("terminal_pullup_lift_force", force * -1, wind, top)
+        self.assertAlmostEqual(positive, 123, places=6)
+        self.assertAlmostEqual(negative, -123, places=6)
+
+        rotate = lambda v: Vec(-v.y, v.x, v.z)
+        rotated = self.host.call("terminal_pullup_lift_force", rotate(force),
+            rotate(wind), rotate(top))
+        self.assertAlmostEqual(rotated, positive, places=6)
+
+    def test_far_acceleration_uses_mass_gamma_bank_gravity_safety_and_cap(self):
+        result = self.host.call("terminal_pullup_acceleration", 300, 30, 1,
+            100, 60, 60, self.config)
+        self.assertAlmostEqual(result["raw"], 3, places=6)
+        self.assertAlmostEqual(result["usable"], 1.95, places=6)
+        negative = self.host.call("terminal_pullup_acceleration", -300, 30, 1,
+            100, 0, 0, self.config)
+        self.assertLess(negative["raw"], 0)
+        self.assertEqual(negative["usable"], 0)
+        capped = self.host.call("terminal_pullup_acceleration", 1000, 20, 1,
+            100, 0, 0, self.config)
+        self.assertEqual(capped["usable"], self.config["far_maximum_acceleration"])
+
+    def test_far_refresh_cadence_drift_invalidation_missing_addon_and_no_ship_side_effects(self):
+        ship_before = dict(self.host.kos.globals.get_value("ship"))
+        self.refresh()
+        self.assertEqual(self.host.kos.globals.get_value("ship"), ship_before)
+        self.assertTrue(self.route["pullup_far_valid"])
+        self.assertEqual(len(self.calls), 1)
+        sampled_velocity = self.calls[0][1]
+        sampled_aoa = math.degrees(math.atan2(-sampled_velocity.y, sampled_velocity.z))
+        self.assertAlmostEqual(sampled_aoa, 16, places=6)
+
+        self.set_state(1000.5)
+        self.refresh()
+        self.assertEqual(len(self.calls), 1)
+        self.set_state(1001.1)
+        self.refresh()
+        self.assertEqual(len(self.calls), 2)
+        self.set_state(1001.2, altitude=10101)
+        self.refresh()
+        self.assertEqual(len(self.calls), 3)
+
+        old_lift = self.route["pullup_far_lift"]
+        self.host.kos.globals["addons"] = {"available": lambda name: False, "far": {}}
+        self.refresh()
+        self.assertFalse(self.route["pullup_far_valid"])
+        self.assertEqual(self.route["pullup_far_lift"], old_lift)
+        self.assertEqual(len(self.calls), 3)
+
+    def test_far_configuration_change_waits_for_settle_before_refresh(self):
+        self.refresh()
+        self.assertEqual(len(self.calls), 1)
+        self.set_state(1000.1, brakes=True)
+        self.refresh()
+        self.assertFalse(self.route["pullup_far_valid"])
+        self.assertEqual(len(self.calls), 1)
+        self.set_state(1001.9, brakes=True)
+        self.refresh()
+        self.assertFalse(self.route["pullup_far_valid"])
+        self.assertEqual(len(self.calls), 1)
+        self.set_state(1002.2, brakes=True)
+        self.refresh()
+        self.assertTrue(self.route["pullup_far_valid"])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_ineligible_or_missing_far_suffix_invalidates_cached_sample(self):
+        self.refresh()
+        self.assertTrue(self.route["pullup_far_valid"])
+        self.refresh(eligible=False)
+        self.assertFalse(self.route["pullup_far_valid"])
+        self.assertEqual(len(self.calls), 1)
+
+        self.set_state(1000.1)
+        self.host.kos.globals["addons"] = {"available": lambda name: True,
+            "far": {"hassuffix": lambda suffix: False}}
+        self.refresh()
+        self.assertFalse(self.route["pullup_far_valid"])
+        self.assertEqual(len(self.calls), 1)
 
 
 class TerminalDescentRepositionIntegrationTest(unittest.TestCase):

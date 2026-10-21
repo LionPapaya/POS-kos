@@ -897,8 +897,8 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "final_pitch_command_max",25,
     "final_pitch_command_min",-20,
     // Before GPWS becomes necessary, reproduce its 20-degree pull-up pitch.
-    // A separate predictive floor starts the pull-up early enough to account
-    // for speed, mass, and conservative aircraft response during preflare.
+    // Preview the upcoming profile over the bounded aircraft response delay.
+    // Sink-arrest distance is an escape diagnostic, not a flare schedule.
     "final_preflare_pullup_start_error",5,
     "final_preflare_pullup_full_error",15,
     "final_preflare_pullup_pitch",20,
@@ -906,7 +906,10 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "response_delay_seconds",2.0,"heavy_mass_delay_seconds",1.0,
         "reference_vertical_deceleration",1.5,
         "minimum_capability_scale",0.60,"maximum_capability_scale",1.20,
-        "pullup_ramp_distance",700,"preflare_lead_distance",1000,"minimum_sink_excess",4,
+        "maximum_preview_seconds",3.0,"above_profile_preview_fade",30,
+        "far_sample_aoa",16,"far_refresh_seconds",1,"far_altitude_drift",100,
+        "far_speed_drift",5,"far_configuration_settle",2,
+        "far_acceleration_safety",0.65,"far_maximum_acceleration",8,
         "minimum_clearance",75
     ),
     "pitch_bias_gain",0.35,
