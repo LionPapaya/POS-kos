@@ -608,7 +608,7 @@ Poseidon_SSTO:add("Ascent",lex(
     "alignment_target_vs",12,
     "alignment_vs_gain",0.5,
     "alignment_max_aoa",20,
-    "alignment_max_pitch",20,
+    "alignment_max_pitch",30,
     "speed_build_pitch",10,
     "climb_altitude",20000,
     "climb_target_speed",1500,
@@ -768,7 +768,7 @@ Poseidon_SSTO:add("Envelope",lex(
     "upset_confirm_time",0.75,
     "recovery_safe_aoa",15,
     "recovery_exit_pitch",30,
-    "departure_recovery_max_pitch",25,
+    "departure_recovery_max_pitch",35,
     "departure_recovery_max_bank",30,
     "departure_recovery_min_speed",110,
     "departure_recovery_stable_time",2,
@@ -813,7 +813,11 @@ Poseidon_SSTO:add("Envelope",lex(
             "escape_offsets",list(0,-5,5,-15,15,-30,30,-60,60),
             "escape_margin",50,"escape_bank",25,"escape_heading_gain",6,
             "departure_range",18000,"departure_dogleg_distance",6000,
-            "departure_heading_gain",2,"departure_response_seconds",3,"departure_speed",300,"departure_gradient",0.025,"reference_mass",69.5,
+            "departure_heading_gain",2,"departure_response_seconds",3,"departure_speed",300,"departure_gradient",0.20,"reference_mass",69.5,
+            // Flight 405: established climb about 28–35% near 69 t.
+            // Derate to 20%; retain weak initial climb for the first 1 km,
+            // then ramp over 2 km instead of crediting full climb at liftoff.
+            "departure_initial_gradient",0.025,"departure_climb_delay",1000,"departure_climb_ramp",2000,
             "departure_initial_clearance",5,"departure_clearance_ramp",10000,
             "liftoff_distance_fraction",0.75,"waypoint_capture",300,
             "departure_min_clearance",15

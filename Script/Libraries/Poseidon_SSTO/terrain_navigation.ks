@@ -11,6 +11,19 @@ function terrain_heading_delta {
     return delta_course.
 }
 
+// Distance-integrated climb envelope: weak initial climb, then a gradual
+// transition to the derated established-climb gradient. Absolute evaluation
+// keeps the result independent of the terrain sampling interval.
+function terrain_departure_height_gain {
+    parameter distance_m, navigation_config.
+    local ramp_distance is max(1,navigation_config["departure_climb_ramp"]).
+    local established_distance is max(0,distance_m-navigation_config["departure_climb_delay"]).
+    local ramp_progress is min(ramp_distance,established_distance).
+    local effective_distance is ramp_progress^2/(2*ramp_distance)+max(0,established_distance-ramp_distance).
+    return navigation_config["departure_initial_gradient"]*distance_m+
+        (navigation_config["departure_gradient"]-navigation_config["departure_initial_gradient"])*effective_distance.
+}
+
 function terrain_path_create {
     parameter origin_point, initial_course, first_course, final_course,
         path_speed, bottom_height, path_vs, local_gravity, navigation_config,
@@ -73,7 +86,8 @@ function terrain_path_advance {
     set terrain_path_state["distance"] to terrain_path_state["distance"]+station_distance.
     local station_floor is navigation_config["clearance"].
     if terrain_path_state["departure"] {
-        set terrain_path_state["bottom"] to terrain_path_state["bottom"]+navigation_config["departure_gradient"]*station_distance.
+        set terrain_path_state["bottom"] to terrain_path_state["initial_bottom"]+
+            terrain_departure_height_gain(terrain_path_state["distance"],navigation_config).
         set station_floor to navigation_config["departure_initial_clearance"] +
             (navigation_config["clearance"]-navigation_config["departure_initial_clearance"])*
             min(1,terrain_path_state["distance"]/navigation_config["departure_clearance_ramp"]).
@@ -130,6 +144,8 @@ function terrain_navigation_config {
     for config_key in source_config:keys { result_config:add(config_key,source_config[config_key]). }
     set result_config["departure_gradient"] to source_config["departure_gradient"]*
         min(1,(source_config["reference_mass"]/max(1,departure_mass))^2).
+    set result_config["departure_initial_gradient"] to source_config["departure_initial_gradient"]*
+        min(1,(source_config["reference_mass"]/max(1,departure_mass))^2).
     return result_config.
 }
 
@@ -139,6 +155,9 @@ function terrain_departure_plan {
         "index",0,"margin",-999999,"first_course",0,"score",999999,
         "origin",ship:geoposition,"planned_ut",time:seconds,"mass",ship:mass,
         "model_gradient",navigation_config["departure_gradient"],"model_speed",navigation_config["departure_speed"],
+        "model_initial_gradient",navigation_config["departure_initial_gradient"],
+        "model_climb_delay",navigation_config["departure_climb_delay"],
+        "model_climb_ramp",navigation_config["departure_climb_ramp"],
         "sample_spacing",navigation_config["sample_spacing"],"model_valid",false,
         "candidates",list(),"best_rejected",lex()).
     // find_active_runway() returns heading/altitude sentinels, not a

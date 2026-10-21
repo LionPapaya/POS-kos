@@ -1391,6 +1391,13 @@ function flight_log_departure_plan {
             "|speed="+route_plan["model_speed"]+"|sample_spacing="+route_plan["sample_spacing"]+
             "|model_valid="+route_plan["model_valid"]).
     }
+    if route_plan:haskey("model_initial_gradient") {
+        flight_log_event("departure_climb_model","initial_gradient="+route_plan["model_initial_gradient"]+
+            "|established_gradient="+route_plan["model_gradient"]+
+            "|delay_distance="+route_plan["model_climb_delay"]+"|ramp_distance="+route_plan["model_climb_ramp"]+
+            "|alignment_pitch_limit="+AVES["Ascent"]["alignment_max_pitch"]+
+            "|evidence=flight_405|model_valid="+route_plan["model_valid"]).
+    }
     if route_plan:haskey("candidates") {
         local candidate_index is 0.
         for route_candidate in route_plan["candidates"] {

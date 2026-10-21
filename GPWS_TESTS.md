@@ -18,7 +18,7 @@ or delaying every departure turn is not the intended solution.
   these candidates passes, or if runway/takeoff geometry is unavailable.
 - Keep the existing 30 m transition into early alignment. Seed its AoA smoother
   from the measured takeoff AoA. Limit the final normal alignment pitch command
-  to 20 degrees nose up, including the AoA steering output, and use configured
+  to 30 degrees nose up, including the AoA steering output, and use configured
   AoA rather than feeding measured AoA back into bank compensation. Reduce bank
   continuously when climb weakens and restore full power when climb needs it. Resume
   normal acceleration as soon as the checked dogleg and alignment permit it;
@@ -39,17 +39,21 @@ or delaying every departure turn is not the intended solution.
   current lateral candidate passes. A clear lateral exit can release in level
   flight after the stability dwell.
 
-During ascent alignment, upset pull-up recovery also limits pitch to 20 degrees
+During ascent alignment, upset pull-up recovery also limits pitch to 30 degrees
 and releases only after 2 continuous seconds of forward flight: at least 110 m/s,
-0–25 degrees pitch, at most 30 degrees bank, safe AoA and low AoA rate. The initial
+0–35 degrees pitch, at most 30 degrees bank, safe AoA and low AoA rate. The initial
 zero-AoA unloading stage is unchanged. GPWS terrain escape retains full pull-up
 authority; the alignment pitch cap must not suppress terrain avoidance.
 Heading guidance, waypoint tracking and the speed-build handoff are unchanged.
 
 All tuning is in `AVES["Ascent"]` and `AVES["Envelope"]["Terrain"]["Navigation"]`.
-The shared path math is in `terrain_navigation.ks`. The departure climb gradient
-is an explicit conservative assumption (2.5%, reduced above the reference mass),
-not a calibrated FAR performance guarantee. Preflight logs label its model as
+The shared path math is in `terrain_navigation.ks`. The departure climb envelope uses flight 405 as evidence: established manual
+climb was about 28–35% near 69 t with pitch reaching 33 degrees. The planner
+uses a derated 20% established gradient with a 30-degree alignment command cap.
+It retains the original 2.5% initial gradient for the first 1 km after the
+predicted path origin, then ramps to 20% over the next 2 km. Both gradients are
+reduced above the reference mass. This is an evidence-based tuning assumption,
+not a calibrated FAR performance guarantee for every speed, bank or payload. Preflight logs label its model as
 unvalidated. A finite candidate search can hold a departure even if some other
 route exists. Discrete probes can miss terrain between samples; KSP terrain
 queries also do not represent buildings or other vessels.
@@ -126,3 +130,10 @@ needed across the sampled path. A `departure_best_rejected` event identifies the
 closest-to-passing rejected candidate. These events are available in low,
 medium and high logging modes. Route scoring, assumed climb performance and
 acceptance criteria are unchanged; the path routines perform no logging or I/O.
+
+The `departure_climb_model` event records the initial/established gradients,
+transition distances, alignment pitch limit and flight 405 evidence identifier.
+The model stays explicitly unvalidated until compared with automatic departures.
+The delay/ramp model does not change the terrain clearance requirement, lateral
+corridor width, route search, waypoint tracking or speed-build handoff. In-flight
+GPWS still credits only measured climb with its existing conservative cap.

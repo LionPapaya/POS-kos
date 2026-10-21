@@ -57,7 +57,8 @@ class TerrainNavigationTest(unittest.TestCase):
         self.cfg = self.aves['Envelope']['Terrain']['Navigation']
         navigation = (ROOT/'Script/Libraries/lib_navigation.ks').read_text()
         names = ('navigation_longitude_delta','get_geoposition_along_heading','calcdistance_m','heading_between')
-        math_names = ('terrain_heading_delta','terrain_path_create','terrain_path_advance',
+        math_names = ('terrain_heading_delta','terrain_departure_height_gain',
+            'terrain_path_create','terrain_path_advance',
             'terrain_scan_state','terrain_scan_start','terrain_scan_advance',
             'terrain_alignment_command','terrain_departure_course')
         math_source = '\n'.join(source_function(SOURCE,n) for n in math_names)
@@ -89,10 +90,19 @@ class TerrainNavigationTest(unittest.TestCase):
     def path(self, offset=0, speed=230, height=1400, vs=0, departure=False):
         return self.call('terrain_path_create',self.point(0,0),0,offset,0,speed,height,vs,9.81,self.cfg,departure)
 
-    def finish(self, path):
+    def departure_path(self, sample_spacing=None, navigation_config=None):
+        navigation_config = dict(self.cfg) if navigation_config is None else navigation_config
+        if sample_spacing is not None:
+            navigation_config['sample_spacing'] = sample_spacing
+        path = self.call('terrain_path_create',self.point(0,0),0,0,0,300,5,0,9.81,
+                         navigation_config,True)
+        return self.finish(path,navigation_config)
+
+    def finish(self, path, navigation_config=None):
+        navigation_config = self.cfg if navigation_config is None else navigation_config
         steps = 0
         while not path['done']:
-            self.call('terrain_path_advance',path,self.cfg)
+            self.call('terrain_path_advance',path,navigation_config)
             steps += 1
             self.assertLess(steps,200)
         return path
@@ -130,6 +140,45 @@ class TerrainNavigationTest(unittest.TestCase):
         self.assertEqual(descending['threat_height'],0)
         self.field = lambda e,n: 5000 if n >= 7000 else 0
         self.assertLess(self.finish(self.path(vs=100))['margin'],0)
+
+    def test_departure_climb_profile_delays_and_ramps_without_sampling_drift(self):
+        gain = lambda distance: self.call('terrain_departure_height_gain',distance,self.cfg)
+        self.assertAlmostEqual(gain(0),0)
+        self.assertAlmostEqual(gain(250),6.25)
+        self.assertAlmostEqual(gain(1000),25)
+        self.assertAlmostEqual(gain(1250),33.984375)
+        self.assertAlmostEqual(gain(2000),93.75)
+        self.assertAlmostEqual(gain(3000),250)
+        self.assertAlmostEqual(gain(4000),450)
+        self.assertLess(gain(1250),0.20*1250)
+        for boundary in (self.cfg['departure_climb_delay'],
+                         self.cfg['departure_climb_delay']+self.cfg['departure_climb_ramp']):
+            with self.subTest(boundary=boundary):
+                self.assertAlmostEqual(gain(boundary-0.001),gain(boundary+0.001),places=3)
+
+        final_bottoms = []
+        for spacing in (125,250,375):
+            path = self.departure_path(sample_spacing=spacing)
+            self.assertAlmostEqual(path['distance'],self.cfg['departure_range'])
+            self.assertAlmostEqual(path['bottom']-path['initial_bottom'],
+                                   gain(path['distance']),places=7)
+            final_bottoms.append(path['bottom'])
+        self.assertLess(max(final_bottoms)-min(final_bottoms),1e-8)
+
+    def test_departure_profile_clears_1500m_obstacle_at_10km_but_not_5km_wall(self):
+        self.field = lambda e,n: 1500 if n >= 10000 else 0
+        departure = self.departure_path()
+        self.assertGreaterEqual(departure['margin'],0)
+
+        # The former constant 2.5% climb credit would not clear this same hill.
+        old_profile = dict(self.cfg)
+        old_profile['departure_gradient'] = old_profile['departure_initial_gradient']
+        old_departure = self.departure_path(navigation_config=old_profile)
+        self.assertLess(old_departure['margin'],0)
+
+        self.field = lambda e,n: 5000 if n >= 7000 else 0
+        wall = self.departure_path()
+        self.assertLess(wall['margin'],0)
 
     def scan_path(self, scan, now, course=0, height=1400, speed=230, vs=0):
         self.call('terrain_scan_start',scan,self.point(0,0),course,speed,height,vs,9.81,self.cfg,now)
@@ -235,6 +284,10 @@ class TerrainNavigationTest(unittest.TestCase):
             self.hosted.scheduler = None
         self.assertTrue(plan['valid'],plan)
         self.assertEqual(plan['reason'],'sampled_corridor')
+        self.assertEqual(plan['model_initial_gradient'],self.cfg['departure_initial_gradient'])
+        self.assertEqual(plan['model_climb_delay'],self.cfg['departure_climb_delay'])
+        self.assertEqual(plan['model_climb_ramp'],self.cfg['departure_climb_ramp'])
+        self.assertFalse(plan['model_valid'])
         planned_offset = self.hosted.globals.get_value('calcdistance_m')(start_31,plan['origin'])
         self.assertAlmostEqual(planned_offset,
             prediction['liftoff_distance_m']*self.cfg['liftoff_distance_fraction'],places=5)
@@ -275,7 +328,16 @@ class TerrainNavigationTest(unittest.TestCase):
     def test_mass_penalty_is_local_and_alignment_pitch_stays_capped(self):
         heavy = self.call('terrain_navigation_config',self.cfg,100)
         self.assertLess(heavy['departure_gradient'],self.cfg['departure_gradient'])
-        self.assertEqual(self.cfg['departure_gradient'],.025)
+        self.assertLess(heavy['departure_initial_gradient'],self.cfg['departure_initial_gradient'])
+        mass_factor = (self.cfg['reference_mass']/100)**2
+        self.assertAlmostEqual(heavy['departure_gradient'],self.cfg['departure_gradient']*mass_factor)
+        self.assertAlmostEqual(heavy['departure_initial_gradient'],
+                               self.cfg['departure_initial_gradient']*mass_factor)
+        reference_mass = self.call('terrain_navigation_config',self.cfg,69.5)
+        self.assertEqual(reference_mass['departure_gradient'],self.cfg['departure_gradient'])
+        self.assertEqual(reference_mass['departure_initial_gradient'],self.cfg['departure_initial_gradient'])
+        self.assertEqual(self.cfg['departure_gradient'],.20)
+        self.assertEqual(self.cfg['departure_initial_gradient'],.025)
         ascent = self.aves['Ascent']
         command = lambda vs: self.call('terrain_alignment_command',50,vs,12,14,4,ascent)
         good,weak,descending = command(15),command(5),command(-2)
@@ -283,9 +345,11 @@ class TerrainNavigationTest(unittest.TestCase):
         self.assertLess(abs(weak['bank']),abs(good['bank']))
         self.assertEqual(descending['bank'],0)
         self.assertGreater(good['pitch_floor'],0)
+        self.assertEqual(ascent['alignment_max_pitch'],30)
         self.assertLessEqual(good['pitch_floor'],ascent['alignment_max_pitch'])
         self.assertGreater(good['aoa'],12)
-        self.assertEqual(descending['pitch_floor'],ascent['alignment_max_pitch'])
+        self.assertGreater(descending['pitch_floor'],0)
+        self.assertLessEqual(descending['pitch_floor'],ascent['alignment_max_pitch'])
 
     def test_alignment_command_does_not_ratchet_with_measured_aoa_or_pitch(self):
         ascent = self.aves['Ascent']
@@ -444,6 +508,19 @@ class AscentRecoveryControlTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(envelope['stable_timer'],2)
 
+    def test_ascent_recovery_release_accepts_the_35_degree_limit(self):
+        self.assertEqual(self.release_config['departure_recovery_max_pitch'],35)
+        envelope={'stable_timer':0,'max_aoa':30}
+        for index in range(4):
+            result,_=self.release(envelope,pitch=35,dt=.5)
+            self.assertEqual(result,index == 3)
+        self.assertEqual(envelope['stable_timer'],2)
+
+        rejected={'stable_timer':0,'max_aoa':30}
+        result,_=self.release(rejected,pitch=35.1,dt=.5)
+        self.assertFalse(result)
+        self.assertEqual(rejected['stable_timer'],0)
+
     def test_reentry_and_general_release_rules_are_unchanged(self):
         self.g['step']='speed_build'
         result,_=self.release(pitch=35,speed=0,bank=170,aoa=5,rate=100)
@@ -460,10 +537,11 @@ class AscentRecoveryControlTest(unittest.TestCase):
 
     def test_ascent_upset_pullup_is_capped_but_gpws_and_zero_aoa_are_exempt(self):
         upset_pitch=self.recovery_pitch('upset_pullup',prograde_pitch=80)
-        self.assertLessEqual(upset_pitch,20)
+        self.assertLessEqual(upset_pitch,30)
+        self.assertEqual(upset_pitch,30)
 
-        gpws_pitch=self.recovery_pitch('terrain_pullup',prograde_pitch=10)
-        self.assertGreater(gpws_pitch,20)
+        gpws_pitch=self.recovery_pitch('terrain_pullup',prograde_pitch=15)
+        self.assertGreater(gpws_pitch,30)
 
         zero_aoa_pitch=self.recovery_pitch('upset_zero_aoa',prograde_pitch=80)
         self.assertEqual(zero_aoa_pitch,80)
@@ -499,8 +577,8 @@ class TerrainLoggingTest(unittest.TestCase):
         self.g['ascent_alignment_debug']={'pitch_floor':18,'bank':20,'aoa':15}
         populated_columns = self.call('flight_log_terrain_columns').split(',')
         self.assertEqual(len(header),len(populated_columns))
-        self.assertEqual(populated_columns[-4:],['18','20','15','20'])
-        self.assertIn(',True,2,3,25,18,20,15,20',','.join(populated_columns))
+        self.assertEqual(populated_columns[-4:],['18','20','15','30'])
+        self.assertIn(',True,2,3,25,18,20,15,30',','.join(populated_columns))
 
     def test_low_mode_logs_escape_transitions_once_and_none_has_no_events(self):
         self.g['pos_log_level']=0
@@ -523,6 +601,30 @@ class TerrainLoggingTest(unittest.TestCase):
         self.call('flight_log_departure_plan',dict(valid=True,reason='sampled_corridor',
             first_course=-5,margin=50,mass=69,waypoints=[LogPoint()]))
         self.assertEqual([e[0] for e in self.events],['departure_plan','departure_plan_waypoint'])
+
+    def test_departure_climb_model_event_is_low_mode_only_and_path_math_has_no_io(self):
+        route_plan=dict(valid=True,reason='sampled_corridor',first_course=0,margin=5,mass=69.5,
+            waypoints=[],model_gradient=.20,model_speed=300,sample_spacing=250,model_valid=False,
+            model_initial_gradient=.025,model_climb_delay=1000,model_climb_ramp=2000)
+        self.g['pos_log_level']=0
+        self.call('flight_log_departure_plan',route_plan)
+        self.assertFalse(self.events)
+
+        self.g['pos_log_level']=1
+        self.call('flight_log_departure_plan',route_plan)
+        climb_events=[event for event in self.events if event[0]=='departure_climb_model']
+        self.assertEqual(len(climb_events),1)
+        detail=climb_events[0][1]
+        for expected in ('initial_gradient=0.025','established_gradient=0.2',
+                         'delay_distance=1000','ramp_distance=2000',
+                         'alignment_pitch_limit=30','model_valid=False'):
+            self.assertIn(expected,detail)
+
+        path_source=source_function(SOURCE,'terrain_path_advance')
+        self.assertIn('terrain_departure_height_gain(',path_source)
+        for io_marker in ('flight_log','log ','print ','open(','read(','write('):
+            with self.subTest(io_marker=io_marker):
+                self.assertNotIn(io_marker,path_source.lower())
 
 
 class DepartureHoldStartupTest(unittest.TestCase):
@@ -709,5 +811,7 @@ class DepartureIntegrationTest(unittest.TestCase):
         self.assertIn('set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(',control)
         final_command=g.get_value('terrain_alignment_pitch')(
             requested,g.get_value('ascent_alignment_debug'),g.get_value('ascent'))
-        self.assertLessEqual(final_command,20)
-        self.assertEqual(final_command,20)
+        pitch_limit=g.get_value('ascent')['alignment_max_pitch']
+        self.assertEqual(pitch_limit,30)
+        self.assertLessEqual(final_command,pitch_limit)
+        self.assertEqual(final_command,pitch_limit)
