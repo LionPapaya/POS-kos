@@ -1332,6 +1332,12 @@ function terminal_route_init {
     // Low-energy arrivals still enter through reposition and the circuit.
     // Skipping directly to base can demand an infeasible high-speed intercept
     // before the craft has established a usable approach geometry.
+    // Log the configured geometry once. Live samples already record profile
+    // region/altitude/gradient and control ownership at normal cadence.
+    flight_log_event("terminal_profile_config","steep_gradient="+AVES["glideslope"]["angle1"]+
+        "|shallow_gradient="+AVES["glideslope"]["angle2"]+"|steep_intercept="+AVES["glideslope"]["target1"]+
+        "|preflare_start="+AVES["glideslope"]["preflare_start"]+"|preflare_end="+AVES["glideslope"]["preflare_end"]+
+        "|shallow_aimpoint="+AVES["glideslope"]["shallow_aimpoint"]).
     set terminal_route_debug["active"] to true.
     set terminal_route_debug["phase"] to route["phase"].
     set terminal_route_debug["side"] to route["side"].

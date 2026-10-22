@@ -709,15 +709,17 @@ Poseidon_SSTO:add("MinPitch",-30).
 Poseidon_SSTO:add("MaxYaw",40).
 Poseidon_SSTO:add("Rotation_rate",lex("high",10,"low",18)).
 Poseidon_SSTO:add("Pitch_rate",lex("high",4,"low",9)).
-// Fifteen-degree steep approach, smooth preflare from 1.5 km to 400 m, then
-// a three-degree glide aimed 875 m beyond the threshold.  The downstream
-// final flare remains height based and is deliberately separate.
+// Fifteen-degree outer approach, gradual pull-up from 3.6 km to 1 km,
+// then a three-degree glide aimed 875 m beyond the threshold. Choose the
+// steep-line intercept so the Hermite join has constant positive curvature:
+// height loss = span * mean(endpoint gradients). At 130 m/s this calls for
+// about 1.40 m/s^2 upward acceleration over 20 s, before height-based flare.
 Poseidon_SSTO:add("Glideslope",lex(
     "angle1",0.268,
     "angle2",0.0524077793,
-    "target1",450,
-    "preflare_start",1500,
-    "preflare_end",400,
+    "target1",3600-((1000+875)*0.0524077793+2600*(0.268+0.0524077793)/2)/0.268,
+    "preflare_start",3600,
+    "preflare_end",1000,
     "shallow_aimpoint",875
 )).
 // Final flare controller.  A more negative touchdown_vertical_speed and a
@@ -974,8 +976,8 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     // to arrest sink. Waiting for shallow-glide sink before giving the landing
     // controller ownership prevented the actual pull-up in flights 385/409.
     "PreflareCommit",lex(
-        "distance",1500,"minimum_height",75,"maximum_height",350,
-        "gear_distance",2200,"gear_height",500,
+        "distance",3600,"minimum_height",75,"maximum_height",650,
+        "gear_distance",4200,"gear_height",850,
         "maximum_glideslope_error",20,"maximum_cross_track",150,
         "maximum_heading_error",5,"maximum_bank",10,
         "minimum_vertical_speed",-45,"maximum_vertical_speed",-3,
