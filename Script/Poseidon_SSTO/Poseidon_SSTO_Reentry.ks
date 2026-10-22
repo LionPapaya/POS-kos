@@ -138,6 +138,8 @@ set landing_flare_started to false.
 global landing_preflare_active is false.
 global landing_preflare_escape_since is -1.
 global landing_ground_contact_seen is false.
+global landing_committed_once is false.
+global landing_preflare_brakes is false.
 global entry_reference_time is -1.
 global entry_predictive_bank is 0.
 global entry_predictive_plan_bank is 0.
@@ -195,6 +197,22 @@ until running = false{
                 set step to "end".
             }
         }
+    }
+    // A failed escape can still touch down on the landing run. Reclaim
+    // rollout before DAP/GPWS applies another powered flight command.
+    if landing_committed_once and step <> "end" and
+       (landing_ground_contact_seen or ship:status = "LANDED" or ship:status = "SPLASHED") {
+        if step <> "landing" {
+            flight_log_event("landing_contact_after_escape","from="+step+
+                "|vertical_speed="+round(ship:verticalspeed,2)+"|airspeed="+round(ship:airspeed,1)).
+        }
+        set step to "landing".
+        set landing_ground_contact_seen to true.
+        set landing_preflare_active to false.
+        set terminal_route_debug["landing_preflare_active"] to false.
+        set terminal_route_debug["landing_pullup_active"] to false.
+        set dapthrottle to 0.
+        brakes on.
     }
     update_readouts().
     if entry_attitude_initialized and (step = "reentry_low" or step = "reentry_mid" or
@@ -868,6 +886,8 @@ until running = false{
             if landing_commit["stable"] {
                 if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
                 abort_set_fuel_dump(false).
+                set landing_committed_once to true.
+                set landing_preflare_brakes to brakes.
                 set landing_preflare_active to terminal_route["landing_handoff_kind"] = "preflare".
                 set landing_preflare_escape_since to -1.
                 set terminal_route["landing_pullup_since"] to -1.
@@ -979,21 +999,21 @@ until running = false{
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
             ship:status = "LANDED",alt_ovr_runway,landing_config,landing_speed_scale).
         if landing_preflare_active {
-            set landing_brake_command to approach_brake_band(brakes,ship:airspeed,
-                AVES["TerminalRoute"]["ApproachSpeed"]["brake_on_speed"]*landing_speed_scale,
-                AVES["TerminalRoute"]["ApproachSpeed"]["brake_off_speed"]*landing_speed_scale).
-            if desired_vs-ship:verticalspeed > 4 or terminal_route_debug["profile_error"] > 5 {
-                set landing_brake_command to false.
-            }
+            // The commit margin was validated with this configuration. Do
+            // not retract a lift-producing brake/flap while arresting sink.
+            set landing_brake_command to terminal_landing_config_brake(landing_preflare_brakes,
+                ship:airspeed,landing_speed_scale,AVES["TerminalRoute"]).
+            if not landing_brake_command { set landing_preflare_brakes to false. }
         }
         local brake_on_threshold is landing_config["brake_on_speed"]*landing_speed_scale.
         local brake_off_threshold is landing_config["brake_off_speed"]*landing_speed_scale.
         if landing_preflare_active {
-            set brake_on_threshold to AVES["TerminalRoute"]["ApproachSpeed"]["brake_on_speed"]*landing_speed_scale.
-            set brake_off_threshold to AVES["TerminalRoute"]["ApproachSpeed"]["brake_off_speed"]*landing_speed_scale.
+            set brake_on_threshold to 0.
+            set brake_off_threshold to (AVES["TerminalRoute"]["LandingCommit"]["minimum_speed"]+
+                AVES["TerminalRoute"]["PreflareCommit"]["brake_release_speed_margin"])*landing_speed_scale.
         }
         local brake_reason is "speed_band".
-        if landing_preflare_active { set brake_reason to "committed_preflare". }
+        if landing_preflare_active { set brake_reason to "landing_config_hold". }
         if ship:status = "LANDED" or alt_ovr_runway <= landing_config["wheel_brake_altitude"] {
             set brake_reason to "wheel_contact_zone".
         }

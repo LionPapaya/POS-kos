@@ -980,6 +980,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "maximum_heading_error",5,"maximum_bank",10,
         "minimum_vertical_speed",-45,"maximum_vertical_speed",-3,
         "stable_time",0.2,"minimum_exit_margin",15,"maximum_far_age",1.5,
+        "brake_release_speed_margin",5,
         "escape_profile_error",60,"escape_bank",30,"escape_persistence",0.5
     ),
     "LandingGate",lex(

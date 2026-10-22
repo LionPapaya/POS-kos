@@ -1014,6 +1014,15 @@ function terminal_landing_pitch_command {
         (desired_vs-measured_vs)*landing_config["pitch_gain"])).
 }
 
+// Keep the configuration whose FAR lift supported commitment. A low-speed
+// release is latched by the caller so speed recovery cannot cycle the flaps.
+function terminal_landing_config_brake {
+    parameter committed_brakes, measured_airspeed, speed_scale, config_TR.
+    return committed_brakes and measured_airspeed >
+        (config_TR["LandingCommit"]["minimum_speed"]+
+         config_TR["PreflareCommit"]["brake_release_speed_margin"])*speed_scale.
+}
+
 // Committed preflare continues to follow the same curved reference, using
 // the landing pitch controller rather than switching early to a fixed -7 m/s.
 function terminal_landing_preflare_guidance {

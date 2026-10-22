@@ -54,7 +54,8 @@ global POS_LOG_EVENT_FILE is "".
 // Version 32 records bounded profile preview, retained altitude correction and FAR pull-up capability.
 // Version 34 records preflare commitment and landing-controller ownership.
 // Version 35 records committed pull-up state and remaining response allowance.
-global POS_LOG_SCHEMA_VERSION is 35.
+// Version 36 records the actual steering-manager target during landing.
+global POS_LOG_SCHEMA_VERSION is 36.
 global POS_LOG_ENTRY_BASIC_UT is -1.
 global POS_LOG_ENTRY_SOLVER_DURATION is 0.
 global POS_LOG_HEADERS_WRITTEN is false.
@@ -169,12 +170,22 @@ function flight_log_terminal_energy_header {
         "terminal_pullup_far_raw_accel,terminal_pullup_far_accel,"+
         "terminal_landing_handoff_kind,terminal_preflare_commit_stable,"+
         "terminal_preflare_commit_margin,terminal_landing_preflare_active,"+
-        "terminal_landing_pullup_active,terminal_landing_pullup_margin,terminal_landing_pullup_response_delay".
+        "terminal_landing_pullup_active,terminal_landing_pullup_margin,terminal_landing_pullup_response_delay,"+
+        "steering_manager_enabled,steering_manager_target_pitch,steering_manager_pitch_error".
+}
+
+// Read the target actually consumed by cooked steering, not just the DAP
+// request. This is a passive sample at the existing low/medium/high cadence.
+function flight_log_landing_steering_columns {
+    if not(defined steeringmanager) { return ",False,0,0". }
+    if not steeringmanager:hassuffix("ENABLED") or not steeringmanager:hassuffix("TARGET") or
+       not steeringmanager:hassuffix("PITCHERROR") { return ",False,0,0". }
+    return ","+steeringmanager:enabled+","+pitch_for(ship,steeringmanager:target)+","+steeringmanager:pitcherror.
 }
 
 function flight_log_terminal_energy_columns {
     if not(defined terminal_route_debug) {
-        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,idle,0,0,0,0,0,0,0,0,-1,0,0,0,none,False,0,False,False,0,0".
+        return ",0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,-1,0,0,-1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,idle,0,0,0,0,0,0,0,0,-1,0,0,0,none,False,0,False,False,0,0"+flight_log_landing_steering_columns().
     }
     local turn_pitch_active is 0.
     if terminal_route_debug["turn_pitch_limit_active"] { set turn_pitch_active to 1. }
@@ -230,7 +241,7 @@ function flight_log_terminal_energy_columns {
         terminal_route_debug["landing_handoff_kind"]+","+terminal_route_debug["preflare_commit_stable"]+","+
         terminal_route_debug["preflare_commit_margin"]+","+terminal_route_debug["landing_preflare_active"]+","+
         terminal_route_debug["landing_pullup_active"]+","+terminal_route_debug["landing_pullup_margin"]+","+
-        terminal_route_debug["landing_pullup_response_delay"].
+        terminal_route_debug["landing_pullup_response_delay"]+flight_log_landing_steering_columns().
 }
 
 function flight_log_entry_predictive_header {
