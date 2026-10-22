@@ -628,12 +628,13 @@ class TerrainLoggingTest(unittest.TestCase):
 
 
 class DepartureHoldStartupTest(unittest.TestCase):
-    def run_startup(self, route):
+    def run_startup(self, route, override=False):
         runtime = ScriptRuntime(ROOT, FixtureHost())
         calls = []
         events = []
         g = runtime.globals
         g.update(running=True, step='launch', departure_route=route,
+            aves={'Takeoff':{'override_preflight_refusals':override}},
             ascent_rendezvous_enabled=False, dap={},
             lex=lambda *args: dict(zip(args[::2],args[1::2])),
             print=lambda *args:None,
@@ -662,6 +663,33 @@ class DepartureHoldStartupTest(unittest.TestCase):
         self.assertEqual(g.get_value('step'),'launch')
         self.assertEqual(calls,['register','activate'])
         self.assertEqual(events,[])
+
+    def test_override_attempts_departure_without_claiming_route_is_safe(self):
+        for reason in ('terrain_blocked','unknown_runway','invalid_takeoff_prediction'):
+            with self.subTest(reason=reason):
+                route = {'valid':False,'reason':reason}
+                runtime, g, calls, events = self.run_startup(route, override=True)
+                self.assertTrue(g.get_value('running'))
+                self.assertEqual(calls,['register','activate'])
+                self.assertEqual(route,{'valid':False,'reason':reason})
+                self.assertEqual(events,[('departure_takeoff_overridden',
+                    'reason='+reason+'|fallback=orbital_course|in_flight_protection=active')])
+                g['ascent_entered'] = False
+                runtime.load_source(departure_loop_guard() +
+                    ' set ascent_entered to true. set running to false. }',
+                    'overridden-ascent-loop-entry')
+                self.assertTrue(g.get_value('ascent_entered'))
+
+    def test_enabled_override_does_not_replace_a_valid_route(self):
+        route = {'valid':True,'reason':'clear'}
+        _, g, calls, events = self.run_startup(route, override=True)
+        self.assertTrue(g.get_value('running'))
+        self.assertTrue(route['valid'])
+        self.assertEqual(calls,['register','activate'])
+        self.assertEqual(events,[])
+
+    def test_production_override_defaults_to_false(self):
+        self.assertIs(production_config()['Takeoff']['override_preflight_refusals'],False)
 
 
 def wall_escape_scenario():

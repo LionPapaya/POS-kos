@@ -255,6 +255,22 @@ Recovery telemetry records candidate searches and rejections, solver durations, 
 
 ## Takeoff performance estimate
 
+To attempt takeoff even when the preflight departure check refuses it, change
+`"override_preflight_refusals",false,` to `"override_preflight_refusals",true,`
+under `Poseidon_SSTO:add("Takeoff",lex(` in
+`Script/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks`, then restart the kOS
+program with the updated file loaded (reboot the CPU if the craft library was
+already loaded). The default is `false`. All checks still run and retain their
+actual results. An overridden refusal prints a warning and attempts departure
+using the orbital course when no checked terrain route is available. Engine
+failure aborts and in-flight terrain protection remain active. The runway-length
+estimate is already advisory and does not itself refuse takeoff.
+
+The flight logger records `takeoff_preflight_policy` and, for a failed check,
+either `departure_takeoff_held` or `departure_takeoff_overridden`, together with
+the existing runway prediction and terrain-plan diagnostics. These events use
+the existing low/medium/high logging modes; no trajectory prediction logs.
+
 Ascent prints an advisory runway assessment before launch and records it again at brake release. It uses the selected departure direction and the craft's position along the runway, rejecting off-runway or misaligned positions. `required_runway_m` and `runway_margin_m` now refer only to liftoff with the 15% distance allowance. `required_departure_m` separately estimates distance to 35 m height; the aircraft may climb beyond the pavement end, so `screen_fits` is diagnostic and does not veto a takeoff.
 
 `departure_status` distinguishes `estimated_feasible`, `demonstrated_departure`, and `unknown`. A negative generic runway margin means the conservative estimate does not confirm pavement margin; it does not prove the takeoff impossible. For Nye-Island runway 15, flights 20/22 plus the maintainer's confirmation support `demonstrated_departure` at 68.72565–68.82 tonnes, with the normal profile and a start within 5 m of the threshold. That evidence permits `sufficient` even when the conservative distance model does not fit the mapped pavement. It adds no invented pavement or terrain clearance and does not extend the demonstrated mass limit to heavier loads or the reciprocal direction. Other runways, including Sandy-Island, Hazard-Shallows and Island, receive no such evidence override. Lighter loads may be estimated feasible while remaining unvalidated extrapolations.

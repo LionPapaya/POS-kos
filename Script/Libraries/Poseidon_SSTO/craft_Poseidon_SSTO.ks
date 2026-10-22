@@ -638,6 +638,9 @@ Poseidon_SSTO:add("Ascent",lex(
 // Poseidon takeoff model coefficients and evidence limits. The model is
 // advisory outside these measured conditions; update from logged flights.
 Poseidon_SSTO:add("Takeoff",lex(
+    // true: run preflight checks but attempt takeoff despite a refusal.
+    // Engine-failure aborts and in-flight terrain protection remain active.
+    "override_preflight_refusals",false,
     "body","Kerbin",
     "reference_mass_t",69.5,"minimum_mass_t",68.72565,"maximum_mass_t",70.04567,
     "roll_coefficient",0.107,"lift_speed_mps",133,"rotation_response",3.6,

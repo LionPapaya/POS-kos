@@ -115,12 +115,21 @@ print("Checking departure terrain corridors...").
 global departure_route is terrain_departure_plan(active_runway,takeoff_estimate,launch_heading,departure_config).
 global ascent_alignment_debug is lex("bank",0,"aoa",0,"pitch_floor",ascent["rotate_pitch"]).
 flight_log_departure_plan(departure_route).
+flight_log_event("takeoff_preflight_policy","override_refusals="+AVES["Takeoff"]["override_preflight_refusals"]).
 if not departure_route["valid"] {
-    print("TAKEOFF HELD: no checked departure corridor ("+departure_route["reason"]+").").
-    set Lastest_status to "Departure terrain route unavailable".
-    flight_log_event("departure_takeoff_held","reason="+departure_route["reason"]).
-    // End through the script loop guard; this is not a function return.
-    set running to false.
+    if AVES["Takeoff"]["override_preflight_refusals"] {
+        print("WARNING: TAKEOFF OVERRIDE: no checked departure corridor ("+departure_route["reason"]+"). Attempting takeoff.").
+        set Lastest_status to "Takeoff override: departure route unchecked".
+        flight_log_event("departure_takeoff_overridden","reason="+departure_route["reason"]+"|fallback=orbital_course|in_flight_protection=active").
+        // Preserve the failed plan. terrain_departure_course() uses the
+        // orbital course fallback; do not label an unchecked route valid.
+    } else {
+        print("TAKEOFF HELD: no checked departure corridor ("+departure_route["reason"]+").").
+        set Lastest_status to "Departure terrain route unavailable".
+        flight_log_event("departure_takeoff_held","reason="+departure_route["reason"]).
+        // End through the script loop guard; this is not a function return.
+        set running to false.
+    }
 }
 local v1_announced is false.
 local abort_info is lex().
