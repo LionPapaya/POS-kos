@@ -200,7 +200,7 @@ until running = false{
     }
     // A failed escape can still touch down on the landing run. Reclaim
     // rollout before DAP/GPWS applies another powered flight command.
-    if landing_committed_once and step <> "end" and
+    if landing_committed_once and dap["dap_mode"] = "auto" and step <> "end" and
        (landing_ground_contact_seen or ship:status = "LANDED" or ship:status = "SPLASHED") {
         if step <> "landing" {
             flight_log_event("landing_contact_after_escape","from="+step+
