@@ -7,8 +7,7 @@ function vacuum_ascent_clamp {
     return max(minimum_value,min(unclamped_value,maximum_value)).
 }
 
-// Numeric compatibility wrapper over the shared pure inclination guidance.
-// Load inclination_guidance.ks alongside this file.
+// Numeric compatibility wrapper over the shared navigation guidance.
 function vacuum_ascent_launch_heading {
     parameter requested_inclination, launch_site_latitude, northbound is true.
     return ascent_inclination_guidance(requested_inclination,launch_site_latitude,northbound)["heading"].

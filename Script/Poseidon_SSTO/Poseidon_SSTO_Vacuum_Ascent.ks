@@ -9,7 +9,7 @@ RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
-RUNONCEPATH("0:/Libraries/Poseidon_SSTO/inclination_guidance.ks").
+RUNONCEPATH("0:/Libraries/lib_navigation.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/vacuum_ascent_guidance.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/vacuum_ascent_support.ks").
 
