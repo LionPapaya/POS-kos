@@ -16,6 +16,17 @@ POS-kOS is a collection of [kOS](https://github.com/KSP-KOS/KOS) scripts for fly
 - Calculate and execute circularization to reach the selected target orbit.
 - Display live ascent data, guidance status, and control information in the POS GUI.
 
+Atmospheric and vacuum ascent accept inclinations from 0 to 180 degrees even
+when the launch latitude lies outside the requested plane's latitude band.
+POS then aims equatorward with a dogleg capped at 45 degrees from east or west,
+tapers the turn near the reachable band, and retains that direction when it
+joins the direct launch heading. A 0-degree target near KSC therefore remains
+0 degrees instead of failing or being replaced by the runway latitude.
+This is best-effort ascent guidance: available flight time, fuel, terrain and
+steering authority limit convergence, and circularization does not perform an
+additional plane change. Validate the remaining inclination error in KSP and
+use Orbital Maneuvering if a further correction is needed.
+
 ### Orbital operations
 
 The orbital maneuvering menu currently provides:
@@ -197,6 +208,13 @@ recognizable. Final insertion readouts remain available until the window is
 closed. `ascent_display_state` events record page/phase/status changes at low
 logging level; medium adds 1 Hz display samples and high records each fresh
 display snapshot. Normal flight telemetry retains its existing rates.
+
+`ascent_inclination_state` records dogleg/direct and northbound/southbound
+changes at low logging level. Medium adds 1 Hz `ascent_inclination_sample`
+events and high adds 5 Hz samples, including the requested and actual
+inclination, remaining latitude excess, and commanded heading. Atmospheric
+ascent records `ascent_inclination_result` on exit; vacuum ascent includes the
+target and residual error in `vacuum_ascent_complete`.
 
 The chart uses one background PNG and two small marker images. Placement is
 based on kOS layout offsets and still needs in-game KSP/Unity verification;

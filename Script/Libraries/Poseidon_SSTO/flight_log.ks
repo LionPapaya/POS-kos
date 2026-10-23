@@ -1009,6 +1009,33 @@ function flight_log_maneuver_observe {
     flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
 }
 
+// Passive live-ascent observer. Low records dogleg/direct and branch changes;
+// medium samples at 1 Hz, high at 5 Hz. Never call from a predictor.
+function flight_log_inclination_observe {
+    parameter command, requested_inclination, current_latitude, evidence.
+    if POS_LOG_LEVEL = 0 { return. }
+    local changed is command["mode"] <> evidence["mode"] or
+        command["northbound"] <> evidence["northbound"].
+    local sample_due is POS_LOG_LEVEL >= 2 and time:seconds >= evidence["next_sample"].
+    if not changed and not sample_due { return. }
+    local detail is "mode="+command["mode"]+"|northbound="+command["northbound"]+
+        "|target_inclination="+requested_inclination+"|inclination="+ship:orbit:inclination+
+        "|inclination_error="+abs(ship:orbit:inclination-requested_inclination)+
+        "|latitude="+current_latitude+"|latitude_excess="+command["latitude_error"]+
+        "|heading_command="+command["heading"].
+    if changed {
+        flight_log_event("ascent_inclination_state",detail).
+        set evidence["mode"] to command["mode"].
+        set evidence["northbound"] to command["northbound"].
+    }
+    if sample_due {
+        flight_log_event("ascent_inclination_sample",detail).
+        local sample_period is 0.2.
+        if POS_LOG_LEVEL = 2 { set sample_period to 1. }
+        set evidence["next_sample"] to time:seconds+sample_period.
+    }
+}
+
 // Ascent GUI evidence is a passive copy of the displayed snapshot. Low emits
 // page/phase/health transitions, medium samples at 1 Hz, high on each fresh
 // display snapshot (2 Hz). The normal flight.csv high-rate stream is unchanged.

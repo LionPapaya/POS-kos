@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/inclination_guidance.ks").
 // Libraries/lib_navigation.ks
 // Purpose: navigation helpers for geopositions, HAC creation, TEAM interface and approach calculations.
 // - Spherical trig helpers for building approach waypoints and HAC entries.
@@ -157,22 +158,10 @@ function choose_hac{
         "HAC_Direction",HAC_Direction
     ).
 }
+// Numeric compatibility wrapper. Live ascent retains the branch in its command.
 function calculate_heading {
-    parameter inclination.
-    parameter latitude_.
-
-    set sin_h to cos(inclination) / cos(latitude_).
-    if abs(sin_h) > 1 {
-        print "Inclination not possible from this latitude.".
-        return -1.
-    }
-
-    set h to arcsin(sin_h).
-    until h >= 0 and h < 360 {
-        if h < 0 { set h to h + 360. }
-        if h >= 360 { set h to h - 360. }
-    }
-    return h.
+    parameter inclination, latitude_, northbound is true.
+    return ascent_inclination_guidance(inclination,latitude_,northbound)["heading"].
 }
 
 // Find the runway currently occupied by the aircraft by comparing the vessel

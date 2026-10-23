@@ -88,10 +88,11 @@ if active_runway["heading"] >= 0 {
     flight_log_set_runway(active_runway["location"],active_runway["runway_num"],active_runway["start"],active_runway["end"],active_runway["heading"],active_runway["altitude"]).
 }
 set dap["aerostr"]["turn_heading"] to runway_heading.
-set launch_heading to calculate_heading(TargetInclination, ship:latitude).
-if launch_heading < 0 {
-    set launch_heading to ascent["inclination_heading_fallback"].
-}
+local inclination_command is ascent_inclination_guidance(TargetInclination,ship:latitude).
+local inclination_log is lex("mode","","northbound",true,"next_sample",0).
+if not inclination_command["valid"] { print "Invalid inclination target.". return. }
+set launch_heading to inclination_command["heading"].
+flight_log_inclination_observe(inclination_command,TargetInclination,ship:latitude,inclination_log).
 set previous_speed to ship:airspeed.
 set t0 to -1.
 ascent_display_init().
@@ -143,6 +144,12 @@ if running {
     rapierson().
 }
 until running = false{
+    if step = "launch" or step = "rotate" or step = "ascent_alignment" or
+       step = "speed_build" or step = "high_altitude_climb" or step = "nerv_assist" or
+       step = "closed_cycle_climb" or step = "apoapsis_build" {
+        set inclination_command to ascent_inclination_guidance(TargetInclination,ship:latitude,inclination_command["northbound"]).
+        flight_log_inclination_observe(inclination_command,TargetInclination,ship:latitude,inclination_log).
+    }
     update_readouts().
     dap:update().
     update_assent_gui().
@@ -267,10 +274,7 @@ until running = false{
     }
     if step = "ascent_alignment"{
         update_team_dap_gui().
-        set assent_heading to calculate_heading(TargetInclination, ship:latitude).
-        if assent_heading < 0 {
-            set assent_heading to ascent["inclination_heading_fallback"].
-        }
+        set assent_heading to inclination_command["heading"].
 
         local orbital_course is assent_heading.
         local route_index_before is departure_route["index"].
@@ -315,7 +319,7 @@ until running = false{
     }
     if step = "speed_build"{
         update_team_dap_gui().
-        set assent_heading to calculate_heading(TargetInclination, ship:latitude).  
+        set assent_heading to inclination_command["heading"].
         set dap["aerostr"]["turn_heading"] to assent_heading.
         set dap["aerostr"]["targetPitch"] to ascent["shallow_climb_pitch"].
         set dap["aerostr"]["turn_pitch"] to ascent["shallow_climb_pitch"].
@@ -337,7 +341,7 @@ until running = false{
             set step to abort_state["mode"].
         }
         set dap["str_mode"] to "aerostr".
-        set assent_heading to calculate_heading(TargetInclination, ship:latitude).  
+        set assent_heading to inclination_command["heading"].
         set dap["aerostr"]["turn_heading"] to assent_heading.
         //set dap["aerostr"]["targetPitch"] to ascent["climb_pitch"].
         //calc time to alt climb alt
@@ -389,7 +393,7 @@ until running = false{
             set step to abort_state["mode"].
         } else {
             set dap["str_mode"] to "aerostr".
-            set assent_heading to calculate_heading(TargetInclination, ship:latitude).
+            set assent_heading to inclination_command["heading"].
             set dap["aerostr"]["turn_heading"] to assent_heading.
             set dap["aerostr"]["turn_pitch"] to ascent["nerv_pitch"].
             if ship:verticalspeed <= ascent["vertical_speed_recovery_threshold"] {
@@ -411,7 +415,7 @@ until running = false{
                 update_team_dap_gui().
                 set Lastest_status to "rapiers in closed cycle".
                 set dap["str_mode"] to "aerostr".
-                set assent_heading to calculate_heading(TargetInclination, ship:latitude).
+                set assent_heading to inclination_command["heading"].
                 set dap["aerostr"]["turn_heading"] to assent_heading.
                 if dap["aerostr"]["turn_pitch"] < ascent["closed_cycle_pitch_max"]{
                     set dap["aerostr"]["turn_pitch"] to dap["aerostr"]["turn_pitch"] + ascent["closed_cycle_pitch_rate"].
@@ -436,8 +440,8 @@ until running = false{
             set step to abort_state["mode"].
         } else {
             set dap["str_mode"] to "aerostr".
+            set assent_heading to inclination_command["heading"].
             set dap["aerostr"]["turn_heading"] to assent_heading.
-            set assent_heading to calculate_heading(TargetInclination, ship:latitude).
             set dap["aerostr"]["turn_pitch"] to ascent["apoapsis_build_pitch"].
             if ship:verticalspeed <= ascent["vertical_speed_recovery_threshold"] {
                 set dap["aerostr"]["turn_pitch"] to ascent["apoapsis_build_pitch"] + ascent["vertical_speed_recovery_pitch"].
@@ -1579,6 +1583,9 @@ until running = false{
     wait 0.
     //check_abort().
 }
+flight_log_event("ascent_inclination_result","orbit_complete="+ascent_orbit_complete+
+    "|target_inclination="+TargetInclination+"|inclination="+ship:orbit:inclination+
+    "|inclination_error="+abs(ship:orbit:inclination-TargetInclination)).
 if ascent_rendezvous_enabled and ascent_orbit_complete {
     set Lastest_status to "Refining rendezvous for docking handoff".
     local ascent_rendezvous_result is rendezvous_same_body(ascent_rendezvous_target).

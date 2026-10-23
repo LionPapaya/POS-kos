@@ -7,20 +7,11 @@ function vacuum_ascent_clamp {
     return max(minimum_value,min(unclamped_value,maximum_value)).
 }
 
-// Return the northbound launch heading for a requested inclination, or -1
-// when the launch latitude cannot reach that orbital plane directly.
+// Numeric compatibility wrapper over the shared pure inclination guidance.
+// Load inclination_guidance.ks alongside this file.
 function vacuum_ascent_launch_heading {
-    parameter requested_inclination, launch_site_latitude.
-    local launch_latitude_cosine is cos(launch_site_latitude).
-    if abs(launch_latitude_cosine) < 0.0001 { return -1. }
-    local launch_heading_sine is cos(requested_inclination)/launch_latitude_cosine.
-    if abs(launch_heading_sine) > 1 { return -1. }
-    local computed_launch_heading is arcsin(launch_heading_sine).
-    until computed_launch_heading >= 0 and computed_launch_heading < 360 {
-        if computed_launch_heading < 0 { set computed_launch_heading to computed_launch_heading+360. }
-        if computed_launch_heading >= 360 { set computed_launch_heading to computed_launch_heading-360. }
-    }
-    return computed_launch_heading.
+    parameter requested_inclination, launch_site_latitude, northbound is true.
+    return ascent_inclination_guidance(requested_inclination,launch_site_latitude,northbound)["heading"].
 }
 
 // Blend from a protected climb to the horizontal acceleration pitch.  A low

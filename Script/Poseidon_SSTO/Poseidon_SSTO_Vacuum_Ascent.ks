@@ -9,6 +9,7 @@ RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/inclination_guidance.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/vacuum_ascent_guidance.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/vacuum_ascent_support.ks").
 
@@ -39,6 +40,9 @@ function vacuum_ascent_run {
     local gui_ is GUI(500,210).
     local display is gui_:addlabel("Preparing Poseidon vacuum ascent").
     local cancel is gui_:addbutton("Abort ascent / release controls").
+    local inclination_command is ascent_inclination_guidance(ascent_target["inclination"],ship:geoposition:lat).
+    local inclination_log is lex("mode","","northbound",true,"next_sample",0).
+    flight_log_inclination_observe(inclination_command,ascent_target["inclination"],ship:geoposition:lat,inclination_log).
     local mission is lex("config",ascent_config,"target_altitude",ascent_target["altitude"],"target_inclination",ascent_target["inclination"],
         "launch_heading",ascent_target["heading"],"phase","vacuum_ascent_setup","reason","preflight","phase_started",time:seconds,
         "started",time:seconds,"running",true,"cancel",false,"gui",gui_,"display",display,"next_display",0).
@@ -119,8 +123,9 @@ function vacuum_ascent_run {
                 vacuum_ascent_phase(mission,"vacuum_ascent_pitch_and_accelerate","pitching down on launch heading to build apoapsis").
             }
         }else if mission["phase"] = "vacuum_ascent_pitch_and_accelerate" {
-            local current_launch_heading is vacuum_ascent_launch_heading(mission["target_inclination"],ship:geoposition:lat).
-            if current_launch_heading < 0 { vacuum_ascent_stop(mission,false,"launch_plane_became_unreachable"). return. }
+            set inclination_command to ascent_inclination_guidance(mission["target_inclination"],ship:geoposition:lat,inclination_command["northbound"]).
+            local current_launch_heading is inclination_command["heading"].
+            flight_log_inclination_observe(inclination_command,mission["target_inclination"],ship:geoposition:lat,inclination_log).
             local surface_velocity is ship:velocity:surface.
             local lateral_velocity is surface_velocity-surface_up*vdot(surface_velocity,surface_up).
             local target_pitch is vacuum_ascent_pitch_target(alt:radar,ship:verticalspeed,lateral_velocity:mag,ship:apoapsis,mission["target_altitude"],ascent_config).

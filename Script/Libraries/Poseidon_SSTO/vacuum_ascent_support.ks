@@ -13,7 +13,7 @@ function vacuum_ascent_target_input {
     local altitude_field is dialog:addtextfield(ascent_config["default_orbit_altitude"]:tostring).
     dialog:addlabel("Inclination (degrees, 0..180)").
     local inclination_field is dialog:addtextfield(ascent_config["default_inclination"]:tostring).
-    local message is dialog:addlabel("The node at apoapsis will execute automatically.").
+    local message is dialog:addlabel("Inclination doglegs are best effort; apoapsis node executes automatically.").
     local done is false.
     local launch is dialog:addbutton("Launch").
     set launch:onclick to {
@@ -29,7 +29,7 @@ function vacuum_ascent_target_input {
             set result["valid"] to true.
             set done to true.
         }else if computed_launch_heading < 0 {
-            set message:text to "That inclination cannot be launched directly from this latitude.".
+            set message:text to "Enter an inclination from 0 to 180 degrees.".
         }else{ set message:text to "Enter an orbit above the minimum altitude and inside this body's SOI.". }
     }.
     local cancel is dialog:addbutton("Cancel").
@@ -89,6 +89,8 @@ function vacuum_ascent_stop {
     rapiersoff().
     flight_log_event("vacuum_ascent_complete","success="+success+"|reason="+reason+"|apoapsis="+round(ship:apoapsis,1)+
         "|periapsis="+round(ship:periapsis,1)+"|inclination="+round(ship:orbit:inclination,3)+
+        "|target_inclination="+mission["target_inclination"]+
+        "|inclination_error="+abs(ship:orbit:inclination-mission["target_inclination"])+
         "|phase="+mission["phase"]+"|warp_before="+warp_before).
     set vacuum_ascent_result to lex("complete",true,"success",success,"reason",reason).
     set vacuum_ascent_active to false.
