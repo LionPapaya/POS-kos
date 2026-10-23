@@ -90,7 +90,15 @@ if active_runway["heading"] >= 0 {
 set dap["aerostr"]["turn_heading"] to runway_heading.
 local inclination_command is ascent_inclination_guidance(TargetInclination,ship:latitude).
 local inclination_log is lex("mode","","northbound",true,"next_sample",0).
-if not inclination_command["valid"] { print "Invalid inclination target.". return. }
+if not inclination_command["valid"] {
+    print "Invalid inclination target.".
+    set running to false.
+    set Lastest_status to "Invalid inclination target".
+    flight_log_event("ascent_inclination_rejected","target_inclination="+TargetInclination+
+        "|latitude="+ship:latitude).
+}
+// Script scope cannot RETURN. Only enter preflight and guidance with a valid command.
+if inclination_command["valid"] {
 set launch_heading to inclination_command["heading"].
 flight_log_inclination_observe(inclination_command,TargetInclination,ship:latitude,inclination_log).
 set previous_speed to ship:airspeed.
@@ -1593,3 +1601,4 @@ if ascent_rendezvous_enabled and ascent_orbit_complete {
         set Lastest_status to "Rendezvous needs refinement: "+ascent_rendezvous_result["reason"].
     }
 }
+} // Valid inclination preflight and guidance.
