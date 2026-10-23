@@ -996,6 +996,18 @@ until running = false{
         set dap["aerostr"]["turn_heading"] to heading_to_target(runway_end).
 
         local landing_speed_scale is terminal_mass_speed_scale(ship:mass,AVES["TerminalRoute"]).
+        local speed_assist is terminal_landing_speed_command(ship:airspeed,
+            terminal_route["landing_speed_previous"],time:seconds-terminal_route["landing_speed_time"],
+            landing_speed_scale,landing_ground_contact_seen,alt_ovr_runway,landing_config,
+            AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"]).
+        set terminal_route["landing_speed_previous"] to ship:airspeed.
+        set terminal_route["landing_speed_time"] to time:seconds.
+        set dapthrottle to speed_assist["command"].
+        if dapthrottle > 0 {
+            rapierson().
+            togglerapiermode("air").
+        }
+        set terminal_route_debug["throttle"] to dapthrottle.
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
             ship:status = "LANDED",alt_ovr_runway,landing_config,landing_speed_scale).
         if landing_preflare_active {
@@ -1005,6 +1017,13 @@ until running = false{
                 ship:airspeed,landing_speed_scale,AVES["TerminalRoute"]).
             if not landing_brake_command { set landing_preflare_brakes to false. }
         }
+        // Speed support and drag must not fight each other. A release stays
+        // latched during committed preflare, so FAR can refresh the new state.
+        if dapthrottle > 0 {
+            set landing_brake_command to false.
+            set landing_preflare_brakes to false.
+        }
+        flight_log_landing_speed(speed_assist,landing_brake_command,alt_ovr_runway).
         local brake_on_threshold is landing_config["brake_on_speed"]*landing_speed_scale.
         local brake_off_threshold is landing_config["brake_off_speed"]*landing_speed_scale.
         if landing_preflare_active {

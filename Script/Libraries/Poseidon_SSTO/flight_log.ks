@@ -72,6 +72,7 @@ global POS_LOG_ENTRY_TARGET_RECORDED is false.
 global POS_LOG_LAST_ENVELOPE_STATE is "".
 global POS_LOG_LAST_GPWS_STATE is "".
 global POS_LOG_LAST_GPWS_REASON is "".
+global POS_LOG_LAST_LANDING_SPEED_ASSIST is false.
 global POS_LOG_LAST_TERRAIN_CHOICE is "".
 global POS_LOG_LAST_PDI_STATE is "".
 global POS_LOG_LAST_PDI_SATURATED is "".
@@ -382,6 +383,21 @@ function flight_log_choose_files {
 // approach_brake events record mode, protection and command changes at every log
 // level; existing airspeed, wheel_brakes, terminal_airbrake and energy samples
 // provide the medium/high-rate trace without changing the sample schema.
+// Low mode records only assist transitions. Medium/high already sample
+// actual/requested throttle, airspeed, clearance and brake state at cadence.
+function flight_log_landing_speed {
+    parameter assist, brake_command, runway_height.
+    if POS_LOG_LEVEL < 1 { return. }
+    local active_assist is assist["command"] > 0.
+    if active_assist = POS_LOG_LAST_LANDING_SPEED_ASSIST { return. }
+    set POS_LOG_LAST_LANDING_SPEED_ASSIST to active_assist.
+    flight_log_event("landing_speed_assist","active="+active_assist+
+        "|airspeed="+round(ship:airspeed,2)+"|target_speed="+round(assist["target"],2)+
+        "|predicted_speed="+round(assist["predicted"],2)+"|throttle="+round(assist["command"],3)+
+        "|brakes="+brake_command+"|height="+round(runway_height,1)+
+        "|vertical_speed="+round(ship:verticalspeed,2)).
+}
+
 function flight_log_approach_brake {
     parameter control_mode, change_reason, brake_command, speed_reference,
         engage_speed, release_speed, energy_error, brake_margin is 0,
@@ -450,6 +466,7 @@ function flight_log_begin {
     set POS_LOG_LAST_ENVELOPE_STATE to "".
     set POS_LOG_LAST_GPWS_STATE to "".
     set POS_LOG_LAST_GPWS_REASON to "".
+    set POS_LOG_LAST_LANDING_SPEED_ASSIST to false.
     set POS_LOG_LAST_TERRAIN_CHOICE to "".
     set POS_LOG_LAST_PDI_STATE to "".
     set POS_LOG_LAST_PDI_SATURATED to "".
@@ -911,7 +928,9 @@ function flight_log_tick {
     if POS_LOG_LAST_GPWS_STATE <> dap["envelope"]["terrain_state"] or POS_LOG_LAST_GPWS_REASON <> dap["envelope"]["terrain_inhibit_reason"] {
         set POS_LOG_LAST_GPWS_STATE to dap["envelope"]["terrain_state"].
         set POS_LOG_LAST_GPWS_REASON to dap["envelope"]["terrain_inhibit_reason"].
-        flight_log_event("gpws_state","value=" + dap["envelope"]["terrain_state"] + "|reason=" + dap["envelope"]["terrain_inhibit_reason"] + "|clearance=" + round(dap["envelope"]["terrain_worst_clearance"],1) + "|required=" + round(dap["envelope"]["terrain_required_clearance"],1)).
+        flight_log_event("gpws_state","value=" + dap["envelope"]["terrain_state"] + "|reason=" + dap["envelope"]["terrain_inhibit_reason"] + "|clearance=" + round(dap["envelope"]["terrain_worst_clearance"],1) + "|required=" + round(dap["envelope"]["terrain_required_clearance"],1)+
+            "|vertical_speed="+round(ship:verticalspeed,2)+"|airspeed="+round(ship:airspeed,2)+
+            "|final_sink_limit="+envelope_terrain_final_sink_limit(AVES["Envelope"]["Terrain"],AVES["TerminalRoute"])).
     }
     if dap["envelope"]:haskey("terrain_navigation") { flight_log_terrain_observe(). }
     if POS_LOG_LEVEL < 2 { return. }

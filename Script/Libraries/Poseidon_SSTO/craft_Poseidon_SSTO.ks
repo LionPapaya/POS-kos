@@ -736,8 +736,11 @@ Poseidon_SSTO:add("Landing",lex(
     "pitch_gain",2.9,
     "minimum_turn_pitch",-2,
     "maximum_turn_pitch",25,
-    "brake_on_speed",100,
-    "brake_off_speed",97,
+    // Preserve the 125 m/s approach reference through the long preflare.
+    "brake_on_speed",135,
+    "brake_off_speed",130,
+    "speed_gain",0.12,"speed_preview_seconds",3,"maximum_deceleration",5,
+    "maximum_throttle",0.70,
     "wheel_brake_altitude",10
 )).
 Poseidon_SSTO:add("StationaryThrottle",300).
@@ -985,7 +988,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "maximum_heading_error",5,"maximum_bank",10,
         "minimum_vertical_speed",-45,"maximum_vertical_speed",-3,
         "stable_time",0.2,"minimum_exit_margin",15,"maximum_far_age",1.5,
-        "brake_release_speed_margin",5,
+        "brake_release_speed_margin",10,
         "escape_profile_error",60,"escape_bank",30,"escape_persistence",0.5
     ),
     "LandingGate",lex(
@@ -999,7 +1002,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "LandingCommit",lex(
         "maximum_cross_track",150,"maximum_heading_error",5,"maximum_glideslope_error",60,
         "minimum_vertical_speed",-12,"maximum_vertical_speed",-3,
-        "minimum_speed",110,"maximum_speed",165,"maximum_bank",10,"minimum_along_track",0
+        "minimum_speed",120,"maximum_speed",165,"maximum_bank",10,"minimum_along_track",0
     ),
     // A runway may be changed only while there is enough room to rebuild the
     // terminal pattern.  The phase lock prevents a reversal after final has

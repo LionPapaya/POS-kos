@@ -489,6 +489,24 @@ function terminal_brake_decision {
     return lex("command",brake_command,"mode",brake_mode,"reason",brake_reason).
 }
 
+// Preview measured deceleration so power starts before the speed floor is
+// crossed. This runs only in the live landing owner, independent of logging.
+function terminal_landing_speed_command {
+    parameter measured_speed, previous_speed, sample_dt, speed_scale, on_ground,
+        runway_height, landing_config, reference_speed.
+    local speed_rate is 0.
+    if sample_dt > 0 and sample_dt <= 1 and previous_speed >= 0 {
+        set speed_rate to max(-landing_config["maximum_deceleration"],
+            min(0,(measured_speed-previous_speed)/sample_dt)).
+    }
+    local predicted_speed is measured_speed+speed_rate*landing_config["speed_preview_seconds"].
+    local target_speed is reference_speed*speed_scale.
+    local speed_throttle is max(0,min(landing_config["maximum_throttle"],
+        (target_speed-predicted_speed)*landing_config["speed_gain"])).
+    if on_ground or runway_height <= landing_config["wheel_brake_altitude"] { set speed_throttle to 0. }
+    return lex("command",speed_throttle,"target",target_speed,"predicted",predicted_speed).
+}
+
 function landing_brake_decision {
     parameter prior_brake, measured_speed, on_ground, runway_height, landing_config, speed_scale is 1.
     // Preserve wheel braking through low-altitude contact and bounce.
@@ -1095,6 +1113,11 @@ function terminal_landing_preflare_guidance {
        abs(geometry["heading_error"]) > 15 or abs(geometry["cross_track"]) > 150 {
         set escape_reason to "alignment".
     }
+    // Power support must not conceal an unrecoverable speed loss until the
+    // remaining height is already consumed by sink arrest.
+    if ship:airspeed < config_TR["LandingCommit"]["minimum_speed"]*terminal_mass_speed_scale(ship:mass,config_TR) {
+        set escape_reason to "low_airspeed".
+    }
     if fresh_force and pullup_active and pullup_margin < 0 {
         set escape_reason to "pullup_clearance".
     }
@@ -1304,6 +1327,8 @@ function terminal_route_init {
         "preflare_stable_since", -1,
         "landing_handoff_kind", "none",
         "landing_pullup_since", -1,
+        "landing_speed_previous", -1,
+        "landing_speed_time", -1,
         "go_around_count", 0,
         "go_around_reason", "",
         "high_energy_final_active", false,

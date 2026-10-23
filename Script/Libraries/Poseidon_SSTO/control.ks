@@ -194,6 +194,15 @@ function envelope_terrain_reset {
 // Merely selecting the final route phase is not enough: the aircraft must be
 // on the localizer, glideslope, speed, descent, and bank limits that authorize
 // the landing handoff.  The landing flare inherits that captured approach.
+// The capture corridor must include normal tracking error around the final
+// controller's most negative command. Otherwise GPWS repeatedly interrupts
+// that same command as sink crosses -45 m/s (flight 417).
+function envelope_terrain_final_sink_limit {
+    parameter terrain_config, config_TR.
+    return min(terrain_config["final_inhibit_min_vertical_speed"],
+        config_TR["final_profile_min_vertical_speed"]-config_TR["GoAround"]["vertical_tracking_error"]).
+}
+
 function envelope_terrain_landing_inhibit_reason {
     parameter envelope.
     if defined step and step = "landing" and envelope["terrain_final_captured"] {
@@ -209,7 +218,7 @@ function envelope_terrain_landing_inhibit_reason {
         if planned_preflare_pullup {
             set minimum_glideslope_error to terrain_config["final_inhibit_preflare_min_glideslope_error"].
         }
-        local final_capture is terminal_route_final_approach_capture(terminal_route,terrain_config["final_inhibit_min_vertical_speed"],terrain_config["final_inhibit_max_vertical_speed"],minimum_glideslope_error,0,false).
+        local final_capture is terminal_route_final_approach_capture(terminal_route,envelope_terrain_final_sink_limit(terrain_config,AVES["TerminalRoute"]),terrain_config["final_inhibit_max_vertical_speed"],minimum_glideslope_error,0,false).
         if final_capture["captured"] {
             if planned_preflare_pullup { return "terminal_preflare_pullup". }
             return "terminal_final_captured".
