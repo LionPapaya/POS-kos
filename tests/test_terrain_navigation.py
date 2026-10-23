@@ -795,8 +795,6 @@ class DepartureIntegrationTest(unittest.TestCase):
             departure_route=route,ship=dict(geoposition=point(0,0),latitude=0,verticalspeed=vs,airspeed=180,
                                           body={'radius':600000}),
             dap={'aoa':{},'aerostr':{}},targetinclination=0,step='ascent_alignment',
-            inclination_command={'valid':True,'heading':orbital_course,'mode':'direct',
-                                 'northbound':True,'latitude_error':0},
             calculate_heading=lambda *a:orbital_course,compass_for_prograde=lambda:0,
             pitch_for_prograde=lambda:prograde_pitch,pitch_for=lambda:current_pitch,
             calc_aoa=lambda:measured_aoa,
