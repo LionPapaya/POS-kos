@@ -120,6 +120,8 @@ Shared libraries contain the vehicle definition, control loops, GUI, navigation 
 
 ## Repository layout
 
+The GitHub distribution contains the flight scripts, GUI image assets, example craft, and this README. Tests, calibration scripts, Python tools, logs, and development documents are kept locally.
+
 | Path | Purpose |
 | --- | --- |
 | `Script/POS.ks` | Main launcher and flight-mode selector |
@@ -307,14 +309,7 @@ At 69.5 tonnes the conservative estimate is about 1,893 m to liftoff, 2,177 m wi
 
 `events.csv` records takeoff predictions, brake release, rotation, confirmed liftoff, and reaching the screen height. Low logging records transitions; medium adds 1 Hz takeoff samples; high samples each physics tick. Predictions remain independent of logging.
 
-Rebuild the local evidence report with:
-
-```sh
-python3 -m tools.pos_sim.takeoff_calibration /path/to/flight_145 \
-  --output tools/pos_sim/results/takeoff_calibration.json
-```
-
-Generated reports stay local. KSP/FAR remains the final validation of takeoff and climb behavior.
+Calibration tools and generated reports are maintained locally and are not included in this flight distribution. KSP/FAR remains the final validation of takeoff and climb behavior.
 
 ## Known limitations
 
@@ -331,16 +326,9 @@ When adding an abort mode, keep its behavior behind the abort-mode dispatcher an
 
 `TRAJ 1 V/SIT` through `TRAJ 5 V/SIT` are successively zoomed views of one fixed energy-height/range reference corridor generated from successful `reentry_low` flight logs. Their energy bands are 260–290, 210–260, 170–210, 140–170, and 100–140 km. Their corresponding RNG windows are 600–1,100, 450–800, 150–600, 50–300, and 0–180 km. The median remaining range at each energy height remains the centreline. A smoothstep width taper runs from about ±120 km at the far-range end to ±30 km near the target. These bands are visual references and do not define aerodynamic or reachability limits.
 
-During predictive entry, the V/SIT dotted path is interpolated from the existing lower-bank and upper-bank guidance predictions. The traces are matched at shared energy heights, and their remaining ranges are blended using the selected commanded-bank fraction. Sixteen reusable dots stay anchored to the prediction's source state until the next normal guidance update; basic, frozen, invalid, and reset states hide the path. This display adds no trajectory searches. Rebuild the KerboScript profile and all five backgrounds after selecting a new representative set:
+During predictive entry, the V/SIT dotted path is interpolated from the existing lower-bank and upper-bank guidance predictions. The traces are matched at shared energy heights, and their remaining ranges are blended using the selected commanded-bank fraction. Sixteen reusable dots stay anchored to the prediction's source state until the next normal guidance update; basic, frozen, invalid, and reset states hide the path. This display adds no trajectory searches. Regenerate the KerboScript profile and backgrounds together using the locally maintained development tools and a representative set of flight logs.
 
-```sh
-python3 support/build_entry_nominal.py \
-  /path/to/flight_244 /path/to/flight_247 /path/to/flight_248 \
-  /path/to/flight_252 /path/to/flight_253 /path/to/flight_254 \
-  /path/to/flight_256 /path/to/flight_260 /path/to/flight_265
-```
-
-The active page follows energy height and clamps only beyond the complete 100–290 km display span. TEAM then uses the wide `L/SIT 1` and the close-in `L/SIT 2`. Use `Script/Tests/POS_Reentry_GUI_Calibrate.ks` in KSP to display a 16-dot test path across each page and recheck the live shuttle, path placement, axes, and offsets. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
+The active page follows energy height and clamps only beyond the complete 100–290 km display span. TEAM then uses the wide `L/SIT 1` and the close-in `L/SIT 2`. Recheck the live shuttle, path placement, axes, and offsets in KSP. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
 
 ## Credits
 
@@ -353,7 +341,7 @@ Water recovery captures a wings-level approach at 400 m hull clearance, or earli
 
 ### Late-ascent aborts: AED, ATO and EDR
 
-ATI has been replaced by AED (energy-managed runway diversion), ATO (supervised orbit recovery), and EDR (emergency deorbit/return). Their guidance remains in Orbit Main until the reentry/TEAM handoff. Engine failures, deliberate isolation, per-engine survivor limits, original fuel reserves and rejected-attempt history persist across transfers. See [the ascent recovery guide](ASCENT_ABORTS.md) for the dispatch matrix, implemented behavior and initial flight tests. These modes have source/offline validation and still require KSP/FAR flight calibration.
+ATI has been replaced by AED (energy-managed runway diversion), ATO (supervised orbit recovery), and EDR (emergency deorbit/return). Their guidance remains in Orbit Main until the reentry/TEAM handoff. Engine failures, deliberate isolation, per-engine survivor limits, original fuel reserves and rejected-attempt history persist across transfers. These modes have source/offline validation and still require KSP/FAR flight calibration.
 
 ### Takeoff GUI V1 estimate
 
