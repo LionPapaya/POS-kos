@@ -736,6 +736,7 @@ Poseidon_SSTO:add("Landing",lex(
     "pitch_gain",2.9,
     "minimum_turn_pitch",-2,
     "maximum_turn_pitch",25,
+    "rollout_pitch",0,"rollout_pitch_rate",3,
     // Preserve the 125 m/s approach reference through the long preflare.
     "brake_on_speed",135,
     "brake_off_speed",130,
@@ -842,6 +843,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "activation_distance",10000,"target_speed",125,
         "brake_on_speed",130,"brake_off_speed",125
     ),
+    "BrakeTiming",lex("engage_confirm",0.75,"release_dwell",6,"overspeed_margin",10),
     // Clean loss is energy-height metres lost per horizontal metre flown.
     // Flights 252-254 clean straight segments span roughly 0.20-0.27;
     // bounded online learning adapts this fallback, never from brake drag.

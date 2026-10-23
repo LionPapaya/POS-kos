@@ -73,6 +73,8 @@ global POS_LOG_LAST_ENVELOPE_STATE is "".
 global POS_LOG_LAST_GPWS_STATE is "".
 global POS_LOG_LAST_GPWS_REASON is "".
 global POS_LOG_LAST_LANDING_SPEED_ASSIST is false.
+global POS_LOG_LANDING_CONTACT is lex("status","","confirmed",false,"rebound_seen",false,
+    "previous_vs",0,"previous_ut",-1).
 global POS_LOG_LAST_TERRAIN_CHOICE is "".
 global POS_LOG_LAST_PDI_STATE is "".
 global POS_LOG_LAST_PDI_SATURATED is "".
@@ -383,6 +385,42 @@ function flight_log_choose_files {
 // approach_brake events record mode, protection and command changes at every log
 // level; existing airspeed, wheel_brakes, terminal_airbrake and energy samples
 // provide the medium/high-rate trace without changing the sample schema.
+// Observe every live landing tick, emitting only contact/rebound transitions.
+// A low-height sink reversal is evidence, never permission to declare contact.
+// Keep the preceding sample so impact sink is not replaced by post-impact VS.
+function flight_log_landing_contact {
+    parameter confirmed_contact, runway_height, pitch_command.
+    if POS_LOG_LEVEL < 1 { return. }
+    local observed_status is ship:status.
+    local contact_state is "".
+    if confirmed_contact and not POS_LOG_LANDING_CONTACT["confirmed"] { set contact_state to "touchdown". }
+    if confirmed_contact and POS_LOG_LANDING_CONTACT["confirmed"] and
+       observed_status <> POS_LOG_LANDING_CONTACT["status"] {
+        set contact_state to "recontact".
+        if observed_status = "FLYING" { set contact_state to "bounce". }
+    }
+    local sample_dt is time:seconds-POS_LOG_LANDING_CONTACT["previous_ut"].
+    if not confirmed_contact and not POS_LOG_LANDING_CONTACT["rebound_seen"] and
+       sample_dt > 0 and sample_dt <= 1 and runway_height <= AVES["Landing"]["wheel_brake_altitude"] and
+       POS_LOG_LANDING_CONTACT["previous_vs"] < -2 and ship:verticalspeed > 1 {
+        set contact_state to "unconfirmed_rebound".
+        set POS_LOG_LANDING_CONTACT["rebound_seen"] to true.
+    }
+    if contact_state <> "" {
+        flight_log_event("landing_contact_state","state="+contact_state+"|vessel_status="+observed_status+
+            "|confirmed="+confirmed_contact+"|height="+round(runway_height,2)+
+            "|previous_vertical_speed="+round(POS_LOG_LANDING_CONTACT["previous_vs"],2)+
+            "|vertical_speed="+round(ship:verticalspeed,2)+"|sample_dt="+round(sample_dt,3)+
+            "|airspeed="+round(ship:airspeed,2)+"|pitch="+round(pitch_for(),2)+
+            "|pitch_command="+round(pitch_command,2)+"|thrust="+round(ship:thrust,2)+
+            "|latitude="+ship:geoposition:lat+"|longitude="+ship:geoposition:lng).
+    }
+    set POS_LOG_LANDING_CONTACT["confirmed"] to confirmed_contact.
+    set POS_LOG_LANDING_CONTACT["status"] to observed_status.
+    set POS_LOG_LANDING_CONTACT["previous_vs"] to ship:verticalspeed.
+    set POS_LOG_LANDING_CONTACT["previous_ut"] to time:seconds.
+}
+
 // Low mode records only assist transitions. Medium/high already sample
 // actual/requested throttle, airspeed, clearance and brake state at cadence.
 function flight_log_landing_speed {
@@ -467,6 +505,8 @@ function flight_log_begin {
     set POS_LOG_LAST_GPWS_STATE to "".
     set POS_LOG_LAST_GPWS_REASON to "".
     set POS_LOG_LAST_LANDING_SPEED_ASSIST to false.
+    set POS_LOG_LANDING_CONTACT to lex("status","","confirmed",false,"rebound_seen",false,
+        "previous_vs",0,"previous_ut",-1).
     set POS_LOG_LAST_TERRAIN_CHOICE to "".
     set POS_LOG_LAST_PDI_STATE to "".
     set POS_LOG_LAST_PDI_SATURATED to "".

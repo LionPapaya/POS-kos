@@ -489,6 +489,20 @@ function terminal_brake_decision {
     return lex("command",brake_command,"mode",brake_mode,"reason",brake_reason).
 }
 
+// Debounce ordinary engagements only. Every protection/release stays immediate;
+// urgent overspeed or excess route energy bypasses both engagement delays.
+function terminal_brake_timing {
+    parameter prior_brake, requested_brake, pending_since, released_at, now_ut,
+        urgent_engagement, timing_config.
+    if not requested_brake or prior_brake or urgent_engagement {
+        return lex("command",requested_brake,"pending_since",-1,"delayed",false).
+    }
+    if pending_since < 0 { set pending_since to now_ut. }
+    local ready is now_ut-pending_since >= timing_config["engage_confirm"] and
+        now_ut-released_at >= timing_config["release_dwell"].
+    return lex("command",ready,"pending_since",pending_since,"delayed",not ready).
+}
+
 // Preview measured deceleration so power starts before the speed floor is
 // crossed. This runs only in the live landing owner, independent of logging.
 function terminal_landing_speed_command {
@@ -1024,8 +1038,32 @@ function terminal_route_preflare_commit_check {
         "clearance",clearance,"closure_speed",closure_speed).
 }
 
-// Use the landing controller's existing bounded pitch gain during committed
-// preflare too; terminal's gentle tracking controller is no longer the owner.
+// Start from the established preflare sink. Height progress uses a smooth
+// curve, and the prior request prevents a rising/bouncing craft from undoing
+// flare progress. Crossing 35 m must never ask for a steeper descent.
+function terminal_landing_flare_command {
+    parameter runway_height, entry_vs, previous_vs, landing_config.
+    local fraction is max(0,min(1,(landing_config["flare_start_altitude"]-runway_height)/
+        max(1,landing_config["flare_start_altitude"]-landing_config["touchdown_altitude"]))).
+    local blend_fraction is fraction^2*(3-2*fraction).
+    local initial_vs is max(entry_vs,landing_config["approach_vertical_speed"]).
+    set initial_vs to min(initial_vs,landing_config["touchdown_vertical_speed"]).
+    local desired_vs is initial_vs+
+        (landing_config["touchdown_vertical_speed"]-initial_vs)*blend_fraction.
+    if previous_vs < 0 { set desired_vs to max(previous_vs,desired_vs). }
+    return lex("desired_vs",desired_vs,"fraction",fraction).
+}
+
+// Confirmed contact owns rollout even during a bounce. Lower the nose at a
+// bounded rate instead of chasing suspension/rebound vertical speed.
+function terminal_landing_rollout_pitch {
+    parameter previous_pitch, sample_dt, landing_config.
+    local target_pitch is landing_config["rollout_pitch"].
+    return max(target_pitch,previous_pitch-landing_config["rollout_pitch_rate"]*max(0,min(1,sample_dt))).
+}
+
+// Use the landing controller's bounded pitch gain during committed preflare
+// too; terminal's gentle tracking controller is no longer the owner.
 function terminal_landing_pitch_command {
     parameter desired_vs, measured_vs, landing_config.
     return max(landing_config["minimum_turn_pitch"],min(landing_config["maximum_turn_pitch"],
@@ -1319,6 +1357,8 @@ function terminal_route_init {
         "airbrake", false,
         "brake_mode", "inactive",
         "brake_reason", "inactive",
+        "brake_pending_since", -1,
+        "brake_released_at", -100,
         "gear", false,
         "landing_ready", false,
         "geometry", arrival_geometry,
@@ -1329,6 +1369,10 @@ function terminal_route_init {
         "landing_pullup_since", -1,
         "landing_speed_previous", -1,
         "landing_speed_time", -1,
+        "landing_last_desired_vs", 0,
+        "landing_flare_entry_vs", 0,
+        "landing_rollout_pitch", 0,
+        "landing_rollout_time", -1,
         "go_around_count", 0,
         "go_around_reason", "",
         "high_energy_final_active", false,
@@ -1362,7 +1406,10 @@ function terminal_route_init {
     flight_log_event("terminal_profile_config","steep_gradient="+AVES["glideslope"]["angle1"]+
         "|shallow_gradient="+AVES["glideslope"]["angle2"]+"|steep_intercept="+AVES["glideslope"]["target1"]+
         "|preflare_start="+AVES["glideslope"]["preflare_start"]+"|preflare_end="+AVES["glideslope"]["preflare_end"]+
-        "|shallow_aimpoint="+AVES["glideslope"]["shallow_aimpoint"]).
+        "|shallow_aimpoint="+AVES["glideslope"]["shallow_aimpoint"]+
+        "|brake_engage_confirm="+config_TR["BrakeTiming"]["engage_confirm"]+
+        "|brake_release_dwell="+config_TR["BrakeTiming"]["release_dwell"]+
+        "|brake_overspeed_margin="+config_TR["BrakeTiming"]["overspeed_margin"]).
     set terminal_route_debug["active"] to true.
     set terminal_route_debug["phase"] to route["phase"].
     set terminal_route_debug["side"] to route["side"].
@@ -2014,6 +2061,18 @@ function terminal_route_update {
     if descent_recovery_active {
         set brake_decision to lex("command",false,"mode","recovery","reason","unrecovered_descent").
     }
+    local urgent_braking is route["brake_energy_margin"] > config_TR["high_energy_threshold"].
+    if speed_active {
+        set urgent_braking to ship:airspeed >= (config_TR["ApproachSpeed"]["brake_on_speed"]+
+            config_TR["BrakeTiming"]["overspeed_margin"])*speed_scale.
+    }
+    local brake_timing is terminal_brake_timing(route["airbrake"],brake_decision["command"],
+        route["brake_pending_since"],route["brake_released_at"],time:seconds,
+        urgent_braking,config_TR["BrakeTiming"]).
+    set route["brake_pending_since"] to brake_timing["pending_since"].
+    if route["airbrake"] and not brake_timing["command"] { set route["brake_released_at"] to time:seconds. }
+    set brake_decision["command"] to brake_timing["command"].
+    if brake_timing["delayed"] { set brake_decision["reason"] to "engagement_delay". }
     set route["recovery_throttle_floor"] to terminal_recovery_throttle_floor(route["phase"],descent_recovery_active,config_TR).
     set terminal_route_debug["descent_recovery_active"] to descent_recovery_active.
     set terminal_route_debug["descent_recovery_elapsed"] to route["descent_recovery_elapsed"].

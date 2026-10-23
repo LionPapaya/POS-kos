@@ -966,29 +966,59 @@ until running = false{
         // overwrite its commands with a final-flare command in the same tick.
         if step = "landing" {
         local flare_fraction is 0.
-        if alt_ovr_runway < landing_config["flare_start_altitude"] {
+        local flare_started_now is false.
+        if alt_ovr_runway <= landing_config["flare_start_altitude"] or landing_flare_started {
+            if not landing_flare_started {
+                set landing_flare_started to true.
+                set flare_started_now to true.
+                local entry_vs is landing_config["approach_vertical_speed"].
+                if terminal_route["landing_last_desired_vs"] < 0 {
+                    set entry_vs to terminal_route["landing_last_desired_vs"].
+                }
+                set terminal_route["landing_flare_entry_vs"] to entry_vs.
+            }
             set landing_preflare_active to false.
             set terminal_route_debug["landing_preflare_active"] to false.
             set terminal_route_debug["landing_pullup_active"] to false.
-            set flare_fraction to max(0,min(1,
-                (landing_config["flare_start_altitude"] - alt_ovr_runway) /
-                max(landing_config["flare_start_altitude"] - landing_config["touchdown_altitude"],1)
-            )).
-            set desired_vs to landing_config["approach_vertical_speed"] +
-                (landing_config["touchdown_vertical_speed"] - landing_config["approach_vertical_speed"]) * flare_fraction.
-            if not landing_flare_started {
-                set landing_flare_started to true.
+            local flare_command is terminal_landing_flare_command(alt_ovr_runway,
+                terminal_route["landing_flare_entry_vs"],terminal_route["landing_last_desired_vs"],landing_config).
+            set desired_vs to flare_command["desired_vs"].
+            if flare_started_now {
                 flight_log_event("landing_flare_start","altitude="+round(alt_ovr_runway,1)+
                     "|distance="+round(calcdistance_m(ship:geoposition,runway_start),1)+
-                    "|vertical_speed="+round(ship:verticalspeed,2)+"|target_vertical_speed="+round(desired_vs,2)).
+                    "|vertical_speed="+round(ship:verticalspeed,2)+
+                    "|entry_vertical_speed="+round(terminal_route["landing_flare_entry_vs"],2)+
+                    "|target_vertical_speed="+round(desired_vs,2)).
             }
+            set flare_fraction to max(terminal_route_debug["landing_flare_fraction"],flare_command["fraction"]).
         }
+        set terminal_route["landing_last_desired_vs"] to desired_vs.
         set terminal_route_debug["landing_desired_vs"] to desired_vs.
         set terminal_route_debug["landing_flare_fraction"] to flare_fraction.
 
         // Keep aerostr control for final alignment.  Drive turn_pitch directly
         // so the flare has pitch authority without using distance_pitch.
         local flare_pitch is terminal_landing_pitch_command(desired_vs,ship:verticalspeed,landing_config).
+        if landing_ground_contact_seen {
+            if terminal_route["landing_rollout_time"] < 0 {
+                set terminal_route["landing_rollout_pitch"] to max(landing_config["rollout_pitch"],
+                    min(landing_config["maximum_turn_pitch"],pitch_for())).
+                set terminal_route["landing_rollout_time"] to time:seconds.
+            }
+            set flare_pitch to terminal_landing_rollout_pitch(terminal_route["landing_rollout_pitch"],
+                time:seconds-terminal_route["landing_rollout_time"],landing_config).
+            set terminal_route["landing_rollout_pitch"] to flare_pitch.
+            set terminal_route["landing_rollout_time"] to time:seconds.
+        }
+        flight_log_landing_contact(landing_ground_contact_seen,alt_ovr_runway,flare_pitch).
+        // Keep approach geometry live through flare, contact, and rollout.
+        if not landing_preflare_active {
+            local landing_geometry is terminal_route_geometry().
+            set terminal_route_debug["remaining_distance"] to landing_geometry["distance"].
+            set terminal_route_debug["along_track"] to landing_geometry["along_track"].
+            set terminal_route_debug["cross_track"] to landing_geometry["cross_track"].
+            set terminal_route_debug["runway_heading_error"] to landing_geometry["heading_error"].
+        }
         set dap["str_mode"] to "aerostr".
         set dap["aerostr"]["turn_pitch"] to flare_pitch.
         set dap["aerostr"]["distance_pitch"] to 0.
@@ -1009,7 +1039,7 @@ until running = false{
         }
         set terminal_route_debug["throttle"] to dapthrottle.
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
-            ship:status = "LANDED",alt_ovr_runway,landing_config,landing_speed_scale).
+            landing_ground_contact_seen,alt_ovr_runway,landing_config,landing_speed_scale).
         if landing_preflare_active {
             // The commit margin was validated with this configuration. Do
             // not retract a lift-producing brake/flap while arresting sink.
