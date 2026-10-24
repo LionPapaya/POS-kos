@@ -891,6 +891,12 @@ until running = false{
                 set landing_preflare_active to terminal_route["landing_handoff_kind"] = "preflare".
                 set landing_preflare_escape_since to -1.
                 set terminal_route["landing_pullup_since"] to -1.
+                set landing_flare_started to false.
+                set terminal_route["landing_corridor_since"] to -1.
+                set terminal_route["landing_flare_trim"] to 0.
+                set terminal_route["landing_last_flare_vs"] to 0.
+                set terminal_route_debug["flare_corridor_active"] to false.
+                set terminal_route_debug["flare_trim_pitch"] to 0.
                 set terminal_route_debug["landing_preflare_active"] to landing_preflare_active.
                 local handoff_exit_margin is 0.
                 if landing_commit:haskey("exit_margin") { set handoff_exit_margin to landing_commit["exit_margin"]. }
@@ -927,6 +933,7 @@ until running = false{
         gear on.
         if ship:status = "LANDED" or ship:status = "SPLASHED" {
             set landing_ground_contact_seen to true.
+            set terminal_route_debug["flare_corridor_active"] to false.
             set landing_preflare_active to false.
             set terminal_route_debug["landing_preflare_active"] to false.
             set terminal_route_debug["landing_pullup_active"] to false.
@@ -936,9 +943,20 @@ until running = false{
         // desired sink rate by height produces a smooth flare without holding
         // the craft level over the runway.
         local desired_vs is landing_config["approach_vertical_speed"].
-        if landing_preflare_active and not landing_ground_contact_seen and ship:status = "FLYING" and
-           alt_ovr_runway > landing_config["flare_start_altitude"] {
-            local preflare_command is terminal_landing_preflare_guidance(terminal_route).
+        local landing_corridor_floor is -999.
+        local landing_position_vs is 999.
+        if not landing_ground_contact_seen and ship:status = "FLYING" {
+            local preflare_command is lex().
+            if landing_preflare_active and not landing_flare_started and
+               alt_ovr_runway > landing_config["flare_start_altitude"] {
+                set preflare_command to terminal_landing_preflare_guidance(terminal_route).
+            } else {
+                set preflare_command to terminal_landing_flare_guidance(terminal_route).
+                set landing_position_vs to preflare_command["position_vs"].
+                if terminal_route_debug["flare_corridor_active"] {
+                    set landing_corridor_floor to preflare_command["desired_vs"].
+                }
+            }
             set desired_vs to preflare_command["desired_vs"].
             if preflare_command["unsafe"] {
                 if landing_preflare_escape_since < 0 { set landing_preflare_escape_since to time:seconds. }
@@ -948,9 +966,13 @@ until running = false{
                 set landing_preflare_active to false.
                 set terminal_route_debug["landing_preflare_active"] to false.
                 set terminal_route_debug["landing_pullup_active"] to false.
-                set terminal_route["go_around_reason"] to "committed_preflare_unstable".
+                local landing_escape_reason is "committed_preflare_unstable".
+                if landing_flare_started or alt_ovr_runway <= landing_config["flare_start_altitude"] {
+                    set landing_escape_reason to "landing_flare_unstable".
+                }
+                set terminal_route["go_around_reason"] to landing_escape_reason.
                 set terminal_route["go_around_count"] to terminal_route["go_around_count"]+1.
-                flight_log_event("terminal_go_around","reason=committed_preflare_unstable|altitude="+round(alt_ovr_runway,1)+
+                flight_log_event("terminal_go_around","reason="+landing_escape_reason+"|altitude="+round(alt_ovr_runway,1)+
                     "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(preflare_command["profile_error"],1)+
                     "|exit_margin="+round(preflare_command["exit_margin"],1)+
                     "|escape_reason="+preflare_command["escape_reason"]+"|pullup_margin="+round(preflare_command["pullup_margin"],1)+
@@ -970,6 +992,11 @@ until running = false{
         if alt_ovr_runway <= landing_config["flare_start_altitude"] or landing_flare_started {
             if not landing_flare_started {
                 set landing_flare_started to true.
+                // Estimate supporting pitch from the incoming flight path once,
+                // rather than making sink error supply all of the lift trim.
+                set terminal_route["landing_flare_trim"] to max(0,min(landing_config["maximum_flare_trim"],
+                    pitch_for()-arcsin(max(-1,min(1,ship:verticalspeed/max(1,ship:velocity:surface:mag)))))).
+                set terminal_route_debug["flare_trim_pitch"] to terminal_route["landing_flare_trim"].
                 set flare_started_now to true.
                 local entry_vs is landing_config["approach_vertical_speed"].
                 if terminal_route["landing_last_desired_vs"] < 0 {
@@ -981,8 +1008,9 @@ until running = false{
             set terminal_route_debug["landing_preflare_active"] to false.
             set terminal_route_debug["landing_pullup_active"] to false.
             local flare_command is terminal_landing_flare_command(alt_ovr_runway,
-                terminal_route["landing_flare_entry_vs"],terminal_route["landing_last_desired_vs"],landing_config).
+                terminal_route["landing_flare_entry_vs"],terminal_route["landing_last_flare_vs"],landing_config).
             set desired_vs to flare_command["desired_vs"].
+            set terminal_route["landing_last_flare_vs"] to desired_vs.
             if flare_started_now {
                 flight_log_event("landing_flare_start","altitude="+round(alt_ovr_runway,1)+
                     "|distance="+round(calcdistance_m(ship:geoposition,runway_start),1)+
@@ -992,13 +1020,19 @@ until running = false{
             }
             set flare_fraction to max(terminal_route_debug["landing_flare_fraction"],flare_command["fraction"]).
         }
+        if not landing_ground_contact_seen {
+            // A clearance intervention is not irreversible flare progress.
+            // Keep a bounded descent toward the configured touchdown point.
+            set desired_vs to max(landing_corridor_floor,min(desired_vs,landing_position_vs)).
+        }
         set terminal_route["landing_last_desired_vs"] to desired_vs.
         set terminal_route_debug["landing_desired_vs"] to desired_vs.
         set terminal_route_debug["landing_flare_fraction"] to flare_fraction.
 
         // Keep aerostr control for final alignment.  Drive turn_pitch directly
         // so the flare has pitch authority without using distance_pitch.
-        local flare_pitch is terminal_landing_pitch_command(desired_vs,ship:verticalspeed,landing_config).
+        local flare_pitch is terminal_landing_pitch_command(desired_vs,ship:verticalspeed,landing_config,
+            terminal_route["landing_flare_trim"]).
         if landing_ground_contact_seen {
             if terminal_route["landing_rollout_time"] < 0 {
                 set terminal_route["landing_rollout_pitch"] to max(landing_config["rollout_pitch"],

@@ -66,6 +66,8 @@ global terminal_route_debug is lex(
     "fuel_dump_active", false,
     "landing_desired_vs", 0,
     "landing_flare_fraction", 0,
+    "flare_corridor_active", false,"flare_reference_height",0,
+    "flare_corridor_vs",0,"flare_clearance_margin",0,"flare_trim_pitch",0,"flare_position_vs",0,
     "desired_vertical_speed", 0,
     "pitch_bias", 0,
     "turn_pitch_limit_active", false,
@@ -1077,10 +1079,113 @@ function terminal_landing_rollout_pitch {
 
 // Use the landing controller's bounded pitch gain during committed preflare
 // too; terminal's gentle tracking controller is no longer the owner.
+// Signed along-track is positive BEFORE the threshold. Keep this geometry
+// through flare: height alone must never authorize a touchdown short of it.
+// Pure law; force/delay inputs come from the existing live FAR arrest model.
+function terminal_landing_corridor_command {
+    parameter along_track, runway_height, measured_vs, closure_speed,
+        response_delay, vertical_acceleration, landing_config, glideslope_config.
+    local reference_height is max(landing_config["touchdown_altitude"],
+        glideslope_config["shallow_aimpoint"]*glideslope_config["angle2"])+
+        max(0,along_track)*glideslope_config["angle2"].
+    local corridor_vs is -max(0,closure_speed)*glideslope_config["angle2"]+
+        (reference_height-runway_height)*landing_config["corridor_height_gain"].
+    set corridor_vs to min(landing_config["maximum_flare_climb"],corridor_vs).
+    local time_to_touchdown is max(1,(along_track+glideslope_config["shallow_aimpoint"])/max(20,closure_speed)).
+    local position_vs is max(landing_config["approach_vertical_speed"],
+        min(landing_config["touchdown_vertical_speed"],
+            (landing_config["touchdown_altitude"]-runway_height)/time_to_touchdown)).
+    local sink_speed is max(0,-measured_vs).
+    local arrest_loss is sink_speed*response_delay+sink_speed^2/(2*max(0.1,vertical_acceleration)).
+    local touchdown_loss is sink_speed*response_delay+
+        max(0,sink_speed^2-2.5^2)/(2*max(0.1,vertical_acceleration)).
+    local clearance_margin is runway_height-touchdown_loss-0.5.
+    // Once over the runway, a normal touchdown sink is permitted. Before it,
+    // require the ability to arrest above the minimum gear clearance. The
+    // higher reference height supplies a tracking buffer, not an abort floor.
+    if along_track > 0 {
+        set clearance_margin to runway_height-arrest_loss-landing_config["touchdown_altitude"].
+    }
+    local unsafe is clearance_margin < 0 and
+        (along_track > 0 or measured_vs < -2.5).
+    return lex("desired_vs",corridor_vs,"position_vs",position_vs,"reference_height",reference_height,
+        "clearance_margin",clearance_margin,"unsafe",unsafe).
+}
+
+// Called during flare as well as before touchdown. No logger participates in
+// the prediction; telemetry only observes the already-computed result.
+function terminal_landing_flare_guidance {
+    parameter route.
+    local config_TR is AVES["TerminalRoute"].
+    local landing_config is AVES["Landing"].
+    local geometry is terminal_route_geometry().
+    terminal_route_refresh_pullup_force(route,config_TR["PreflarePrediction"],true).
+    local check is terminal_route_preflare_commit_check(route).
+    // Credit response time only while the previous command actively asks
+    // for sink arrest. Do not grant credit for merely following a descent.
+    if route["landing_last_desired_vs"]-ship:verticalspeed < 1 {
+        set route["landing_corridor_since"] to time:seconds.
+    }
+    if route["landing_corridor_since"] < 0 { set route["landing_corridor_since"] to time:seconds. }
+    local arrest is terminal_sink_arrest_prediction(ship:verticalspeed,0,check["closure_speed"],
+        ship:mass,ship:airspeed,config_TR,check["usable_acceleration"],
+        time:seconds-route["landing_corridor_since"]).
+    local corridor is terminal_landing_corridor_command(geometry["along_track"],geometry["altitude"],
+        ship:verticalspeed,check["closure_speed"],arrest["response_delay"],arrest["vertical_deceleration"],
+        landing_config,AVES["glideslope"]).
+    // Surface clearance can be smaller than runway-relative height on an
+    // uneven approach. Neither reference may conceal an arrest shortfall.
+    set corridor["clearance_margin"] to min(corridor["clearance_margin"],
+        check["clearance"]-arrest["absolute_arrest_height"]-0.5).
+    if corridor["clearance_margin"] < 0 and (geometry["along_track"] > 0 or ship:verticalspeed < -2.5) {
+        set corridor["unsafe"] to true.
+    }
+    local far_age is time:seconds-route["pullup_far_time"].
+    set terminal_route_debug["pullup_far_valid"] to route["pullup_far_valid"].
+    set terminal_route_debug["pullup_far_age"] to far_age.
+    set terminal_route_debug["pullup_far_lift"] to route["pullup_far_lift"].
+    set terminal_route_debug["pullup_far_accel"] to check["usable_acceleration"].
+    set terminal_route_debug["along_track"] to geometry["along_track"].
+    set terminal_route_debug["cross_track"] to geometry["cross_track"].
+    set terminal_route_debug["runway_heading_error"] to geometry["heading_error"].
+    local live_profile is calculate_glideslope_profile(max(0,geometry["along_track"])).
+    set terminal_route_debug["profile_region"] to live_profile["region"].
+    set terminal_route_debug["profile_altitude"] to live_profile["altitude"].
+    set terminal_route_debug["profile_gradient"] to live_profile["gradient"].
+    set terminal_route_debug["profile_error"] to live_profile["altitude"]-ship:altitude.
+    local fresh_force is route["pullup_far_valid"] and far_age >= 0 and
+        far_age <= config_TR["PreflareCommit"]["maximum_far_age"].
+    local escape_reason is "".
+    if corridor["unsafe"] { set escape_reason to "flare_clearance". }
+    if geometry["along_track"] > 0 and
+       time:seconds-route["landing_corridor_since"] >= config_TR["PreflarePrediction"]["response_delay_seconds"] and
+       route["landing_last_desired_vs"]-ship:verticalspeed > landing_config["maximum_flare_sink_error"] and
+       corridor["reference_height"]-geometry["altitude"] > landing_config["maximum_flare_height_deficit"] {
+        set escape_reason to "flare_sink_tracking".
+    }
+    if not fresh_force { set escape_reason to "flare_force_stale". }
+    if abs(geometry["cross_track"]) > 150 or abs(geometry["heading_error"]) > 15 or
+       abs(roll_for()) > config_TR["PreflareCommit"]["escape_bank"] {
+        set escape_reason to "flare_alignment".
+    }
+    if ship:airspeed < config_TR["LandingCommit"]["minimum_speed"]*terminal_mass_speed_scale(ship:mass,config_TR) {
+        set escape_reason to "flare_low_airspeed".
+    }
+    set terminal_route_debug["flare_corridor_active"] to geometry["along_track"] > 0.
+    set terminal_route_debug["flare_reference_height"] to corridor["reference_height"].
+    set terminal_route_debug["flare_corridor_vs"] to corridor["desired_vs"].
+    set terminal_route_debug["flare_position_vs"] to corridor["position_vs"].
+    set terminal_route_debug["flare_clearance_margin"] to corridor["clearance_margin"].
+    return lex("desired_vs",corridor["desired_vs"],"position_vs",corridor["position_vs"],"unsafe",escape_reason <> "",
+        "escape_reason",escape_reason,"pullup_margin",corridor["clearance_margin"],
+        "response_delay",arrest["response_delay"],
+        "profile_error",corridor["reference_height"]-geometry["altitude"],"exit_margin",corridor["clearance_margin"]).
+}
+
 function terminal_landing_pitch_command {
-    parameter desired_vs, measured_vs, landing_config.
+    parameter desired_vs, measured_vs, landing_config, trim_pitch is 0.
     return max(landing_config["minimum_turn_pitch"],min(landing_config["maximum_turn_pitch"],
-        (desired_vs-measured_vs)*landing_config["pitch_gain"])).
+        trim_pitch+(desired_vs-measured_vs)*landing_config["pitch_gain"])).
 }
 
 // Keep the configuration whose FAR lift supported commitment. A low-speed
@@ -1380,6 +1485,7 @@ function terminal_route_init {
         "preflare_stable_since", -1,
         "landing_handoff_kind", "none",
         "landing_pullup_since", -1,
+        "landing_corridor_since", -1,"landing_flare_trim",0,"landing_last_flare_vs",0,
         "landing_speed_previous", -1,
         "landing_speed_time", -1,
         "landing_last_desired_vs", 0,
