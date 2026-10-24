@@ -385,6 +385,7 @@ function takeoff_performance {
     parameter density_ratio is 1, thrust_ratio is 1.
     parameter departure_site is "", runway_direction is "", start_offset_m is 0.
     parameter model_config is AVES["Takeoff"].
+    parameter field_altitude_m is 72.68.
     local result is lex("model_valid",false,"sufficient",false,
         "liftoff_fits",false,"screen_fits",false,"reason","invalid_inputs",
         "rotation_distance_m",0,"liftoff_distance_m",0,"climb_distance_m",0,
@@ -393,11 +394,20 @@ function takeoff_performance {
         "estimated_feasible",false,"screen_beyond_runway_m",0,
         "screen_height_m",model_config["screen_height_m"],
         "distance_margin_fraction",model_config["distance_margin_fraction"],
-        "reference_stop_at_rotation_m",0,"stop_reference_valid",false).
+        "reference_stop_at_rotation_m",0,"stop_reference_valid",false,
+        "roll_coefficient",0,"roll_model","legacy","roll_within_fit_bounds",false,"roll_evidence","none").
     if takeoff_mass_t <= 0 or remaining_runway_m <= 0 or rotation_speed_mps <= 0 or
        density_ratio <= 0 or thrust_ratio <= 0 { return result. }
     local mass_ratio is takeoff_mass_t / model_config["reference_mass_t"].
-    local roll_coefficient is model_config["roll_coefficient"] * mass_ratio / thrust_ratio.
+    local roll_fit is takeoff_roll_calibration(takeoff_mass_t,field_altitude_m,
+        departure_site+"/"+runway_direction,rotation_speed_mps,"rotation",model_config).
+    local roll_coefficient is roll_fit["coefficient"] * roll_fit["mass_scale"] / thrust_ratio.
+    set result["roll_coefficient"] to roll_coefficient.
+    set result["roll_model"] to roll_fit["model"].
+    set result["roll_within_fit_bounds"] to roll_fit["within_fit_bounds"] and
+        abs(density_ratio-1) < model_config["density_ratio_tolerance"] and
+        abs(thrust_ratio-1) < model_config["thrust_ratio_tolerance"].
+    set result["roll_evidence"] to roll_fit["evidence"].
     local lift_speed is max(rotation_speed_mps,
         model_config["lift_speed_mps"] * sqrt(mass_ratio / density_ratio)).
     local rotation_distance is roll_coefficient * rotation_speed_mps^2.
@@ -423,7 +433,9 @@ function takeoff_performance {
         abs(rotation_speed_mps-model_config["validated_rotation_speed_mps"]) < model_config["rotation_speed_tolerance_mps"] and
         abs(rotation_pitch_deg-model_config["validated_rotation_pitch_deg"]) < model_config["rotation_pitch_tolerance_deg"] and
         abs(density_ratio-1) < model_config["density_ratio_tolerance"] and
-        abs(thrust_ratio-1) < model_config["thrust_ratio_tolerance"].
+        abs(thrust_ratio-1) < model_config["thrust_ratio_tolerance"] and
+        field_altitude_m >= model_config["minimum_altitude_m"] and
+        field_altitude_m <= model_config["maximum_altitude_m"].
     set result["estimated_feasible"] to result["liftoff_fits"].
     set result["sufficient"] to result["model_valid"] and result["liftoff_fits"].
     set result["reason"] to "extrapolated".
@@ -446,6 +458,54 @@ function takeoff_performance {
         model_config["stop_reference_margin_m"].
     set result["stop_reference_valid"] to rotation_speed_mps >= model_config["minimum_stop_reference_speed_mps"] and
         rotation_speed_mps <= model_config["maximum_stop_reference_speed_mps"].
+    return result.
+}
+
+// Shared empirical altitude/mass ground-roll fit. It does not certify lift,
+// climb, braking or obstacle clearance. Callers apply the returned mass scale.
+function takeoff_roll_calibration {
+    parameter craft_mass, field_altitude_m, runway_key, reference_speed_mps, fit_kind, model_config.
+    local altitude_delta is max(0,field_altitude_m-model_config["v1_roll_reference_altitude_m"]).
+    local quadratic_term is 0.
+    local mass_exponent is 1.
+    local fitted_delta is altitude_delta.
+    if model_config:haskey("roll_altitude_quadratic") {
+        set quadratic_term to model_config["roll_altitude_quadratic"].
+        set mass_exponent to model_config["roll_mass_exponent"].
+        set fitted_delta to min(altitude_delta,model_config["roll_fit_maximum_altitude_m"]-
+            model_config["v1_roll_reference_altitude_m"]).
+    }
+    // Beyond the fit range continue the nonnegative endpoint slope, so the
+    // quadratic can never turn around and predict a shorter high-altitude roll.
+    local endpoint_slope is max(0,model_config["v1_roll_altitude_exponent"]+
+        2*quadratic_term*fitted_delta).
+    local altitude_log_factor is model_config["v1_roll_altitude_exponent"]*fitted_delta+
+        quadratic_term*fitted_delta^2+endpoint_slope*(altitude_delta-fitted_delta).
+    local altitude_k is model_config["v1_roll_fit_coefficient"] *
+        2.718281828459045^altitude_log_factor.
+    local runway_factor is 1.
+    local fit_model is "three_field_v2".
+    // Retain the previously measured Area-15 correction; the new altitude and
+    // mass coefficients are shared by all runways, including Harvester.
+    if model_config["v1_roll_runway_factors"]:haskey(runway_key) {
+        set runway_factor to model_config["v1_roll_runway_factors"][runway_key].
+        set fit_model to "runway_fit_v3".
+    }
+    local fitted_k is altitude_k*runway_factor*(1+model_config["v1_roll_margin_fraction"]).
+    // Preserve the conservative low-field takeoff envelope used before this fit.
+    if fit_kind = "rotation" { set fitted_k to max(model_config["roll_coefficient"],fitted_k). }
+    local result is lex("coefficient",fitted_k,"mass_scale",(craft_mass/model_config["reference_mass_t"])^mass_exponent,
+        "model",fit_model,"within_fit_bounds",false,"evidence","none","runway_factor",runway_factor).
+    if model_config:haskey("roll_altitude_quadratic") {
+        set result["model"] to "global_roll_v4".
+        set result["evidence"] to model_config["roll_fit_evidence"].
+        set result["within_fit_bounds"] to field_altitude_m >= model_config["roll_fit_minimum_altitude_m"] and
+            field_altitude_m <= model_config["roll_fit_maximum_altitude_m"] and
+            craft_mass >= model_config["roll_fit_minimum_mass_t"] and
+            craft_mass <= model_config["roll_fit_maximum_mass_t"] and
+            reference_speed_mps >= model_config["roll_fit_minimum_speed_mps"] and
+            reference_speed_mps <= model_config["roll_fit_maximum_speed_mps"].
+    }
     return result.
 }
 
@@ -474,7 +534,7 @@ function assess_takeoff_runway {
     local facing_error is normalized_heading_error(compass_for(),selected_runway["heading"]).
     local geometry is takeoff_runway_geometry(runway_length,start_distance,bearing_error,facing_error,takeoff_config["geometry"]).
     set estimate to takeoff_performance(ship:mass,geometry["remaining_m"],AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"],
-        1,1,selected_runway["location"],selected_runway["runway_num"],geometry["along_track_m"]).
+        1,1,selected_runway["location"],selected_runway["runway_num"],geometry["along_track_m"],takeoff_config,ship:altitude).
     set estimate["remaining_runway_m"] to geometry["remaining_m"].
     set estimate["runway_key"] to selected_runway["location"]+"/"+selected_runway["runway_num"].
     set estimate["field_altitude_m"] to ship:altitude.
@@ -496,6 +556,9 @@ function assess_takeoff_runway {
         set estimate["sufficient"] to false.
         set estimate["departure_status"] to "unknown".
         set estimate["reason"] to "unvalidated_atmosphere".
+        if estimate["roll_within_fit_bounds"] {
+            set estimate["reason"] to "ground_roll_fit_departure_unvalidated".
+        }
     }
     return estimate.
 }
@@ -722,12 +785,17 @@ Poseidon_SSTO:add("Takeoff",lex(
     "body","Kerbin",
     "reference_mass_t",69.5,"minimum_mass_t",68.72565,"maximum_mass_t",70.04567,
     "roll_coefficient",0.107,"lift_speed_mps",133,"rotation_response",3.6,
-    // V1 display roll fit: log-linear altitude regression of mass-normalized
-    // 20-100 m/s launches 369 (KSC), 373 (Desert), 374/375 (Nye).
-    // 2% roll reserve covers the fitted runs; 376 is a held-out repeat.
-    // Separate from the conservative takeoff/liftoff envelope above.
-    "v1_roll_fit_coefficient",0.0977610258,"v1_roll_reference_altitude_m",72.68,
-    "v1_roll_altitude_exponent",0.000112892613,"v1_roll_margin_fraction",0.02,
+    // Shared log-quadratic altitude / power-law mass roll fit. Fit flights
+    // 369/373/374/375/433/434; check flights 376/380/381/435 independently.
+    // The last two failed heavy Harvester departures inform ground roll only.
+    // Keep the original low-field floor and a separate 2% acceleration reserve.
+    "v1_roll_fit_coefficient",0.09770677642386852,"v1_roll_reference_altitude_m",72.68,
+    "v1_roll_altitude_exponent",0.00012206929617381205,"v1_roll_margin_fraction",0.02,
+    "roll_altitude_quadratic",-0.00000001379891726,"roll_mass_exponent",0.9816286771949775,
+    "roll_fit_minimum_altitude_m",72,"roll_fit_maximum_altitude_m",3956,
+    "roll_fit_minimum_mass_t",38.21,"roll_fit_maximum_mass_t",72.30,
+    "roll_fit_minimum_speed_mps",20,"roll_fit_maximum_speed_mps",110.75,
+    "roll_fit_evidence","takeoff_global_20261024",
     // Flight 380 roll fit; checked against 381. Only the tested direction.
     // Correct local performance without treating altitude as its sole cause.
     "v1_roll_runway_factors",lex("Area-15/31",0.8437635112),

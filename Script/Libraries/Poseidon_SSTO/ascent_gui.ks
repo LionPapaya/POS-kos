@@ -106,21 +106,13 @@ function ascent_display_v1_prediction {
         "reason","runway_unavailable").
     if remaining_m < 0 or current_speed_mps < 0 or mass_t <= 0 or vr_surface_mps <= 0 { return result. }
     local mass_scale is mass_t/model["reference_mass_t"].
-    // Three-field acceleration fit with a separate roll reserve. The
-    // conservative liftoff model does not define the displayed V1 curve.
-    // Do not credit improved performance below KSC.
-    local altitude_roll_k is model["v1_roll_fit_coefficient"] *
-        2.718281828459045^(model["v1_roll_altitude_exponent"] *
-        max(0,field_altitude_m-model["v1_roll_reference_altitude_m"])).
-    // Apply a measured runway correction only where evidence exists. The
-    // 2% roll reserve and the historical stopping envelope remain separate.
-    local runway_factor is 1.
-    if model["v1_roll_runway_factors"]:haskey(runway_key) {
-        set runway_factor to model["v1_roll_runway_factors"][runway_key].
-        set result["roll_model"] to "runway_fit_v3".
-    }
-    set result["runway_factor"] to runway_factor.
-    local roll_k is altitude_roll_k*runway_factor*(1+model["v1_roll_margin_fraction"])*mass_scale.
+    // Use the same field/altitude ground-roll evidence as runway preflight,
+    // while preserving the separate historical stopping envelope.
+    local roll_fit is takeoff_roll_calibration(mass_t,field_altitude_m,runway_key,
+        vr_surface_mps,"acceleration",model).
+    set result["roll_model"] to roll_fit["model"].
+    set result["runway_factor"] to roll_fit["runway_factor"].
+    local roll_k is roll_fit["coefficient"]*roll_fit["mass_scale"].
     local stop_k is model["stop_reference_slope"]*max(1,mass_scale).
     local predicted_speed is sqrt(max(0,(remaining_m-model["stop_reference_margin_m"]+
         roll_k*current_speed_mps^2)/(roll_k+stop_k))).

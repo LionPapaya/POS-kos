@@ -1237,6 +1237,8 @@ function flight_log_takeoff_prediction {
         "|reason="+estimate["reason"]+"|model_valid="+estimate["model_valid"]+
         "|sufficient="+estimate["sufficient"]+"|mass_t="+estimate["mass_t"]+
         "|nominal_propulsion_assumed="+estimate["nominal_propulsion_assumed"]+
+        "|roll_coefficient="+estimate["roll_coefficient"]+"|roll_model="+estimate["roll_model"]+
+        "|roll_within_fit_bounds="+estimate["roll_within_fit_bounds"]+"|roll_evidence="+estimate["roll_evidence"]+
         "|rotate_mps="+AVES["Speed"]["Rotate"]+"|liftoff_mps="+estimate["liftoff_speed_mps"]+
         "|rotation_m="+estimate["rotation_distance_m"]+"|liftoff_m="+estimate["liftoff_distance_m"]+
         "|climb_m="+estimate["climb_distance_m"]+"|screen_height_m="+estimate["screen_height_m"]+

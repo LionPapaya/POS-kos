@@ -184,6 +184,21 @@ The initial settings require KSP/FAR validation. `takeoff_spool_state` events
 record readiness transitions and per-engine thrust/health at low logging;
 medium adds one-second samples and high adds samples every 0.2 seconds.
 
+Runway preflight and the displayed V1 estimate share an empirical ground-roll
+model fitted across KSC, Nye Island, Desert, Area-15, and Harvester flights. Its
+altitude curve and mass scaling cover recorded rolls from about 72 to 3,956 m
+and 38.3 to 72.3 tonnes, with separate flights held out for checking. The new
+altitude and mass terms apply to every runway; no Harvester exception is used.
+The previously measured Area-15 runway correction remains in place. Above the
+fitted altitude range the estimate continues with a nonnegative endpoint slope
+and is labelled outside the fit bounds. Preflight retains the original
+conservative low-field floor, and the stopping model remains separate.
+`takeoff_prediction` events record the roll coefficient, model, evidence version,
+and whether the inputs lie inside the fitted bounds. Those bounds describe the
+ground-roll data, not a validated lift, climb, or obstacle-clearance envelope.
+The two Harvester antenna strikes contribute only their undamaged ground rolls;
+the successful light departure does not establish orbit capability.
+
 The ascent manager starts with a **Takeoff** surface-speed bar and V1/VR ticks.
 It remains visible through rotation and changes to the altitude/airspeed chart
 only after the rotate phase ends. The V1 marker estimates the accelerate-stop
