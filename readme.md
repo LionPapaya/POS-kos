@@ -167,13 +167,15 @@ Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altit
 
 During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
 
-Before the takeoff roll, POS holds the brakes while each RAPIER reaches at least
-95% of its locally available thrust in air-breathing mode. Actual and available
-thrust must stay within 2% of their values at the start of a one-second stable
-period, with full throttle, unrestricted engine thrust limiters, and no shutdown
-or flameout. This replaces the fixed 300 kN brake-release threshold, which could
-never be reached at elevated fields such as Harvester. The rendezvous launch
-window also passes through this readiness check before releasing the brakes.
+Before the takeoff roll, POS holds the brakes until each RAPIER reaches at least
+90% of its locally available thrust in air-breathing mode, with full throttle,
+unrestricted engine thrust limiters, and no shutdown or flameout. The brakes
+release on the first qualifying check; there is no extra stability wait, and
+thrust can keep climbing during the roll. Readiness reads the cooked throttle
+lock used by DAP, since the raw control channel can remain zero while the lock
+commands full power. This replaces the fixed 300 kN brake-release threshold,
+which could never be reached at elevated fields such as Harvester. The
+rendezvous launch window passes through the same readiness check.
 After 30 seconds without readiness, POS holds the brakes, commands idle, and
 ends the launch attempt with a reason. Settings live in `Takeoff/Spool` in the
 craft configuration. Engine readiness does not establish sufficient runway or

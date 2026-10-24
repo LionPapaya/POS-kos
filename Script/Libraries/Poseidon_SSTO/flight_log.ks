@@ -1021,11 +1021,10 @@ function flight_log_takeoff_spool_observe {
     if not changed and not sample_due { return. }
     local detail is "status="+spool_state["status"]+"|reason="+spool_state["reason"]+
         "|blocked_engine="+spool_state["blocked_engine"]+"|elapsed_s="+spool_state["elapsed"]+
-        "|stable_s="+spool_state["stable_elapsed"]+"|throttle_actual="+spool_state["throttle_actual"]+
+        "|throttle_actual="+spool_state["throttle_actual"]+
+        "|throttle_source=cooked_lock"+
         "|expected_count="+spool_state["expected_ids"]:length+
         "|ready_fraction="+spool_state["config"]["ready_fraction"]+
-        "|required_stable_s="+spool_state["config"]["stable_seconds"]+
-        "|stability_fraction="+spool_state["config"]["stability_fraction"]+
         "|timeout_s="+spool_state["config"]["timeout_seconds"].
     for engine_id in spool_state["samples"]:keys {
         local sample is spool_state["samples"][engine_id].

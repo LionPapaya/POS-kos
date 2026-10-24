@@ -200,8 +200,10 @@ until running = false{
         }   
         if t0 = -1 {
             brakes on.
+            // THROTTLE evaluates the cooked lock used by DAP. The raw control
+            // channel can remain zero while that lock commands full power.
             set takeoff_spool to takeoff_spool_update(takeoff_spool,takeoff_spool_samples(),
-                time:seconds,ship:control:mainthrottle).
+                time:seconds,throttle).
             flight_log_takeoff_spool_observe(takeoff_spool,takeoff_spool_log).
             set Lastest_status to "Engine spool: "+takeoff_spool["reason"]+" "+takeoff_spool["blocked_engine"].
             if takeoff_spool["status"] = "ready" {
