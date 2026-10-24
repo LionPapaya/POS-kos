@@ -3,7 +3,6 @@
 // Guidance executes directly in flight steps; libraries hold reusable services.
 set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
-RUNONCEPATH("0:/Libraries/Poseidon_SSTO/takeoff_spool.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/contingency.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/recovery_orbit.ks").
