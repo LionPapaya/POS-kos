@@ -1120,6 +1120,9 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "full_assist_energy_deficit",600,"maximum_throttle",0.70,
         "throttle_speed",120,"speed_assist_gain",0.04
     ),
+    // Master switch for all automatic go-arounds, including landing commit
+    // rejection and committed preflare/flare escape. False continues landing;
+    // independent envelope/terrain protection remains active.
     "GoAround",lex(
         "enabled",true,"decision_distance",3500,"minimum_altitude",15,
         // A low final with unarrested sink needs power before the landing gate.

@@ -883,7 +883,9 @@ until running = false{
             // LandingGate has already been stable for its configured time.
             // Make one final LOC/GS/approach check here, without another timer.
             local landing_commit is terminal_route_landing_commit_check(terminal_route).
-            if landing_commit["stable"] {
+            // With go-arounds disabled, retain the landing handoff even if
+            // the last commit check would normally reject this approach.
+            if landing_commit["stable"] or not terminal_route_go_around_allowed(terminal_route,"landing_commit_unstable") {
                 if defined abort_state and abort_state:haskey("active") and abort_state["active"] { abort_set_fuel_dump(false). }
                 abort_set_fuel_dump(false).
                 set landing_committed_once to true.
@@ -963,25 +965,27 @@ until running = false{
             } else { set landing_preflare_escape_since to -1. }
             if landing_preflare_escape_since >= 0 and time:seconds-landing_preflare_escape_since >=
                AVES["TerminalRoute"]["PreflareCommit"]["escape_persistence"] {
-                set landing_preflare_active to false.
-                set terminal_route_debug["landing_preflare_active"] to false.
-                set terminal_route_debug["landing_pullup_active"] to false.
                 local landing_escape_reason is "committed_preflare_unstable".
                 if landing_flare_started or alt_ovr_runway <= landing_config["flare_start_altitude"] {
                     set landing_escape_reason to "landing_flare_unstable".
                 }
-                set terminal_route["go_around_reason"] to landing_escape_reason.
-                set terminal_route["go_around_count"] to terminal_route["go_around_count"]+1.
-                flight_log_event("terminal_go_around","reason="+landing_escape_reason+"|altitude="+round(alt_ovr_runway,1)+
-                    "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(preflare_command["profile_error"],1)+
-                    "|exit_margin="+round(preflare_command["exit_margin"],1)+
-                    "|escape_reason="+preflare_command["escape_reason"]+"|pullup_margin="+round(preflare_command["pullup_margin"],1)+
-                    "|remaining_response_delay="+round(preflare_command["response_delay"],2)).
-                terminal_route_change_phase(terminal_route,"go_around").
-                set terminal_route["recovery_throttle_floor"] to AVES["TerminalRoute"]["GoAround"]["recovery_throttle"].
-                set terminal_route["propulsion_mode"] to "air".
-                set step to "TEAM".
-                terminal_route_fly(terminal_route).
+                if terminal_route_go_around_allowed(terminal_route,landing_escape_reason) {
+                    set landing_preflare_active to false.
+                    set terminal_route_debug["landing_preflare_active"] to false.
+                    set terminal_route_debug["landing_pullup_active"] to false.
+                    set terminal_route["go_around_reason"] to landing_escape_reason.
+                    set terminal_route["go_around_count"] to terminal_route["go_around_count"]+1.
+                    flight_log_event("terminal_go_around","reason="+landing_escape_reason+"|altitude="+round(alt_ovr_runway,1)+
+                        "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(preflare_command["profile_error"],1)+
+                        "|exit_margin="+round(preflare_command["exit_margin"],1)+
+                        "|escape_reason="+preflare_command["escape_reason"]+"|pullup_margin="+round(preflare_command["pullup_margin"],1)+
+                        "|remaining_response_delay="+round(preflare_command["response_delay"],2)).
+                    terminal_route_change_phase(terminal_route,"go_around").
+                    set terminal_route["recovery_throttle_floor"] to AVES["TerminalRoute"]["GoAround"]["recovery_throttle"].
+                    set terminal_route["propulsion_mode"] to "air".
+                    set step to "TEAM".
+                    terminal_route_fly(terminal_route).
+                }
             }
         }
         // An escape has already transferred control back to TEAM; do not
