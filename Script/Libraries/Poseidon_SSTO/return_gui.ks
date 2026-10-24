@@ -394,7 +394,7 @@ function return_render_rollout {
 function update_reentry_gui {
     parameter inputs is lex("mode",console_mode,"alt",ship:altitude,"spd",ship:airspeed,
         "range_remaining",0,"aoa",calc_aoa(),"roll",roll_for(),"mach",ADDONS:FAR:mach,"l/d",0).
-    if not defined return_display_state { return. }
+    if not (defined return_display_state) { return. }
     local display_mode is inputs["mode"].
     if defined step and (step = "TEAM" or step = "landing") and defined terminal_route {
         set display_mode to "L/SIT 1".
