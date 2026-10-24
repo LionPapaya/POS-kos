@@ -713,17 +713,18 @@ Poseidon_SSTO:add("MaxYaw",40).
 Poseidon_SSTO:add("Rotation_rate",lex("high",10,"low",18)).
 Poseidon_SSTO:add("Pitch_rate",lex("high",4,"low",9)).
 // Fifteen-degree outer approach, gradual pull-up from 3.6 km to 1 km,
-// then a three-degree glide aimed 875 m beyond the threshold. Choose the
+// then a three-degree reference aimed at the runway start. The existing
+// flare carries touchdown just beyond that point. Choose the
 // steep-line intercept so the Hermite join has constant positive curvature:
 // height loss = span * mean(endpoint gradients). At 130 m/s this calls for
 // about 1.40 m/s^2 upward acceleration over 20 s, before height-based flare.
 Poseidon_SSTO:add("Glideslope",lex(
     "angle1",0.268,
     "angle2",0.0524077793,
-    "target1",3600-((1000+875)*0.0524077793+2600*(0.268+0.0524077793)/2)/0.268,
+    "target1",3600-(1000*0.0524077793+2600*(0.268+0.0524077793)/2)/0.268,
     "preflare_start",3600,
     "preflare_end",1000,
-    "shallow_aimpoint",875
+    "shallow_aimpoint",0
 )).
 // Final flare controller.  A more negative touchdown_vertical_speed and a
 // lower flare_start_altitude make a firmer, shorter landing; raising either
