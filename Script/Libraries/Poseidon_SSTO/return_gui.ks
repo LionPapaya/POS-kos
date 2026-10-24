@@ -378,7 +378,13 @@ function update_reentry_gui {
     if defined step and (step = "TEAM" or step = "landing") and defined terminal_route {
         set display_mode to "L/SIT 1".
         if terminal_route["phase"] = "base" { set display_mode to "L/SIT 2". }
-        if terminal_route["phase"] = "final" or step = "landing" { set display_mode to "FINAL". }
+        if terminal_route["phase"] = "final" or step = "landing" {
+            // A straight-in arrival can enter final well outside the pattern.
+            // Retain TEAM until within the live base waypoint's threshold range.
+            local base_range is calcdistance_m(runway_start,terminal_route["base_fix"]).
+            local threshold_range is calcdistance_m(runway_start,ship:geoposition).
+            if threshold_range <= base_range { set display_mode to "FINAL". }
+        }
         if ship:status = "LANDED" or (defined landing_ground_contact_seen and landing_ground_contact_seen) {
             set display_mode to "ROLLOUT".
         }
