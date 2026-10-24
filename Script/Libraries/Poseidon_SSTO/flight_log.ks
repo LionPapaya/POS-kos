@@ -946,7 +946,7 @@ function flight_log_write_sample {
 // Only GPWS transitions on live final pay for fresh alignment diagnostics.
 // This observer never changes capture or recovery decisions.
 function flight_log_gpws_final_detail {
-    if not defined terminal_route { return "". }
+    if not (defined terminal_route) { return "". }
     if terminal_route["phase"] <> "final" { return "". }
     local final_geometry is terminal_route_geometry().
     return "|final_distance="+round(final_geometry["distance"],1)+
