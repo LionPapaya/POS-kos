@@ -935,6 +935,19 @@ function flight_log_write_sample {
 // at low it only compares the four state strings; medium writes once a second;
 // high writes every tick.  Expensive ship/DAP values are read only by
 // flight_log_write_sample after a sample is actually due.
+// Only GPWS transitions on live final pay for fresh alignment diagnostics.
+// This observer never changes capture or recovery decisions.
+function flight_log_gpws_final_detail {
+    if not defined terminal_route { return "". }
+    if terminal_route["phase"] <> "final" { return "". }
+    local final_geometry is terminal_route_geometry().
+    return "|final_distance="+round(final_geometry["distance"],1)+
+        "|cross_track="+round(final_geometry["cross_track"],1)+
+        "|cross_track_limit="+round(envelope_terrain_final_cross_track_limit(final_geometry["distance"],
+            AVES["Envelope"]["Terrain"],AVES["TerminalRoute"]),1)+
+        "|heading_error="+round(final_geometry["heading_error"],2).
+}
+
 function flight_log_tick {
     parameter program_name, current_step, current_substep.
     if POS_LOG_LEVEL = 0 { return. }
@@ -970,7 +983,7 @@ function flight_log_tick {
         set POS_LOG_LAST_GPWS_REASON to dap["envelope"]["terrain_inhibit_reason"].
         flight_log_event("gpws_state","value=" + dap["envelope"]["terrain_state"] + "|reason=" + dap["envelope"]["terrain_inhibit_reason"] + "|clearance=" + round(dap["envelope"]["terrain_worst_clearance"],1) + "|required=" + round(dap["envelope"]["terrain_required_clearance"],1)+
             "|vertical_speed="+round(ship:verticalspeed,2)+"|airspeed="+round(ship:airspeed,2)+
-            "|final_sink_limit="+envelope_terrain_final_sink_limit(AVES["Envelope"]["Terrain"],AVES["TerminalRoute"])).
+            "|final_sink_limit="+envelope_terrain_final_sink_limit(AVES["Envelope"]["Terrain"],AVES["TerminalRoute"])+flight_log_gpws_final_detail()).
     }
     if dap["envelope"]:haskey("terrain_navigation") { flight_log_terrain_observe(). }
     if POS_LOG_LEVEL < 2 { return. }

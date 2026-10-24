@@ -203,6 +203,15 @@ function envelope_terrain_final_sink_limit {
         config_TR["final_profile_min_vertical_speed"]-config_TR["GoAround"]["vertical_tracking_error"]).
 }
 
+function envelope_terrain_final_cross_track_limit {
+    parameter distance_to_threshold, terrain_config, config_TR.
+    local inner_distance is config_TR["PreflareCommit"]["distance"].
+    local blend is max(0,min(1,(distance_to_threshold-inner_distance)/
+        max(1,terrain_config["final_inhibit_alignment_distance"]-inner_distance))).
+    local inner_limit is config_TR["LandingCommit"]["maximum_cross_track"].
+    return inner_limit+blend*max(0,terrain_config["final_inhibit_outer_cross_track"]-inner_limit).
+}
+
 function envelope_terrain_landing_inhibit_reason {
     parameter envelope.
     if defined step and step = "landing" and envelope["terrain_final_captured"] {
@@ -218,7 +227,10 @@ function envelope_terrain_landing_inhibit_reason {
         if planned_preflare_pullup {
             set minimum_glideslope_error to terrain_config["final_inhibit_preflare_min_glideslope_error"].
         }
-        local final_capture is terminal_route_final_approach_capture(terminal_route,envelope_terrain_final_sink_limit(terrain_config,AVES["TerminalRoute"]),terrain_config["final_inhibit_max_vertical_speed"],minimum_glideslope_error,0,false).
+        local final_geometry is terminal_route_geometry().
+        local capture_cross_track is envelope_terrain_final_cross_track_limit(final_geometry["distance"],
+            terrain_config,AVES["TerminalRoute"]).
+        local final_capture is terminal_route_final_approach_capture(terminal_route,envelope_terrain_final_sink_limit(terrain_config,AVES["TerminalRoute"]),terrain_config["final_inhibit_max_vertical_speed"],minimum_glideslope_error,0,false,capture_cross_track).
         if final_capture["captured"] {
             if planned_preflare_pullup { return "terminal_preflare_pullup". }
             return "terminal_final_captured".

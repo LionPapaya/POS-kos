@@ -734,18 +734,22 @@ function terminal_fast_turn_command {
 }
 
 // Profile error alone is expected during preflare. Require both substantial
-// sink and failure to track the requested vertical speed before intervening.
+// sink and failure to track the requested vertical speed for profile recovery.
+// An exhausted arrest margin is independent: the requested descent itself
+// can be unsafe even while the aircraft tracks it (flight 436).
 function terminal_final_descent_recovery {
     parameter phase, profile_error, wanted_vs, measured_vs, config_TR,
-        sink_arrest_margin is 999999, clearance is 999999, contact is false.
+        sink_arrest_margin is 999999, clearance is 999999, contact is false, safe_preflare_commit is false.
     local config_GA is config_TR["GoAround"].
     local clearance_valid is clearance = 999999 or clearance > config_GA["minimum_altitude"].
     local profile_recovery is profile_error >= config_GA["vertical_profile_error"].
-    local arrest_recovery is sink_arrest_margin <= config_GA["vertical_recovery_arrest_margin"] and
+    local arrest_recovery is not safe_preflare_commit and
+        sink_arrest_margin <= config_GA["vertical_recovery_arrest_margin"] and
         (clearance = 999999 or clearance > config_GA["minimum_altitude"]).
-    return phase = "final" and not contact and clearance_valid and (profile_recovery or arrest_recovery) and
-        measured_vs < config_GA["vertical_sink_limit"] and
-        wanted_vs - measured_vs >= config_GA["vertical_tracking_error"].
+    local tracking_recovery is profile_recovery and
+        wanted_vs-measured_vs >= config_GA["vertical_tracking_error"].
+    return phase = "final" and not contact and clearance_valid and
+        measured_vs < config_GA["vertical_sink_limit"] and (tracking_recovery or arrest_recovery).
 }
 
 function terminal_vertical_go_around_decision {
@@ -948,10 +952,11 @@ function terminal_route_change_phase {
 // "final" route state after the aircraft has already left the localizer or
 // glideslope.
 function terminal_route_final_approach_capture {
-    parameter route, minimum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["minimum_vertical_speed"], maximum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["maximum_vertical_speed"], minimum_glideslope_error is -AVES["TerminalRoute"]["LandingCommit"]["maximum_glideslope_error"], maximum_glideslope_error is AVES["TerminalRoute"]["LandingCommit"]["maximum_glideslope_error"], use_upper_glideslope_limit is true.
+    parameter route, minimum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["minimum_vertical_speed"], maximum_vertical_speed is AVES["TerminalRoute"]["LandingCommit"]["maximum_vertical_speed"], minimum_glideslope_error is -AVES["TerminalRoute"]["LandingCommit"]["maximum_glideslope_error"], maximum_glideslope_error is AVES["TerminalRoute"]["LandingCommit"]["maximum_glideslope_error"], use_upper_glideslope_limit is true, maximum_cross_track is -1.
     local config_TR is AVES["TerminalRoute"].
     local commit_gate is config_TR["LandingCommit"].
     local speed_scale is terminal_mass_speed_scale(ship:mass,config_TR).
+    if maximum_cross_track < 0 { set maximum_cross_track to commit_gate["maximum_cross_track"]. }
     local geometry is terminal_route_geometry().
     local glideslope_altitude is calculate_glideslope_alt(geometry["distance"]).
     local glideslope_error is ship:altitude - glideslope_altitude.
@@ -960,7 +965,7 @@ function terminal_route_final_approach_capture {
         set glideslope_captured to glideslope_captured and glideslope_error <= maximum_glideslope_error.
     }
     local captured is route["phase"] = "final" and
-        abs(geometry["cross_track"]) <= commit_gate["maximum_cross_track"] and
+        abs(geometry["cross_track"]) <= maximum_cross_track and
         abs(geometry["heading_error"]) <= commit_gate["maximum_heading_error"] and
         glideslope_captured and
         ship:verticalspeed >= minimum_vertical_speed and
@@ -1918,9 +1923,17 @@ function terminal_route_update {
             "|mass="+round(ship:mass,2)+"|airspeed="+round(ship:airspeed,1)).
     }
     set route["preflare_anticipation_active"] to preflare_anticipation_active.
+    // A fresh, accepted preflare handoff has its own demonstrated shallow-
+    // sink exit margin. Do not reject that valid transfer using the larger
+    // full-stop reserve; unsafe/uncommitted finals retain independent escape.
+    local safe_preflare_commit is false.
+    if preview_enabled and direct_profile["region"] = "preflare" {
+        local preflare_capture is terminal_route_preflare_commit_check(route).
+        set safe_preflare_commit to preflare_capture["stable"].
+    }
     local descent_recovery_active is terminal_final_descent_recovery(route["phase"],
         direct_profile["altitude"]-ship:altitude,recovery_wanted_vs,ship:verticalspeed,config_TR,
-        sink_arrest_margin,surface_clearance,contact).
+        sink_arrest_margin,surface_clearance,contact,safe_preflare_commit).
     if descent_recovery_active {
         if route["descent_recovery_since"] < 0 { set route["descent_recovery_since"] to time:seconds. }
         set route["descent_recovery_elapsed"] to time:seconds-route["descent_recovery_since"].
@@ -1938,7 +1951,9 @@ function terminal_route_update {
             "|clearance="+round(surface_clearance,1)+
             "|arrest_height="+round(sink_arrest["absolute_arrest_height"],1)+
             "|arrest_margin="+round(sink_arrest_margin,1)+"|response_delay="+round(sink_arrest["response_delay"],2)+
-            "|vertical_deceleration="+round(sink_arrest["vertical_deceleration"],2)).
+            "|vertical_deceleration="+round(sink_arrest["vertical_deceleration"],2)+
+            "|arrest_trigger="+(sink_arrest_margin <= config_TR["GoAround"]["vertical_recovery_arrest_margin"])+
+            "|tracking_error="+round(recovery_wanted_vs-ship:verticalspeed,2)+"|safe_preflare_commit="+safe_preflare_commit).
     }
     set route["descent_recovery_active"] to descent_recovery_active.
 
@@ -2309,6 +2324,12 @@ function terminal_route_fly {
         set profile_altitude_error to profile_command["profile_error"].
         set active_profile_region to profile_command["region"].
         set desired_vertical_speed to profile_command["desired_vs"].
+        if route["descent_recovery_active"] {
+            // Power alone cannot recover sink while pitch still requests the
+            // unsafe steep descent. Command the shallow exit speed now.
+            set desired_vertical_speed to max(desired_vertical_speed,
+                -max(runway_closure_speed,config_TR["time_to_go_min_speed"])*AVES["glideslope"]["angle2"]).
+        }
         set route["profile_altitude"] to profile_command["altitude"].
         set route["profile_gradient"] to profile_command["gradient"].
         set route["preflare_preview_seconds"] to profile_command["lookahead_seconds"].

@@ -878,6 +878,9 @@ Poseidon_SSTO:add("Envelope",lex(
         // band without changing the touchdown handoff criteria.
         "final_inhibit_min_vertical_speed",-45,
         "final_inhibit_max_vertical_speed",-5,
+        // Permit normal localizer convergence farther out; retain the tight
+        // landing-commit corridor from preflare inward.
+        "final_inhibit_outer_cross_track",300,"final_inhibit_alignment_distance",6000,
         // Being below glideslope is a terrain hazard; being above it is not.
         // GPWS therefore has only this lower bound, with no upper bound.  The
         // planned preflare intentionally flies below the geometric profile;
