@@ -3,6 +3,7 @@
 // Guidance executes directly in flight steps; libraries hold reusable services.
 set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/takeoff_spool.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/contingency.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/recovery_orbit.ks").
@@ -141,6 +142,8 @@ if not departure_route["valid"] {
     }
 }
 local v1_announced is false.
+local takeoff_spool is takeoff_spool_init(takeoff_spool_samples():keys,AVES["Takeoff"]["Spool"]).
+local takeoff_spool_log is lex("status","","reason","","blocked_engine","","next_sample",0).
 local abort_info is lex().
 set dap_mode to "auto".
 set dap["str_mode"] to "aerostr".
@@ -149,6 +152,10 @@ print("3").
 global recovery_nominal_cutoff is false.
 if running {
     recovery_register_engines().
+    // reset_sys only selects atmospheric engine configuration below 1 km.
+    // Elevated runways must start in the same intended air-breathing mode.
+    nervsoff().
+    togglerapiermode("AIR").
     rapierson().
 }
 until running = false{
@@ -178,7 +185,6 @@ until running = false{
         set Lastest_status to "Waiting for rendezvous launch window ("+round(launch_phase_error,1)+" deg)".
         flight_log_capture_rendezvous(ascent_rendezvous_target,"launch_window",0,false).
         if launch_phase_error <= ascent["rendezvous_window_angle"] {
-            brakes off.
             set step to "launch".
             set Lastest_status to "Rendezvous launch window open".
             flight_log_event("ascent_rendezvous_window","phase_error_deg="+round(launch_phase_error,2)+"|nominal_insertion_ut="+round(nominal_insertion_time,1)).
@@ -193,9 +199,14 @@ until running = false{
             
             set dapthrottle to 1.
         }   
-        if ship:thrust > AVES["StationaryThrottle"]{
-            brakes off.
-            if t0 = -1{
+        if t0 = -1 {
+            brakes on.
+            set takeoff_spool to takeoff_spool_update(takeoff_spool,takeoff_spool_samples(),
+                time:seconds,ship:control:mainthrottle).
+            flight_log_takeoff_spool_observe(takeoff_spool,takeoff_spool_log).
+            set Lastest_status to "Engine spool: "+takeoff_spool["reason"]+" "+takeoff_spool["blocked_engine"].
+            if takeoff_spool["status"] = "ready" {
+                brakes off.
                 set t0 to time:seconds.
                 set takeoff_start_position to ship:geoposition.
                 set takeoff_evidence["base_altitude_m"] to ship:altitude.
@@ -203,12 +214,19 @@ until running = false{
                 set ascent_display_state["takeoff_estimate"] to takeoff_estimate.
                 set ascent_display_state["takeoff_start_position"] to takeoff_start_position.
                 flight_log_takeoff_prediction(takeoff_estimate,"brake_release").
+                set Lastest_status to "Takeoff roll".
+            } else if takeoff_spool["status"] = "timeout" {
+                set dapthrottle to 0.
+                brakes on.
+                set Lastest_status to "Takeoff held: engine spool timeout ("+takeoff_spool["reason"]+
+                    " "+takeoff_spool["blocked_engine"]+")".
+                print(Lastest_status).
+                set step to "end".
             }
         }
 
-        // Once the brakes have released, keep monitoring engine health even
-        // if an engine loss pulls total thrust back below StationaryThrottle.
-        // The threshold is an arming condition, not an abort-monitor gate.
+        // Readiness is latched at brake release. Engine losses during the roll
+        // always reach the existing abort monitor, independent of total thrust.
         if t0 <> -1 {
             // V1 is the last point at which the empirical runway-stop model
             // permits a rejected takeoff.  Beyond it, an engine failure uses
@@ -1579,6 +1597,8 @@ until running = false{
             // The contingency executive already secured or released controls.
             // reset_sys would re-enable engines/gear and overwrite pilot throttle.
         } else { reset_sys(). }
+        // Preserve the failed-spool ground hold after generic system cleanup.
+        if takeoff_spool["status"] = "timeout" { brakes on. }
         set warp to 0.
         update_readouts().
         update_assent_gui().

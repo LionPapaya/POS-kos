@@ -1009,6 +1009,47 @@ function flight_log_maneuver_observe {
     flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
 }
 
+// Passive brake-release evidence. Low records state/reason transitions;
+// medium samples at 1 Hz, high at 5 Hz. Never call from a predictor.
+function flight_log_takeoff_spool_observe {
+    parameter spool_state, evidence.
+    if POS_LOG_LEVEL = 0 { return. }
+    local changed is spool_state["status"] <> evidence["status"] or
+        spool_state["reason"] <> evidence["reason"] or
+        spool_state["blocked_engine"] <> evidence["blocked_engine"].
+    local sample_due is POS_LOG_LEVEL >= 2 and time:seconds >= evidence["next_sample"].
+    if not changed and not sample_due { return. }
+    local detail is "status="+spool_state["status"]+"|reason="+spool_state["reason"]+
+        "|blocked_engine="+spool_state["blocked_engine"]+"|elapsed_s="+spool_state["elapsed"]+
+        "|stable_s="+spool_state["stable_elapsed"]+"|throttle_actual="+spool_state["throttle_actual"]+
+        "|expected_count="+spool_state["expected_ids"]:length+
+        "|ready_fraction="+spool_state["config"]["ready_fraction"]+
+        "|required_stable_s="+spool_state["config"]["stable_seconds"]+
+        "|stability_fraction="+spool_state["config"]["stability_fraction"]+
+        "|timeout_s="+spool_state["config"]["timeout_seconds"].
+    for engine_id in spool_state["samples"]:keys {
+        local sample is spool_state["samples"][engine_id].
+        set detail to detail+"|"+engine_id+"_thrust_kn="+sample["thrust_kn"]+
+            "|"+engine_id+"_available_kn="+sample["available_kn"]+
+            "|"+engine_id+"_ignition="+sample["ignition"]+
+            "|"+engine_id+"_flameout="+sample["flameout"]+
+            "|"+engine_id+"_mode="+sample["mode"]+
+            "|"+engine_id+"_limit="+sample["thrust_limit"].
+    }
+    if changed {
+        flight_log_event("takeoff_spool_state",detail).
+        set evidence["status"] to spool_state["status"].
+        set evidence["reason"] to spool_state["reason"].
+        set evidence["blocked_engine"] to spool_state["blocked_engine"].
+    }
+    if sample_due {
+        flight_log_event("takeoff_spool_sample",detail).
+        local sample_period is 0.2.
+        if POS_LOG_LEVEL = 2 { set sample_period to 1. }
+        set evidence["next_sample"] to time:seconds+sample_period.
+    }
+}
+
 // Passive live-ascent observer. Low records dogleg/direct and branch changes;
 // medium samples at 1 Hz, high at 5 Hz. Never call from a predictor.
 function flight_log_inclination_observe {

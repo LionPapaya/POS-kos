@@ -638,6 +638,9 @@ Poseidon_SSTO:add("Ascent",lex(
 // Poseidon takeoff model coefficients and evidence limits. The model is
 // advisory outside these measured conditions; update from logged flights.
 Poseidon_SSTO:add("Takeoff",lex(
+    // Local engine readiness, independent of the runway performance estimate.
+    "Spool",lex("ready_fraction",0.95,"stable_seconds",1,
+        "stability_fraction",0.02,"timeout_seconds",30,"minimum_available_kn",1),
     // true: run preflight checks but attempt takeoff despite a refusal.
     // Engine-failure aborts and in-flight terrain protection remain active.
     "override_preflight_refusals",false,
@@ -745,7 +748,6 @@ Poseidon_SSTO:add("Landing",lex(
     "maximum_throttle",0.70,
     "wheel_brake_altitude",10
 )).
-Poseidon_SSTO:add("StationaryThrottle",300).
 Poseidon_SSTO:add("HacDistance",10000).
 Poseidon_SSTO:add("HacRadius",1500).
 Poseidon_SSTO:add("ERCLSpeed",150).
