@@ -423,7 +423,8 @@ function terminal_route_healthy_rapier_count {
 // command helpers used by terminal_route_fly.
 function terminal_descent_rapier_mode {
     parameter flight_step, route_phase, requested_throttle, atmospheric_descent,
-        clearance, healthy_rapiers, lf_remaining, ox_remaining, lf_floor, ox_floor, config_TR.
+        clearance, healthy_rapiers, lf_remaining, ox_remaining, lf_floor, ox_floor, config_TR,
+        abort_active is false.
     if requested_throttle <= 0.05 { return "idle". }
     // AED/EDR reach this controller after the reentry handoff to TEAM. Keep
     // engine-mode changes inside atmospheric terminal phases; orbital, entry,
@@ -440,8 +441,15 @@ function terminal_descent_rapier_mode {
     local usable_ox is max(0,ox_remaining-ox_floor).
     local usable_lf is max(0,lf_remaining-lf_floor).
     local burnable_lf is min(usable_lf,usable_ox*dump_config["cc_lf_per_ox"]).
-    if burnable_lf < dump_config["cc_min_lf_burn"] or
-       usable_ox < dump_config["cc_min_ox_burn"] { return "air". }
+    local enough_propellant_for_cc is burnable_lf >= dump_config["cc_min_lf_burn"] and
+        usable_ox >= dump_config["cc_min_ox_burn"].
+    if abort_active {
+        // During an abort, spend every remaining unit in closed cycle. The
+        // normal descent threshold and reserve floor otherwise switch early
+        // to airbreathing and strand usable oxidizer.
+        set enough_propellant_for_cc to usable_lf > 0 and usable_ox > 0.
+    }
+    if not enough_propellant_for_cc { return "air". }
     return "closed".
 }
 
@@ -1389,8 +1397,10 @@ function terminal_route_init {
         local dump_config is config_TR["RecoveryFuelDump"].
         set route["dump_lf_floor"] to max(abort_state["lf_reserve"],
             dump_config["minimum_lf"]).
-        set route["dump_ox_floor"] to max(abort_state["ox_reserve"],
-            dump_config["minimum_ox"]).
+        set route["dump_ox_floor"] to 0.
+        if abort_state:haskey("ox_reserve") {
+            set route["dump_ox_floor"] to abort_state["ox_reserve"].
+        }
     }
     set route["dump_lf_paired_floor"] to terminal_route_paired_lf_dump_floor(
         route["dump_lf_floor"],ship:oxidizer,route["dump_ox_floor"],0,config_TR).
@@ -1720,7 +1730,10 @@ function terminal_route_update {
     if defined abort_state and abort_state:haskey("active") and abort_state["active"] {
         set abort_state to abort_refresh_state(abort_state).
         set route["dump_lf_floor"] to max(abort_state["lf_reserve"],dump_config["minimum_lf"]).
-        set route["dump_ox_floor"] to max(abort_state["ox_reserve"],dump_config["minimum_ox"]).
+        set route["dump_ox_floor"] to 0.
+        if abort_state:haskey("ox_reserve") {
+            set route["dump_ox_floor"] to abort_state["ox_reserve"].
+        }
     }
     local atmospheric_descent is false.
     if defined step and step = "TEAM" and ship:body:atm:exists and
@@ -2108,13 +2121,20 @@ function terminal_route_update {
     if atmospheric_descent and requested_throttle > 0.05 {
         set propulsion_mode to terminal_descent_rapier_mode(step,route["phase"],requested_throttle,
             atmospheric_descent,surface_clearance,healthy_rapiers,ship:liquidfuel,
-            ship:oxidizer,route["dump_lf_floor"],route["dump_ox_floor"],config_TR).
+            ship:oxidizer,route["dump_lf_floor"],route["dump_ox_floor"],config_TR,
+            defined abort_state and abort_state:haskey("active") and abort_state["active"]).
     }
     local commanded_propulsion_throttle is requested_throttle.
     if propulsion_mode = "closed" and
        route["phase"] <> "go_around" and not descent_recovery_active {
         set commanded_propulsion_throttle to min(requested_throttle,
             config_TR["RecoveryFuelDump"]["cc_assist_throttle_limit"]).
+    }
+    local abort_mode_label is "none".
+    local abort_ox_reserve is 0.
+    if defined abort_state and abort_state:haskey("active") and abort_state["active"] {
+        if abort_state:haskey("mode") { set abort_mode_label to abort_state["mode"]. }
+        if abort_state:haskey("ox_reserve") { set abort_ox_reserve to abort_state["ox_reserve"]. }
     }
     if propulsion_mode <> route["propulsion_mode"] {
         flight_log_event("terminal_propulsion_mode","from="+route["propulsion_mode"]+
@@ -2125,7 +2145,8 @@ function terminal_route_update {
             "|lf="+round(ship:liquidfuel,1)+"|ox="+round(ship:oxidizer,1)+
             "|lf_floor="+round(route["dump_lf_floor"],1)+
             "|lf_paired_floor="+round(route["dump_lf_paired_floor"],1)+
-            "|ox_floor="+round(route["dump_ox_floor"],1)).
+            "|ox_floor="+round(route["dump_ox_floor"],1)+
+            "|abort_mode="+abort_mode_label+"|abort_ox_reserve="+abort_ox_reserve).
     }
     set route["propulsion_mode"] to propulsion_mode.
     set route["propulsion_throttle"] to commanded_propulsion_throttle.

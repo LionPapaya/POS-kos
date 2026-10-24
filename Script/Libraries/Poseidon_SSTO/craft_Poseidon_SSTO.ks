@@ -530,16 +530,17 @@ function ask_abort_modes {
 function create_abort_state {
     parameter abort_info, origin_step, departure_runway.
     local lf_origin is ship:liquidfuel.
-    local ox_origin is ship:oxidizer.
     local cutoff is false.
     if defined recovery_initial_lf { set lf_origin to recovery_initial_lf. }
-    if defined recovery_initial_ox { set ox_origin to recovery_initial_ox. }
     if defined recovery_nominal_cutoff { set cutoff to recovery_nominal_cutoff. }
     return lex(
         "active",abort_info["abort"],"mode",abort_info["mode"],
         "managed",abort_info["mode"] = "aed" or abort_info["mode"] = "ato" or abort_info["mode"] = "edr",
         "current_ascent_phase",origin_step,"nominal_cutoff",cutoff,
-        "lf_reserve",lf_origin*0.1,"ox_reserve",ox_origin*0.1,
+        // An abort must be able to use all remaining oxidizer in RAPIER
+        // closed cycle. Preserve the LF floor for NERV/landing margins, but
+        // do not strand oxidizer behind a recovery reserve.
+        "lf_reserve",lf_origin*0.1,"ox_reserve",0,
         "orbit_attempted",false,"orbit_abandoned",false,"suppress_orbit",false,"rejected_targets",lex(),"committed",false,
         "submode",abort_info["scenario"]["rapiers_out"] + "RO",
         "phase","initialize","phase_entered",time:seconds,"source_step",origin_step,
