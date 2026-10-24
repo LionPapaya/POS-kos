@@ -1658,11 +1658,19 @@ function flight_log_return_display {
         set state_key to state_key+"|"+snapshot["stop_valid"]+"|"+snapshot["stop_reason"]+
             "|overrun="+(snapshot["stop_valid"] and snapshot["stop_margin"] < 0).
     }
+    if display_mode = "FINAL" and snapshot:haskey("angular_valid") {
+        set state_key to state_key+"|angular_valid="+snapshot["angular_valid"].
+    }
     if state_key <> POS_LOG_RETURN_KEY {
+        local angular_detail is "".
+        if display_mode = "FINAL" and snapshot:haskey("angular_valid") {
+            set angular_detail to "|angular_valid="+snapshot["angular_valid"]+
+                "|gl_angle_deg="+snapshot["gl_angle"]+"|gs_angle_deg="+snapshot["gs_angle"].
+        }
         flight_log_event("return_display_state","mode="+display_mode+
             "|state="+snapshot["guidance_state"]+"|stop_valid="+snapshot["stop_valid"]+
             "|stop_reason="+snapshot["stop_reason"]+"|cross_track="+snapshot["cross_track"]+
-            "|glideslope_error="+snapshot["glideslope_error"]+"|stop_margin="+snapshot["stop_margin"]).
+            "|glideslope_error="+snapshot["glideslope_error"]+"|stop_margin="+snapshot["stop_margin"]+angular_detail).
         set POS_LOG_RETURN_KEY to state_key.
     }
     if POS_LOG_LEVEL < 2 or display_mode <> "ROLLOUT" or time:seconds < POS_LOG_RETURN_NEXT_SAMPLE { return. }

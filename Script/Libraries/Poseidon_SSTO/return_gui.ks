@@ -113,7 +113,8 @@ function create_reentry_gui {
     global return_display_state is lex("next_update",-1,"mode","","track",list(),
         "track_ut",-1,"stop_sample_ut",-1,"stop_sample_speed",0,"stop_valid",false,
         "stop_deceleration",0,"stop_reason","not_on_ground","stop_distance",0,"stop_margin",0,
-        "guidance_state","SETUP","cross_track",0,"glideslope_error",0,"runway_remaining",0).
+        "guidance_state","SETUP","cross_track",0,"glideslope_error",0,"runway_remaining",0,
+        "angular_valid",false,"gl_angle",0,"gs_angle",0).
 }
 
 // Measured deceleration extrapolation only, with no fitted friction coefficient.
@@ -298,18 +299,30 @@ function return_render_team {
     set return_next:text to "NEXT: Final intercept / GL and GS capture".
 }
 
-// Pure position mapping: indicators show AIRCRAFT deviation, not fly-to commands.
+// Angular AIRCRAFT deviation, not fly-to commands. kOS trig uses degrees.
+// GS compares elevation angles to the current profile point; this preserves
+// the steep/preflare/shallow profile rather than assuming a fixed 3deg slope.
 function return_final_needles {
-    parameter cross_track, glideslope_error.
-    return lex("gl_x",320+max(-1,min(1,-cross_track/100))*150,
-        "gs_y",140-max(-1,min(1,glideslope_error/50))*85).
+    parameter cross_track, along_track, horizontal_range, height_above_runway, reference_height.
+    local result is lex("valid",false,"gl_angle",0,"gs_angle",0,"gl_x",320,"gs_y",140).
+    // There is no forward approach reference at or beyond the threshold.
+    if along_track <= 0 or horizontal_range <= 0 { return result. }
+    local gl_angle is arctan2(-cross_track,along_track).
+    local gs_angle is arctan2(height_above_runway,horizontal_range)-
+        arctan2(reference_height,horizontal_range).
+    set result["valid"] to true.
+    set result["gl_angle"] to gl_angle. set result["gs_angle"] to gs_angle.
+    set result["gl_x"] to 320+max(-1,min(1,gl_angle/2.5))*150.
+    set result["gs_y"] to 140-max(-1,min(1,gs_angle/0.7))*85.
+    return result.
 }
 
 function return_render_final {
     parameter inputs, geometry.
     set return_title:text to "FINAL APPROACH".
     set return_state_label:text to "GL / GS".
-    local gs_error is inputs["alt"]-calculate_glideslope_alt(geometry["distance"]).
+    local reference_altitude is calculate_glideslope_alt(geometry["distance"]).
+    local gs_error is inputs["alt"]-reference_altitude.
     set return_display_state["cross_track"] to geometry["cross_track"].
     set return_display_state["glideslope_error"] to gs_error.
     // reentry_lsit_geometry uses outward heading: negative XTK is runway-right.
@@ -318,10 +331,18 @@ function return_render_final {
     set return_detail:text to "GL "+round(abs(geometry["cross_track"]),1)+" m "+lateral_text+
         " / GS "+round(abs(gs_error),1)+" m "+vertical_text.
     set return_chart:style:bg to "Libraries/gui_images/return_final.png".
-    local needles is return_final_needles(geometry["cross_track"],gs_error).
-    local first_top is return_place(return_gl_needle,needles["gl_x"],140,3,150,return_origin,0,1).
-    return_place(return_gs_needle,320,needles["gs_y"],260,3,return_gl_needle,first_top,150).
-    set return_legend:text to "Aircraft deviation / center = on line and slope / GL scale +/-100 m / GS +/-50 m".
+    local needles is return_final_needles(geometry["cross_track"],geometry["along_track"],geometry["distance"],
+        inputs["alt"]-runway_altitude,reference_altitude-runway_altitude).
+    set return_display_state["angular_valid"] to needles["valid"].
+    set return_display_state["gl_angle"] to needles["gl_angle"].
+    set return_display_state["gs_angle"] to needles["gs_angle"].
+    if needles["valid"] {
+        local first_top is return_place(return_gl_needle,needles["gl_x"],140,3,150,return_origin,0,1).
+        return_place(return_gs_needle,320,needles["gs_y"],260,3,return_gl_needle,first_top,150).
+        set return_detail:text to return_detail:text+"\nGL "+round(needles["gl_angle"],2)+" deg / GS "+round(needles["gs_angle"],2)+" deg".
+    }
+    set return_legend:text to "Aircraft angular deviation / GL scale +/-2.5 deg / GS +/-0.7 deg".
+    if not needles["valid"] { set return_legend:text to "Threshold passed / angular reference unavailable / metre offsets retained". }
     return_value("GL / centerline",round(abs(geometry["cross_track"]),1)+" m "+lateral_text,"0 m").
     return_value("GS / glideslope",round(abs(gs_error),1)+" m "+vertical_text,"0 m").
     set return_next:text to "NEXT: Preflare / flare / "+round(geometry["distance"]/1000,2)+" km to threshold".
@@ -410,6 +431,7 @@ function update_reentry_gui {
         set marker_widget:visible to false.
     }
     set return_chart:style:height to 280.
+    set return_display_state["angular_valid"] to false.
     local page is return_entry_page(display_mode).
     local is_entry is page["number"] > 0.
     set return_predictions:visible to is_entry.
