@@ -1155,6 +1155,7 @@ until running = false{
     set e_gui_inputs["prediction_path_valid"] to entry_display_prediction_path["valid"] and
         not basice_reentry_guidance.
     update_reentry_gui(e_gui_inputs).
+    if defined return_display_state { flight_log_return_display(return_display_state). }
     flight_log_entry_display_mode(
         reentry_display_active_mode,
         entry_nominal_energy_height(ship:altitude,ship:airspeed),

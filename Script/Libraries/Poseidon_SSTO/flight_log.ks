@@ -57,7 +57,10 @@ global POS_LOG_EVENT_FILE is "".
 // Version 36 records the actual steering-manager target during landing.
 // Version 37 records live LF/Ox and the active abort oxidizer reserve.
 // Version 38 records runway-relative flare reference, arrest margin and pitch trim.
+// Return GUI observations use events only; flight CSV schema/cadence stays unchanged.
 global POS_LOG_SCHEMA_VERSION is 38.
+global POS_LOG_RETURN_KEY is "".
+global POS_LOG_RETURN_NEXT_SAMPLE is -1.
 global POS_LOG_FLARE_CORRIDOR_ACTIVE is false.
 global POS_LOG_ENTRY_BASIC_UT is -1.
 global POS_LOG_ENTRY_SOLVER_DURATION is 0.
@@ -496,6 +499,8 @@ function flight_log_event {
 function flight_log_begin {
     parameter program_name.
     set POS_LOG_PROGRAM to program_name.
+    set POS_LOG_RETURN_KEY to "".
+    set POS_LOG_RETURN_NEXT_SAMPLE to -1.
     set POS_LOG_ENTRY_BASIC_UT to -1.
     set POS_LOG_ENTRY_SOLVER_DURATION to 0.
     if POS_LOG_LEVEL = 0 { return. }
@@ -1639,4 +1644,35 @@ function flight_log_departure_plan {
             "|lat="+route_waypoint:lat+"|lng="+route_waypoint:lng).
         set waypoint_index to waypoint_index+1.
     }
+}
+
+// Passive display evidence, called only from the live entry executive. Low:
+// transitions only. Medium: <=1 Hz rollout samples. High: <=2 Hz GUI samples.
+// No logger or display code is invoked by sim_with_bank / trajectory predictors.
+function flight_log_return_display {
+    parameter snapshot.
+    if POS_LOG_LEVEL < 1 { return. }
+    local display_mode is snapshot["mode"].
+    local state_key is display_mode+"|"+snapshot["guidance_state"].
+    if display_mode = "ROLLOUT" {
+        set state_key to state_key+"|"+snapshot["stop_valid"]+"|"+snapshot["stop_reason"]+
+            "|overrun="+(snapshot["stop_valid"] and snapshot["stop_margin"] < 0).
+    }
+    if state_key <> POS_LOG_RETURN_KEY {
+        flight_log_event("return_display_state","mode="+display_mode+
+            "|state="+snapshot["guidance_state"]+"|stop_valid="+snapshot["stop_valid"]+
+            "|stop_reason="+snapshot["stop_reason"]+"|cross_track="+snapshot["cross_track"]+
+            "|glideslope_error="+snapshot["glideslope_error"]+"|stop_margin="+snapshot["stop_margin"]).
+        set POS_LOG_RETURN_KEY to state_key.
+    }
+    if POS_LOG_LEVEL < 2 or display_mode <> "ROLLOUT" or time:seconds < POS_LOG_RETURN_NEXT_SAMPLE { return. }
+    local sample_period is 0.5.
+    if POS_LOG_LEVEL = 2 { set sample_period to 1. }
+    set POS_LOG_RETURN_NEXT_SAMPLE to time:seconds+sample_period.
+    flight_log_event("landing_rollout_estimate","valid="+snapshot["stop_valid"]+
+        "|reason="+snapshot["stop_reason"]+"|ground_speed="+ship:groundspeed+
+        "|wheel_brakes="+brakes+"|vessel_status="+ship:status+
+        "|deceleration="+snapshot["stop_deceleration"]+
+        "|distance="+snapshot["stop_distance"]+"|margin="+snapshot["stop_margin"]+
+        "|runway_remaining="+snapshot["runway_remaining"]+"|cross_track="+snapshot["cross_track"]).
 }
