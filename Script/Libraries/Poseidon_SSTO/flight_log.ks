@@ -523,7 +523,7 @@ function flight_log_begin {
 }
 
 // Recovery state is sampled only at the logger's existing medium/high cadence.
-// Low mode records one decision event per basic update or completed solve.
+// Low mode records basic prediction start/completion, interface holds and completed solves.
 function flight_log_entry_recovery_header {
     return ",entry_recovery_mode,entry_target_converged,entry_solver_retry_ut,"+
         "entry_basic_update_ut,entry_solver_duration,entry_basic_update_age,entry_rejected_candidates".
@@ -555,10 +555,10 @@ function flight_log_entry_recovery_columns {
 function flight_log_entry_recovery {
     parameter recovery_phase_name, solve_duration.
     if POS_LOG_LEVEL < 1 { return. }
-    if recovery_phase_name = "basic_update" { set POS_LOG_ENTRY_BASIC_UT to time:seconds. }
+    if recovery_phase_name = "basic_update" or recovery_phase_name = "below_interface_hold" { set POS_LOG_ENTRY_BASIC_UT to time:seconds. }
     if recovery_phase_name = "solver_complete" { set POS_LOG_ENTRY_SOLVER_DURATION to solve_duration. }
     flight_log_event("entry_recovery_update","phase="+recovery_phase_name+
-        "|runway="+Location+"_"+runway_nr+"|solver_duration="+round(solve_duration,2)+
+        "|runway="+Location+"_"+runway_nr+"|duration="+round(solve_duration,2)+"|solver_duration="+round(solve_duration,2)+
         "|aoa="+round(dap["aoa"]["target_aoa"],2)+
         "|bank="+round(dap["aoa"]["target_bank"],2)).
 }

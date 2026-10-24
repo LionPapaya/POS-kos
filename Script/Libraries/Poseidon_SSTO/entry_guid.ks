@@ -1038,8 +1038,28 @@ function reentry_apply_target {
 }
 
 function reentry_basic_update {
+    // A low-altitude abort is already below the entry destination. Do not
+    // simulate a descent to runway height before the main loop can commit
+    // TEAM: a climbing/level prediction can take most of the remaining flight.
+    if defined Team_interface {
+        if ship:altitude <= Team_interface["target_altitude"] {
+            // Above the TEAM speed limit, retain entry deceleration with wings
+            // level until the existing handoff gate accepts terminal control.
+            // Below that limit, preserve the flown command for the TEAM blend.
+            if ship:airspeed > AVES["EntryHandoff"]["maximum_airspeed"] {
+                set dap["aoa"]["target_aoa"] to AVES["EGAOA"](ship:altitude).
+                set dap["aoa"]["target_bank"] to 0.
+                brakes off.
+            }
+            flight_log_entry_recovery("below_interface_hold",0).
+            set entry_basic_next_update to time:seconds+5.
+            return.
+        }
+    }
+    local basic_started is time:seconds.
+    flight_log_entry_recovery("basic_start",0).
     goto_target().
-    flight_log_entry_recovery("basic_update",0).
+    flight_log_entry_recovery("basic_update",time:seconds-basic_started).
     set entry_basic_next_update to time:seconds+5.
 }
 
