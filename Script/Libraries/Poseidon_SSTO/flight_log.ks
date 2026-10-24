@@ -404,14 +404,14 @@ function flight_log_flare_header {
     return ",landing_corridor_active,landing_reference_height,landing_corridor_vs,landing_clearance_margin,landing_trim_pitch,landing_position_vs".
 }
 function flight_log_flare_columns {
-    if not defined terminal_route_debug { return ",False,0,0,0,0,0". }
+    if not (defined terminal_route_debug) { return ",False,0,0,0,0,0". }
     return ","+terminal_route_debug["flare_corridor_active"]+","+
         terminal_route_debug["flare_reference_height"]+","+terminal_route_debug["flare_corridor_vs"]+","+
         terminal_route_debug["flare_clearance_margin"]+","+terminal_route_debug["flare_trim_pitch"]+","+
         terminal_route_debug["flare_position_vs"].
 }
 function flight_log_flare_transition {
-    if POS_LOG_LEVEL < 1 or not defined terminal_route_debug { return. }
+    if POS_LOG_LEVEL < 1 or not (defined terminal_route_debug) { return. }
     local active_corridor is terminal_route_debug["flare_corridor_active"].
     if active_corridor = POS_LOG_FLARE_CORRIDOR_ACTIVE { return. }
     flight_log_event("landing_corridor_state","active="+active_corridor+
