@@ -57,32 +57,6 @@ global reentry_traj5_vsit_calibration is lex(
     "pred_y_offset", 0
 ).
 
-// KSP/Unity placement calibration for the two runway-relative L/SIT pages.
-// The rotated shuttle artwork has a different visible footprint at each
-// angle, so both it and the following prediction widget need independent
-// offsets for every rotation. Values were captured as paired shuttle/pred
-// rows with Script/Tests/POS_M2L_LSIT_GUI_Calibrate.ks.
-global reentry_lsit1_bug_calibration is lex(
-    "0", lex("ssto_x",4.6,"ssto_y",2,"pred_x",18.5,"pred_y",-27),
-    "45", lex("ssto_x",4.6,"ssto_y",-12,"pred_x",18.5,"pred_y",-45.5),
-    "90", lex("ssto_x",11,"ssto_y",-13,"pred_x",18.5,"pred_y",-40.9),
-    "135", lex("ssto_x",13.9,"ssto_y",-9.2,"pred_x",18.5,"pred_y",-45.5),
-    "180", lex("ssto_x",16,"ssto_y",2,"pred_x",18.5,"pred_y",-27),
-    "225", lex("ssto_x",14,"ssto_y",-4,"pred_x",18.5,"pred_y",-45.5),
-    "270", lex("ssto_x",11,"ssto_y",2,"pred_x",18.5,"pred_y",-40),
-    "315", lex("ssto_x",9.2,"ssto_y",-5,"pred_x",18.5,"pred_y",-46)
-).
-global reentry_lsit2_bug_calibration is lex(
-    "0", lex("ssto_x",-277.3,"ssto_y",12,"pred_x",-268.1,"pred_y",-17),
-    "45", lex("ssto_x",-277.3,"ssto_y",0,"pred_x",-268.1,"pred_y",-37),
-    "90", lex("ssto_x",-275,"ssto_y",0,"pred_x",-268.1,"pred_y",-29),
-    "135", lex("ssto_x",-271,"ssto_y",0,"pred_x",-268.1,"pred_y",-35),
-    "180", lex("ssto_x",-272.7,"ssto_y",13,"pred_x",-268.1,"pred_y",-16),
-    "225", lex("ssto_x",-272.7,"ssto_y",5,"pred_x",-268.1,"pred_y",-35),
-    "270", lex("ssto_x",-275,"ssto_y",12,"pred_x",-268.1,"pred_y",-30),
-    "315", lex("ssto_x",-276,"ssto_y",5,"pred_x",-268.1,"pred_y",-35)
-).
-
 function update_readouts{
     if defined ascent_display_state { ascent_recovery_handoff_tick(). }
     runpath("0:/Poseidon_SSTO/Poseidon_SSTO_HUD.ks").
@@ -630,51 +604,6 @@ function reentry_lsit_geometry {
     ).
 }
 
-// Map runway-relative metres into the same GUI offset range used by TRAJ 1.
-// The runway remains fixed on the right while the approach extends left.
-// Mirror cross-track about the ERCL: zero keeps its calibrated Y, while
-// positive cross-track appears above it and negative cross-track below it.
-function reentry_lsit_screen_position {
-    parameter position, max_along_track, max_cross_track.
-    local geometry is reentry_lsit_geometry(position).
-    local along_ratio is geometry["along_track"] / max(max_along_track, 1).
-    local cross_ratio is geometry["cross_track"] / max(max_cross_track, 1).
-    set along_ratio to max(-0.03, min(1, along_ratio)).
-    set cross_ratio to max(-1, min(1, cross_ratio)).
-    return lex(
-        "x", 680 - along_ratio * 620,
-        "y", 6 - cross_ratio * 110
-    ).
-}
-
-// The L/SIT shuttle bug faces screen-right in its unrotated artwork. Convert
-// the live surface track into that screen frame, then select the closest one
-// of the eight pre-rotated images. This keeps the icon pointing along the
-// ground track even though the L/SIT map is runway-relative.
-function reentry_lsit_ssto_rotation {
-    parameter course_heading.
-    local outward_heading is runway_heading + 180.
-    local relative_heading is normalized_heading_error(course_heading, outward_heading).
-    // Mirroring the map vertically also reverses the on-screen turn angle.
-    // Keep selecting the calibration belonging to the displayed artwork.
-    local screen_rotation is 180 + relative_heading.
-    until screen_rotation >= 0 { set screen_rotation to screen_rotation + 360. }
-    until screen_rotation < 360 { set screen_rotation to screen_rotation - 360. }
-    return mod(round(screen_rotation / 45), 8) * 45.
-}
-
-function reentry_lsit_ssto_image {
-    parameter course_heading.
-    local rotation_degrees is reentry_lsit_ssto_rotation(course_heading).
-    return "Libraries/gui_images/ssto_lsit_" + rotation_degrees + ".png".
-}
-
-function hide_reentry_lsit_path {
-    for path_bug in traj_disp_path {
-        set path_bug:visible to false.
-    }
-}
-
 function hide_reentry_vsit_prediction_path {
     // Keep the chart origin visible on V/SIT even with no prediction. An
     // empty Unity layout ignores its fixed height, changing console flow.
@@ -812,30 +741,6 @@ function update_reentry_vsit_prediction_path {
     return visible_count.
 }
 
-// Return a display-sized sample of the solver's complete planned ground path.
-function reentry_lsit_entry_path {
-    local result is list().
-    if defined entry_traj and entry_traj:haskey("converged_sim") {
-        local converged_sim is entry_traj["converged_sim"].
-        if converged_sim:haskey("controll_inputs") {
-            local controls is converged_sim["controll_inputs"].
-            local control_keys is controls:keys.
-            local sample_count is min(traj_disp_path:length, control_keys:length).
-            if sample_count > 0 {
-                for sample_index in range(0, sample_count) {
-                    local control_index is 0.
-                    if sample_count > 1 {
-                        set control_index to round(sample_index * (control_keys:length - 1) / (sample_count - 1)).
-                    }
-                    local control_key is control_keys[control_index].
-                    result:add(controls[control_key]["simstate"]["latlong"]).
-                }
-            }
-        }
-    }
-    return result.
-}
-
 // Build the remaining terminal route in flight order.  These are real route
 // vertices from terminal_route, not a decorative static line.
 function reentry_lsit_terminal_path {
@@ -861,28 +766,6 @@ function reentry_lsit_terminal_path {
     }
     result:add(runway_start).
     return result.
-}
-
-// Place route bugs after the shuttle/prediction widgets.  Each padding value
-// is relative to the last visible widget because later kOS vbox children move
-// when an earlier child is moved.
-function update_reentry_lsit_path {
-    parameter positions, max_along_track, max_cross_track, previous_absolute_y.
-    local visible_count is min(positions:length, traj_disp_path:length).
-    for marker_index in range(0, traj_disp_path:length) {
-        local marker is traj_disp_path[marker_index].
-        if marker_index < visible_count {
-            local marker_position is reentry_lsit_screen_position(
-                positions[marker_index], max_along_track, max_cross_track
-            ).
-            set marker:style:padding:top to marker_position["y"] - previous_absolute_y.
-            set marker:style:margin:h to marker_position["x"].
-            set marker:visible to true.
-            set previous_absolute_y to marker_position["y"].
-        } else {
-            set marker:visible to false.
-        }
-    }
 }
 
 function create_main_gui{
@@ -1555,57 +1438,4 @@ function get_inputs_Inclination {
     clearscreen.
     // Return the finalized inputs
     return list(Inclination_menu:value,Inclination_alt_menu:text).
-}
-function map_flightpath {
-    parameter simstates.
-    parameter corridor_width is 10.
-    parameter line_distance is 15.
-    // Calculate max/min speed and altitude from the dataset
-    local max_alt is 0.
-    local min_alt is 999999.
-    local max_spd is 0.
-    local min_spd is 999999.
-
-    for simstate in simstates {
-        if simstate["altitude"] > max_alt {
-            set max_alt to simstate["altitude"].
-        }
-        if simstate["altitude"] < min_alt {
-            set min_alt to simstate["altitude"].
-        }
-        if simstate["velocity"]:mag > max_spd {
-            set max_spd to simstate["velocity"]:mag.
-        }
-        if simstate["velocity"]:mag < min_spd {
-            set min_spd to simstate["velocity"]:mag.
-        }
-    }
-
-    local labels is lexicon().
-
-    // Iterate over the timesteps
-    for i in range(0, simstates:length, line_distance) {
-        local simstate is simstates[closest_simstate(simstates,i)].
-        local alt_dif is simstate["altitude"] - min_alt.
-        local spd_dif is simstate["velocity"]:mag - min_spd.
-
-        local v_margin is 220 - alt_dif / (max_alt - min_alt) * 220.
-        local h_margin is 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        // Determine the orientation of the image
-        local angle is round(simstate["velocity"]:heading).
-        if angle >= 180 {
-            set angle to angle - 180.
-        }
-
-        // Draw the corridor
-        for j in range(-corridor_width/2, corridor_width/2) {
-            local img_name is "Libraries/gui_images/TRAJ_lines/line_" + angle + "°.png".
-            local label_name is "traj_disp_ssto_" + i + "_" + j.
-            set labels[label_name] to console:addlabel().
-            set labels[label_name]:IMAGE to img_name.
-            set labels[label_name]:STYLE:margin:v to v_margin + j.
-            set labels[label_name]:STYLE:margin:h to h_margin.
-        }
-    }
 }

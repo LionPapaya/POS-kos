@@ -89,8 +89,6 @@ function create_reentry_gui {
         traj_disp_prediction_path:add(return_marker(return_chart,"entry_path_dot",2)).
     }
     global traj_disp_ssto is return_marker(return_chart,"ascent_vehicle",12).
-    // Kept for calibration tools; the old static nominal bug is never displayed.
-    global traj_disp_pred is return_marker(return_chart,"guid_pred_bug",8).
     global return_spatial_markers is list().
     for spatial_index in range(0,36) {
         return_spatial_markers:add(return_marker(return_chart,"ascent_path_dot",12)).
@@ -427,7 +425,7 @@ function update_reentry_gui {
     set return_origin:style:margin:bottom to 0.
     for marker_widget in traj_disp_prediction_path { set marker_widget:visible to false. }
     for marker_widget in return_spatial_markers { set marker_widget:visible to false. }
-    for marker_widget in list(traj_disp_ssto,traj_disp_pred,return_gl_needle,return_gs_needle,return_stop_marker) {
+    for marker_widget in list(traj_disp_ssto,return_gl_needle,return_gs_needle,return_stop_marker) {
         set marker_widget:visible to false.
     }
     set return_chart:style:height to 280.
