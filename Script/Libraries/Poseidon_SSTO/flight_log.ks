@@ -58,7 +58,7 @@ global POS_LOG_EVENT_FILE is "".
 // Version 37 records live LF/Ox and the active abort oxidizer reserve.
 // Version 38 records runway-relative flare reference, arrest margin and pitch trim.
 // Return GUI observations use events only; flight CSV schema/cadence stays unchanged.
-global POS_LOG_SCHEMA_VERSION is 38.
+global POS_LOG_SCHEMA_VERSION is 39.
 global POS_LOG_RETURN_KEY is "".
 global POS_LOG_RETURN_NEXT_SAMPLE is -1.
 global POS_LOG_FLARE_CORRIDOR_ACTIVE is false.
@@ -1555,7 +1555,7 @@ function flight_log_recovery_sample {
 
 
 function flight_log_terrain_header {
-    return ",gpws_escape_mode,gpws_long_margin,gpws_time_to_conflict,gpws_long_range,gpws_scan_age,gpws_escape_heading,gpws_escape_offset,gpws_escape_margin,gpws_escape_valid,gpws_threat_latitude,gpws_threat_longitude,gpws_threat_height,departure_route_valid,departure_route_index,departure_route_count,departure_route_margin,alignment_pitch_floor,alignment_bank,alignment_aoa,alignment_pitch_limit".
+    return ",gpws_escape_mode,gpws_long_margin,gpws_time_to_conflict,gpws_long_range,gpws_scan_age,gpws_escape_heading,gpws_escape_offset,gpws_escape_margin,gpws_escape_valid,gpws_threat_latitude,gpws_threat_longitude,gpws_threat_height,departure_route_valid,departure_route_index,departure_route_count,departure_route_margin,alignment_pitch_floor,alignment_bank,alignment_aoa,alignment_pitch_limit,gpws_trigger_reason,gpws_recovery_reason,gpws_recovery_margin,gpws_safe_delay,gpws_recovery_acceleration,gpws_recovery_threat_latitude,gpws_recovery_threat_longitude,gpws_recovery_threat_height".
 }
 
 function flight_log_terrain_columns {
@@ -1579,21 +1579,42 @@ function flight_log_terrain_columns {
     if defined ascent_alignment_debug {
         set columns to columns+","+AVES["Ascent"]["alignment_max_pitch"].
     } else { set columns to columns+",0". }
+    if dap["envelope"]:haskey("terrain_navigation") {
+        local scan is dap["envelope"]["terrain_navigation"].
+        set columns to columns+","+scan["trigger_reason"]+","+scan["recovery_reason"]+","+
+            scan["recovery_margin"]+","+max(-1,scan["safe_delay"]-max(0,time:seconds-scan["central_ut"]))+","+
+            scan["recovery_acceleration"]+","+scan["recovery_threat_lat"]+","+
+            scan["recovery_threat_lng"]+","+scan["recovery_threat_height"].
+    } else { set columns to columns+",not_scanned,unavailable,-999999,-1,0,0,0,0". }
     return columns.
 }
 
 function flight_log_terrain_observe {
     if POS_LOG_LEVEL < 1 { return. }
     local scan is dap["envelope"]["terrain_navigation"].
-    local choice_key is scan["mode"]+"|"+scan["escape_offset"]+"|"+scan["escape_valid"].
+    local choice_key is scan["mode"]+"|"+scan["escape_offset"]+"|"+scan["escape_valid"]+
+        "|"+scan["trigger_reason"]+"|"+scan["recovery_reason"].
     if choice_key = POS_LOG_LAST_TERRAIN_CHOICE { return. }
     set POS_LOG_LAST_TERRAIN_CHOICE to choice_key.
+    local recovery_detail is "|recovery_model_validated=False".
+    local context is scan["recovery_context"].
+    if context["valid"] {
+        set recovery_detail to recovery_detail+"|sample_speed="+context["sample_speed"]+
+            "|sample_altitude="+context["sample_altitude"]+"|source_mass="+context["mass"]+
+            "|source_vs="+context["vs"].
+    }
     flight_log_event("gpws_escape","mode="+scan["mode"]+"|course="+scan["escape_course"]+
         "|offset="+scan["escape_offset"]+"|margin="+scan["escape_margin"]+
         "|central_margin="+scan["central_margin"]+"|scan_age="+(time:seconds-scan["completed_ut"])+
         "|time_to_conflict="+max(0,scan["conflict_ut"]-time:seconds)+
         "|threat_lat="+scan["threat_lat"]+"|threat_lng="+scan["threat_lng"]+
-        "|threat_height="+scan["threat_height"]+"|range="+scan["range"]).
+        "|threat_height="+scan["threat_height"]+"|range="+scan["range"]+
+        "|trigger="+scan["trigger_reason"]+"|recovery="+scan["recovery_reason"]+
+        "|recovery_margin="+scan["recovery_margin"]+
+        "|safe_delay="+max(-1,scan["safe_delay"]-max(0,time:seconds-scan["central_ut"]))+
+        "|recovery_acceleration="+scan["recovery_acceleration"]+
+        "|recovery_threat_lat="+scan["recovery_threat_lat"]+"|recovery_threat_lng="+scan["recovery_threat_lng"]+
+        "|recovery_threat_height="+scan["recovery_threat_height"]+recovery_detail).
 }
 
 function flight_log_departure_plan {

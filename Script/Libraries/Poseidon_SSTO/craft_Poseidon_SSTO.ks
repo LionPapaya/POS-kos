@@ -971,6 +971,16 @@ Poseidon_SSTO:add("Envelope",lex(
             "roll_hold_seconds",1,"rollout_seconds",3,
             "scan_acceleration",10,"response_seconds",7,"prediction_bank",15,
             "climb_credit",10,"turn_sink_reserve",3,"clearance",150,
+            // Unvalidated conservative FAR-supported recovery envelope. A live
+            // sample at reduced speed / higher altitude is required to defer.
+            "recovery_delays",list(0,4,8,12,20),"recovery_reserve_seconds",4,
+            "recovery_release_seconds",8,"recovery_tail_seconds",5,
+            "recovery_climb_speed",10,"recovery_max_acceleration",2,
+            "recovery_force_safety",0.5,"recovery_sample_aoa",12,
+            "recovery_speed_fraction",0.8,"recovery_speed_drift",10,
+            "recovery_altitude_drift",100,"recovery_vs_drift",5,
+            "recovery_bank_drift",10,"recovery_defer_bank",1,"recovery_release_bank",10,
+            "recovery_release_sink",5,
             "escape_offsets",list(0,-5,5,-15,15,-30,30,-60,60),
             "escape_margin",50,"escape_bank",25,"escape_heading_gain",6,
             "departure_range",18000,"departure_dogleg_distance",6000,
