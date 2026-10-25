@@ -515,22 +515,6 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
 
 
 
-    GLOBAL abort_b is toggels_box:ADDBUTTON("ABORT").
-    SET abort_b:STYLE:WIDTH TO 55.
-    SET abort_b:STYLE:HEIGHT TO 25.
-    set abort_b:style:margin:v to -3.
-    set abort_b:STYLE:BG to "Libraries/gui_images/abort_btn.png".
-
-    FUNCTION manual_abort_trigger {
-        if abort_flag {
-            return.
-        }
-        getvoice(0):play(note(300,0.5)).
-        set abort_flag to true.
-        
-    }
-    SET abort_b:ONCLICK TO manual_abort_trigger@.
-
     // Target setup occupies its own row in the 680px ascent-sized window.
     local return_target_setup is reentry_gui:addhlayout().
     set return_target_setup:style:width to 640.
