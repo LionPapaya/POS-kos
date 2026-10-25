@@ -49,8 +49,6 @@ global location_constants is lex().
   kerbinLocations:add("Kola-Island_runway_20_start", Kerbin:geoPositionLAtLNG(-4.058894604671154, -72.0806758868211)).
   kerbinLocations:add("Kermundsen_runway_01_start", Kerbin:geoPositionLAtLNG(-89.945805346582, 178.119572412765)).
   kerbinLocations:add("Kermundsen_runway_19_start", Kerbin:geoPositionLAtLNG(-89.8014181680094, -169.702226981836)).
-  kerbinLocations:add("South-Field_runway_09_start", Kerbin:geoPositionLAtLNG(-47.0036691936948, -141.141419827073)).
-  kerbinLocations:add("South-Field_runway_27_start", Kerbin:geoPositionLAtLNG(-47.0036691936948, -141.141419827073)).
   kerbinLocations:add("South-Lake_runway_25_start", Kerbin:geoPositionLAtLNG(-37.2472859973442, 52.6979769920877)).
   kerbinLocations:add("South-Lake_runway_07_start", Kerbin:geoPositionLAtLNG(-37.3184999102752, 52.4282807905092)).
   kerbinLocations:add("Area-15_runway_31_start", Kerbin:geoPositionLAtLNG(-60.6101231793587, 39.3817317024422)).
@@ -88,7 +86,6 @@ global location_constants is lex().
   KerbinRunwayalt:add("Kojave-Sands_runway", 766).
   KerbinRunwayalt:add("Kola-Island_runway", 28).
   KerbinRunwayalt:add("Kermundsen_runway", 35).
-  KerbinRunwayalt:add("South-Field_runway", 82).
   KerbinRunwayalt:add("South-Lake_runway", 75).
   KerbinRunwayalt:add("Area-15_runway", 1371).
   KerbinRunwayalt:add("Uberdam_runway", 501).
