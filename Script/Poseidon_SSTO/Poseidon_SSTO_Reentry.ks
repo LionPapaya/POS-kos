@@ -9,6 +9,7 @@ RUNONCEPATH("0:/Libraries/Poseidon_SSTO/contingency.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_guid.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/deorbit_terra.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 RUNONCEPATH("0:/Libraries/lib_navigation.ks").
 RUNONCEPATH("0:/Libraries/lib_navball.ks").
@@ -134,6 +135,7 @@ global basice_reentry_guidance is false.
 global entry_attitude_initialized is false.
 global entry_rejected_runways is lexicon().
 set deorbit_periapsis_set_flag to false.
+global terra_hold_selected_site is not reentry_preserve_propulsion and (Reentry_mode = "Auto" or Reentry_mode = "Ex").
 set landing_flare_started to false.
 global landing_preflare_active is false.
 global landing_preflare_escape_since is -1.
@@ -262,150 +264,82 @@ until running = false{
     //if not (step = "Deorbit") and ship:altitude <70000{
     //    logTelemetry().
     //}
-    if step = "Deorbit"{
-        if substep = "findStep"{
-           
-            if ship:periapsis < 70000{
-                if ship:apoapsis < 500000{
-                        set step to "reentry_low".
-                    }else if ship:apoapsis < 1000000{
-                        set step to "reentry_mid".
-                    }else if ship:apoapsis < 10000000{
-                        set step to "reentry_high".
-                    }else{
-                        set step to "reentry_int". // interplanetary reentry or very high kerbin orbit
-                    }
-            }
-            if ship:orbit:hasnextpatch{
-                set step to "end".
-                set Lastest_status to "not in reentry condition".
-            }
-            if step = "Deorbit" and not Addons:TR:Available{
-                set step to "end".
-                set Lastest_status to "Trajectories addon unavailable".
-                set recovery_result to lex("complete",true,"success",false,"reason","trajectories_unavailable").
-                flight_log_event("trajectories_unavailable","phase=find_step|reason=addon_unavailable").
-            }
-            set substep to "deorbit_manuver".
-            
-        }
+    if step = "Deorbit" {
         set console_mode to "DATA".
-        if substep = "deorbit_manuver" and step = "Deorbit" and not ADDONS:TR:available {
+        if ship:periapsis < ship:body:atm:height {
+            if ship:apoapsis < 500000 { set step to "reentry_low". }
+            else if ship:apoapsis < 1000000 { set step to "reentry_mid". }
+            else if ship:apoapsis < 10000000 { set step to "reentry_high". }
+            else { set step to "reentry_int". }
+        } else if ship:orbit:hasnextpatch {
+            set Lastest_status to "Deorbit requires a bound orbit in the current SOI".
+            set recovery_result to lex("complete",true,"success",false,"reason","unsupported_orbit").
+            flight_log_event("deorbit_plan_rejected","reason=unsupported_orbit").
             set step to "end".
-            set Lastest_status to "Trajectories addon unavailable during deorbit planning".
-            set recovery_result to lex("complete",true,"success",false,"reason","trajectories_unavailable").
-            flight_log_event("trajectories_unavailable","phase=deorbit_manuver|reason=addon_lost").
-        }
-        if substep = "deorbit_manuver" and step = "Deorbit" and ADDONS:TR:available {
-        if ship:periapsis > 70000{
-            if deorbit_periapsis_set_flag = false{
-                if ship:apoapsis < 100000{
-                    set deorbit_periapsis to -10000.
-                }else if ship:apoapsis < 200000{
-                    set deorbit_periapsis to 10000.
-                }else if ship:apoapsis < 500000{
-                    set deorbit_periapsis to 12000.
-                }else if ship:apoapsis < 1000000{
-                    set deorbit_periapsis to 15000.
-                }else if ship:apoapsis < 10000000{
-                    set deorbit_periapsis to 18000.
-                }else{
-                    set deorbit_periapsis to 20000.
+        } else if Reentry_mode = "Man" {
+            set Lastest_status to "Manual deorbit: waiting for atmospheric periapsis".
+        } else if Reentry_mode = "Auto" or Reentry_mode = "Ex" {
+            set substep to "deorbit_planning".
+            local planned_interface is define_TEAM_interface(runway_start,runway_heading,runway_altitude).
+            flight_log_event("deorbit_plan_started","target="+Location+"_"+runway_nr+
+                "|target_lat="+planned_interface["target_latlng"]:lat+"|target_lng="+planned_interface["target_latlng"]:lng+
+                "|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
+            local deorbit_plan is terra_deorbit_plan(planned_interface["target_latlng"]).
+            if not deorbit_plan["valid"] {
+                local plan_detail is "reason="+deorbit_plan["reason"]+"|target="+Location+"_"+runway_nr.
+                if deorbit_plan:haskey("crossrange") {
+                    set plan_detail to plan_detail+"|along="+deorbit_plan["along"]+"|crossrange="+
+                        deorbit_plan["crossrange"]+"|desired="+deorbit_plan["desired"].
                 }
-                set deorbit_periapsis_set_flag to true.
+                flight_log_event("deorbit_plan_rejected",plan_detail).
+                set Lastest_status to "No deorbit window: "+deorbit_plan["reason"].
+                print Lastest_status.
+                set recovery_result to lex("complete",true,"success",false,"reason",deorbit_plan["reason"]).
+                set step to "end".
+            } else if step = "Deorbit" and not hasnode {
+                local node_result is terra_deorbit_node(deorbit_plan).
+                if not node_result["valid"] {
+                    set Lastest_status to "Deorbit node could not be constructed".
+                    flight_log_event("deorbit_plan_rejected","reason="+node_result["reason"]).
+                    set recovery_result to lex("complete",true,"success",false,"reason",node_result["reason"]).
+                    set step to "end".
+                } else {
+                local deorbit is node_result["node"].
+                flight_log_event("deorbit_plan_candidate","node_ut="+deorbit:time+"|dv="+deorbit_plan["dv"]+
+                    "|predicted_periapsis="+deorbit:orbit:periapsis+"|entry_speed="+deorbit_plan["entry_speed"]+
+                    "|coast="+deorbit_plan["coast"]+"|along="+deorbit_plan["along"]+
+                    "|crossrange="+deorbit_plan["crossrange"]+"|desired="+deorbit_plan["desired"]).
+                if abs(deorbit:orbit:periapsis-18000) > 1000 {
+                    flight_log_event("deorbit_plan_rejected","reason=node_periapsis_mismatch|predicted="+deorbit:orbit:periapsis).
+                    remove deorbit.
+                    set Lastest_status to "Deorbit node does not match calculated orbit".
+                    set recovery_result to lex("complete",true,"success",false,"reason","node_periapsis_mismatch").
+                    set step to "end".
+                } else {
+                    flight_log_event("deorbit_plan_ready","node_ut="+deorbit:time+"|dv="+deorbit_plan["dv"]+"|periapsis="+deorbit:orbit:periapsis).
+                    set Lastest_status to "Executing deorbit to "+Location+" runway "+runway_nr.
+                    set substep to "deorbit_execution".
+                    if not reentry_preserve_propulsion { nervson(). rapiersoff(). }
+                    else { recovery_apply_limits(). }
+                    local executed is false.
+                    if nextnode = deorbit { set executed to pos_execute_node(). }
+                    flight_log_event("deorbit_execution_result","completed="+executed+
+                        "|achieved_periapsis="+ship:periapsis+"|achieved_apoapsis="+ship:apoapsis).
+                    if not executed or ship:periapsis >= ship:body:atm:height {
+                        set Lastest_status to "Deorbit burn incomplete; entry not started".
+                        set recovery_result to lex("complete",true,"success",false,"reason","deorbit_execution_incomplete").
+                        set step to "end".
+                    }
+                }
+                }
+            } else if step = "Deorbit" {
+                set Lastest_status to "Maneuver node appeared during planning".
+                flight_log_event("deorbit_plan_rejected","reason=existing_maneuver_nodes").
+                set recovery_result to lex("complete",true,"success",false,"reason","existing_maneuver_nodes").
+                set step to "end".
             }
-
-                if deorbit_start = false{
-                    set deorbit to node(time+400, 0, 0, 0).
-                    add deorbit.
-                    set deorbit_start to true.
-                } 
-                 if deorbit:orbit:periapsis < deorbit_periapsis and deorbit_calc = false{
-                    if  deorbit:orbit:periapsis + 10000 < deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde + 1.
-                    }
-                    if deorbit:orbit:periapsis + 1000 < deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde + 0.1.
-                    }
-                    if deorbit:orbit:periapsis + 100 < deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde + 0.01.
-                    }
-                }
-                if deorbit:orbit:periapsis > deorbit_periapsis and deorbit_calc = false{
-                    if  deorbit:orbit:periapsis - 10000 > deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde - 1.
-                    }
-                    if deorbit:orbit:periapsis - 1000 > deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde - 0.1.
-                    }
-                    if deorbit:orbit:periapsis - 100 > deorbit_periapsis{
-                        set deorbit:prograde to deorbit:prograde - 0.01.
-                    }
-                } 
-                if deorbit:orbit:periapsis + 1000 > deorbit_periapsis and deorbit:orbit:periapsis - 1000 < deorbit_periapsis and deorbit_calc = false and NOT(addons:TR:hasimpact){
-                    SET deorbit_periapsis TO deorbit_periapsis - 1000.
-                }
-
-                if Reentry_mode = "auto" or Reentry_mode = "EX"{
-               
-                
-                if deorbit:orbit:periapsis + 1000 > deorbit_periapsis and deorbit:orbit:periapsis - 1000 < deorbit_periapsis and deorbit_calc = false and addons:TR:hasimpact {
-                local impact_point is ADDONS:TR:impactpos.  
-                local runway_point is runway_start.         
-    
-             
-                local distance_to_runway is calcdistance(impact_point, runway_point).  // In kilometers
-
-    
-                if distance_to_runway > 50 {
-                    set deorbit:time to deorbit:time + 1.  
-                } else if distance_to_runway <= 50{
-                    set deorbit:time to deorbit:time + 0.1.  
-                }
-
-    
-
-               
-            set lng_difference to abs(ADDONS:TR:impactpos:LNG - runway_start:LNG).
-            }
-                            }
-            // If we're close enough to the runway
-            if addons:TR:hasimpact{
-                if calcdistance(ADDONS:TR:impactpos, runway_start) <= 10.5 and addons:TR:hasimpact{
-                    set deorbit_calc to true.
-                   set Lastest_status to "deorbit maneuver calculated successfully".
-
-                   // Fine-tune the normal direction based on the latitude difference
-                   if round(ADDONS:TR:impactpos:LAT) < round(runway_start:LAT) {
-                      set deorbit:normal to deorbit:normal + 10.
-                 }
-                    if round(ADDONS:TR:impactpos:LAT) > round(runway_start:LAT) {
-                        set deorbit:normal to deorbit:normal - 10.
-             }
-    } 
-    }               if deorbit_calc = true{
-                    nervson().
-                    rapiersoff().
-                    set nd to deorbit.
-                    clearVecDraws().
-                    execute_node().
-                
-            
-
-                    if ship:apoapsis < 500000{
-                        set step to "reentry_low".
-                    }else if ship:apoapsis < 1000000{
-                        set step to "reentry_mid".
-                    }else if ship:apoapsis < 10000000{
-                        set step to "reentry_high".
-                    }else{
-                        set step to "reentry_int". // interplanetary reentry or verry high kerbin orbit
-                    }
-                    
-                }
-                }   
-                }
         }
+    }
     if step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int"{
        
         if not entry_attitude_initialized and ship:altitude <= 75000 {
@@ -422,7 +356,7 @@ until running = false{
             reentry_live_control_update().
         }
         if ship:altitude > 75000{
-            if not (defined entry_square_display){ 
+            if not terra_hold_selected_site and not (defined entry_square_display){
                 print("hey").
                 set entry_begin_state to simulate_trajectory(current_simstate(), 0, "right", AVES["MaxAeroturnAlt"],ship:altitude+100,"EGAOA",AVES["simulation"]["timestep"]).
                 print("calculating entry square").

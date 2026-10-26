@@ -1082,6 +1082,46 @@ function reentry_recovery_update {
         return.
     }
 
+    // An explicitly selected orbital deorbit site remains the flight target;
+    // retry its solver without silently diverting to another runway.
+    if defined terra_hold_selected_site and terra_hold_selected_site {
+        reentry_basic_update().
+        reentry_live_control_update().
+        if ship:altitude <= Team_interface["target_altitude"] {
+            set entry_solver_next_retry_time to time:seconds+10.
+            return.
+        }
+        local selected_solve_started is time:seconds.
+        set entry_traj to calc_entry_traj(current_simstate(),Team_interface["target_altitude"],
+            Team_interface["target_latlng"],Team_interface["team_interface_box"],"time",0).
+        flight_log_entry_solver_result(entry_traj).
+        flight_log_entry_recovery("selected_solver_complete",time:seconds-selected_solve_started).
+        set entry_solver_next_retry_time to time:seconds+10.
+        set entry_reference_time to -1.
+        if entry_traj["converged"] {
+            set val_tgt to true.
+            set basice_reentry_guidance to false.
+            set entry_predictive_plan_bank to entry_traj["bank"].
+            set entry_predictive_bank to entry_traj["bank"].
+            set entry_predictive_next_update to time:seconds+10.
+            set entry_predictive_valid to false.
+            set entry_predictive_frozen to false.
+            local selected_heading_error is normalized_heading_error(heading_to_target(Team_interface["target_latlng"]),compass_for_prograde()).
+            if selected_heading_error >= 0 { set entry_turnside to "right". }
+            else { set entry_turnside to "left". }
+            if entry_turnside = "right" { set dap["aoa"]["target_bank"] to -entry_predictive_bank. }
+            else { set dap["aoa"]["target_bank"] to entry_predictive_bank. }
+            flight_log_event("entry_guidance_mode","from=basic|to=predictive|reason=selected_site|bank="+round(entry_predictive_bank,2)).
+        } else {
+            set val_tgt to false.
+            set basice_reentry_guidance to true.
+            set entry_display_prediction_path to entry_display_empty_path("basic_guidance").
+            flight_log_event("entry_candidate_rejected","runway="+Location+"_"+runway_nr+
+                "|reason="+entry_traj["error"]["str"]+"|retry_ut="+entry_solver_next_retry_time).
+        }
+        return.
+    }
+
     local retry_started is time:seconds.
     local selection is entry_select_runway(current_simstate(),Location,runway_nr,entry_rejected_runways).
     if not selection["selected"] {

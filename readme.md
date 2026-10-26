@@ -46,6 +46,22 @@ The orbital maneuvering menu currently provides:
 - Manage energy, heading alignment, airbrakes, landing gear, and final approach.
 - Provide live trajectory, flight-data, and guidance readouts.
 
+POS3 AUTO waits for the location and runway confirmation, searches up to four
+orbits, and executes a retrograde node if it finds a window. The planner uses
+an impulsive two-body orbit and a provisional 60 km entry corridor, with body
+rotation and an estimated atmospheric flight time. It does not simulate the
+entry during the orbital search. A failed search reports that no window was
+found within its planning envelope; it is not proof that a site is physically
+unreachable. MAN waits for the pilot to make an atmospheric periapsis.
+
+The corridor is based mainly on recorded Kerbin entries near 2.1 km/s; its
+high-energy scaling, crossrange tolerance and 800-second rotation allowance
+are uncalibrated assumptions. Finite burn errors, vehicle mass, heating and
+weather are not predicted. This mode needs KSP/FAR flight validation before
+its landing accuracy or high-orbit envelope can be relied on. Use flight logs
+to compare the planned entry speed, along-track and crossrange against the
+actual entry and landing outcome.
+
 ### Vacuum landing
 
 - Perform a NERV-only de-orbit and powered descent on a body without an atmosphere.
