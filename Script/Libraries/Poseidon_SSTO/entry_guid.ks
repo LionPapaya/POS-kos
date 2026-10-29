@@ -1063,6 +1063,18 @@ function reentry_basic_update {
     set entry_basic_next_update to time:seconds+5.
 }
 
+// A confirmed orbital deorbit target remains the flight target during solver
+// retries. Do not spend atmospheric flight time simulating alternate runways.
+// Recovery handoffs that did not execute this deorbit retain their old policy.
+function entry_confirmed_selection {
+    local confirmed is lex("selected",true,"location",Location,"runway",runway_nr,
+        "runway_start",runway_start,"runway_end",runway_end,
+        "runway_heading",runway_heading,"runway_altitude",runway_altitude,
+        "team_interface",Team_interface,"cycle_reset",false,
+        "inside_envelope",false,"score",-1,"prediction_valid",false,"envelope_depth",0).
+    return entry_selection_result(confirmed,confirmed).
+}
+
 function reentry_recovery_update {
     if not(defined Team_interface) {
         set Team_interface to define_TEAM_interface(runway_start,runway_heading,runway_altitude).
@@ -1083,7 +1095,11 @@ function reentry_recovery_update {
     }
 
     local retry_started is time:seconds.
-    local selection is entry_select_runway(current_simstate(),Location,runway_nr,entry_rejected_runways).
+    local selection is lex("selected",false).
+    local confirmed_site is false.
+    if defined reentry_selected_site_locked { set confirmed_site to reentry_selected_site_locked. }
+    if confirmed_site { set selection to entry_confirmed_selection(). }
+    else { set selection to entry_select_runway(current_simstate(),Location,runway_nr,entry_rejected_runways). }
     if not selection["selected"] {
         flight_log_event("entry_target_search","reason=no_valid_runway_data").
         set entry_solver_next_retry_time to time:seconds+10.
@@ -1098,6 +1114,7 @@ function reentry_recovery_update {
     reentry_apply_target(selection["best_effort"]).
     local search_reason is "candidate".
     if not selection["inside_envelope"] { set search_reason to "best_effort". }
+    if confirmed_site { set search_reason to "confirmed_site". }
     local envelope_depth is 0.
     if selection:haskey("envelope_depth") { set envelope_depth to selection["envelope_depth"]. }
     flight_log_event("entry_target_search","reason="+search_reason+

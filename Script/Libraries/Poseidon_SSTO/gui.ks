@@ -286,6 +286,7 @@ function setup_reentry_script{
     }else{
         create_reentry_display(false,Location_,runway_nr_).
         set Reentry_mode to "Auto".
+        set confirm_in to true.
     }
    if Reentry_mode = "Man" or Reentry_mode = "Auto" or Reentry_mode = "Ex"{
     local a is Location+"_runway".
@@ -505,6 +506,14 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     Reentry_mode_menu:addoption("AUTO").
     Reentry_mode_menu:addoption("Man").
     Reentry_mode_menu:addoption("Ex").
+    set Reentry_mode_menu:index to 0.
+    local deorbit_help is reentry_gui:addlabel("AUTO: plan + execute | Ex: execute next node | Man: pilot deorbit").
+    set deorbit_help:style:wordwrap to true.
+    set deorbit_help:style:width to 780.
+    if hasnode {
+        reentry_gui:addlabel("Next node: " + round(nextnode:deltav:mag,1) + " m/s; UT " + round(nextnode:time,1)).
+    }
+
     toggels_box:addspacing(8).
     
 
@@ -564,6 +573,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         for runway in available_runways {
             runway_popup:addoption(runway).
         }
+        if available_runways:length > 0 { set runway_popup:index to 0. }
     }
 
     // Trigger runway update when the location is changed
@@ -578,12 +588,14 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
 
     // Function to confirm and capture the inputs
     function confirm_inputs {
+        // Confirmation commits this run's site and mode. Start a new POS3 run
+        // to select another site; DAP manual/ABORT remain available in flight.
+        if confirm_in { return. }
+        if not location_to_runways:haskey(location_popup:value) or runway_popup:value = "" { return. }
         set Location to location_popup:value.
         set runway_nr to runway_popup:value.
         set Reentry_mode to Reentry_mode_menu:value.
         set confirm_in to true.
-        
-        
     }
     set ok_button:onclick to confirm_inputs@.
 
