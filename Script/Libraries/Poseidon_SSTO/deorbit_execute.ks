@@ -1,5 +1,5 @@
 // Caller loads lib_vacstr, selects NERV, and grants exclusive control ownership.
-// No staging, engine selection or warp. Failed nodes remain available for review.
+// No staging or engine selection. Bounded coast warp only after alignment. Failed nodes remain available for review.
 function deorbit_execute_guard {
     parameter sample.
     if sample["cancelled"] { return "cancelled". }
@@ -16,6 +16,7 @@ function deorbit_execute_guard {
 function deorbit_execute {
     parameter maneuver.
     lock throttle to 0.
+    set warp to 0.
     set ship:control:pilotmainthrottle to 0.
     local remaining_dv is -1.
     local reason is "node_lost".
@@ -43,13 +44,14 @@ function deorbit_execute {
         set half_time to half_burn_time(maneuver)*ship:maxthrust/ship:availablethrust.
         set duration to calculate_burn_time(remaining_dv,ship_isp(),ship:availablethrust).
         if duration <= 0 or duration > 600 { set reason to "invalid_duration". }
-        if maneuver:eta > 3600 { set reason to "excessive_coast". }
+        if maneuver:eta > 86400 { set reason to "excessive_coast". }
         if maneuver:eta < half_time+10 { set reason to "insufficient_lead_time". }
         // NERV consumes LF only; resource mass is 0.005 tonnes per unit.
         local required_fuel is ship:availablethrust/(ship_isp()*constant:g0)*duration/0.005.
         if ship:liquidfuel < required_fuel*1.02 { set reason to "insufficient_fuel". }
     }
     local evidence is lex("phase","aligning","next_sample",0,"remaining_dv",remaining_dv,"burn_seen",false).
+    local next_ui_ut is 0.
     local burning is false.
     local burn_started is -1.
     local progress_ut is time:seconds.
@@ -69,12 +71,7 @@ function deorbit_execute {
         if defined abort_flag { if abort_flag { set cancelled to true. } }
         if defined running { if not running { set cancelled to true. } }
         if defined step { if step <> initial_step { set cancelled to true. } }
-        if defined dap {
-            local selected_dap_mode is dap["dap_mode"].
-            if selected_dap_mode <> "auto" and selected_dap_mode <> "Auto" and selected_dap_mode <> "AUTO" {
-                set cancelled to true.
-            }
-        }
+        if defined dap { if dap["dap_mode"] <> "auto" { set cancelled to true. } }
         local edited is false.
         if owned {
             set edited to abs(maneuver:time-node_ut) > 0.01 or abs(maneuver:prograde-node_prograde) > 0.01 or
@@ -90,6 +87,16 @@ function deorbit_execute {
             else {
                 local alignment_error is vang(ship:facing:vector,maneuver:deltav).
                 set burn_command to 0.
+                local coast_warp is 0.
+                local ignition_eta is maneuver:eta-half_time.
+                if not burning and alignment_error < 2 {
+                    if ignition_eta > 180 { set coast_warp to 1. }
+                    if ignition_eta > 400 { set coast_warp to 2. }
+                    if ignition_eta > 1000 { set coast_warp to 3. }
+                    if ignition_eta > 3000 { set coast_warp to 4. }
+                    if ignition_eta > 20000 { set coast_warp to 5. }
+                }
+                if warp <> coast_warp { set warp to coast_warp. }
                 if not burning and maneuver:eta <= half_time {
                     if alignment_error > 2 { set reason to "not_aligned". }
                     else {
@@ -109,11 +116,22 @@ function deorbit_execute {
                 }
                 if reason = "" { lock throttle to burn_command. }
             }
-            flight_log_maneuver_observe(maneuver,half_time,evidence).
+            flight_log_maneuver_observe(maneuver,half_time,evidence,true).
+            // UI work never owns flight controls. Keep orbital waiting visible.
+            if time:seconds >= next_ui_ut {
+                if defined Lastest_status {
+                    set Lastest_status to "Deorbit ETA "+round(maneuver:eta,1)+" s; remaining "+round(remaining_dv,1)+" m/s".
+                }
+                update_readouts().
+                update_reentry_gui().
+                flight_log_tick("reentry","Deorbit",evidence["phase"]).
+                set next_ui_ut to time:seconds+1.
+            }
         }
         if reason = "" { wait 0.05. }
     }
     lock throttle to 0.
+    set warp to 0.
     set ship:control:pilotmainthrottle to 0.
     unlock steering.
     local success is reason = "complete".

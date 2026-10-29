@@ -1040,6 +1040,7 @@ function flight_log_tick {
 // samples once per physics tick. Samples share events.csv for schema stability.
 function flight_log_maneuver_observe {
     parameter maneuver, half_time, evidence.
+    parameter deorbit_sample is false.
     if POS_LOG_LEVEL = 0 { return. }
     local phase is "aligning".
     if ship:control:mainthrottle > 0 { set phase to "burning". }
@@ -1055,7 +1056,11 @@ function flight_log_maneuver_observe {
     local sample_period is 0.02.
     if POS_LOG_LEVEL = 2 { set sample_period to 1. }
     set evidence["next_sample"] to time:seconds+sample_period.
-    flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
+    local deorbit_fields is "".
+    if deorbit_sample {
+        set deorbit_fields to "|actual_thrust="+ship:thrust+"|lf="+ship:liquidfuel+"|altitude="+ship:altitude.
+    }
+    flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+deorbit_fields+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
 }
 
 // Passive brake-release evidence. Low records state/reason transitions;
