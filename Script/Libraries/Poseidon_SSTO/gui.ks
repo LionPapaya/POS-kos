@@ -505,6 +505,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     Reentry_mode_menu:addoption("AUTO").
     Reentry_mode_menu:addoption("Man").
     Reentry_mode_menu:addoption("Ex").
+    set Reentry_mode_menu:index to 0.
     toggels_box:addspacing(8).
     
 
@@ -564,6 +565,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         for runway in available_runways {
             runway_popup:addoption(runway).
         }
+        if available_runways:length > 0 { set runway_popup:index to 0. }
     }
 
     // Trigger runway update when the location is changed
@@ -578,8 +580,22 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
 
     // Function to confirm and capture the inputs
     function confirm_inputs {
-        set Location to location_popup:value.
-        set runway_nr to runway_popup:value.
+        local selected_location is location_popup:value.
+        local selected_runway is runway_popup:value.
+        if selected_location = "" or selected_runway = "" or
+           not location_to_runways:haskey(selected_location) {
+            set Lastest_status to "Select a landing site and runway before continuing".
+            return.
+        }
+        local start_key is selected_location+"_runway_"+selected_runway+"_start".
+        local end_key is selected_location+"_runway_"+selected_runway+"_end".
+        if not kerbin_runways:haskey(start_key) or not kerbin_runways:haskey(end_key) or
+           not KerbinRunwayalt:haskey(selected_location+"_runway") {
+            set Lastest_status to "Selected landing site is unavailable".
+            return.
+        }
+        set Location to selected_location.
+        set runway_nr to selected_runway.
         set Reentry_mode to Reentry_mode_menu:value.
         set confirm_in to true.
         
