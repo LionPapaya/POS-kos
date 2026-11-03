@@ -740,7 +740,7 @@ function calc_entry_traj {
         return output.
     }
     local is_eg_pos is check_if_entry_possible(start_sim,target_latlong,target_altitude,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true).
-    if is_eg_pos:has_key("error") {
+    if is_eg_pos:haskey("error") {
         output:add("error",lex("str",is_eg_pos["error"])).
         return output.
     }
