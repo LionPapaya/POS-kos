@@ -279,6 +279,86 @@ function envelope_terrain_inhibit_reason {
     return "".
 }
 
+// Two bounded FAR queries when starting a central scan. Missing support means the
+// original constant-VS protection remains authoritative. No logger is called.
+function envelope_terrain_recovery_authority {
+    parameter navigation_config, terrain_config, bottom_height, ground_speed.
+    local capability is lex("valid",false,"acceleration",0).
+    // Delayed horizontal paths currently share the wings-level corridor.
+    // Banked flight retains the original immediate protection rather than
+    // assuming a roll-out while the pilot is still holding the bank.
+    if abs(roll_for()) > navigation_config["recovery_defer_bank"] { return capability. }
+    if not defined addons { return capability. }
+    if not addons:available("FAR") { return capability. }
+    if not addons:far:hassuffix("AEROFORCEAT") { return capability. }
+    local vessel_forward is ship:facing:forevector:normalized.
+    local vessel_top is ship:facing:topvector:normalized.
+    local vessel_right is vcrs(vessel_top,vessel_forward):normalized.
+    local pitch_axis is vcrs(vessel_right,vessel_forward):normalized.
+    local sample_aoa is min(terrain_config["pullup_aoa"],navigation_config["recovery_sample_aoa"]).
+    local sample_speed is ship:airspeed*navigation_config["recovery_speed_fraction"].
+    if sample_speed < terrain_config["arm_min_groundspeed"] { return capability. }
+    local scan_range is min(navigation_config["maximum_range"],max(navigation_config["minimum_range"],
+        ground_speed*navigation_config["horizon_seconds"]+
+        0.5*navigation_config["scan_acceleration"]*navigation_config["horizon_seconds"]^2)).
+    local end_speed is sqrt(max(60,ground_speed)^2+2*navigation_config["scan_acceleration"]*scan_range).
+    local scan_seconds is 2*scan_range/(max(60,ground_speed)+end_speed).
+    // Sample at a higher altitude and reduced speed; do not assume current
+    // density or acceleration-driven speed growth will improve lift later.
+    local sample_altitude is ship:altitude+navigation_config["recovery_climb_speed"]*
+        (scan_seconds+navigation_config["maximum_age"]).
+    local sample_velocity is sample_speed*(vessel_forward*cos(sample_aoa)+pitch_axis*sin(sample_aoa)).
+    local sampled_force is addons:far:aeroforceat(sample_altitude,sample_velocity).
+    local local_gravity is ship:body:mu/(ship:body:radius+ship:altitude)^2.
+    local recovery_acceleration is terrain_recovery_acceleration(sampled_force,sample_velocity,vessel_top,
+        ship:mass,local_gravity,max(-1,min(1,ship:verticalspeed/max(1,ship:velocity:surface:mag))),navigation_config).
+    // The escape commands absolute pitch above a level base in descent.
+    // Check its higher effective AoA too: a favourable 12-degree sample must
+    // not authorize delay if the eventual pull-up attitude is stalled.
+    local escape_sample_aoa is terrain_config["pullup_aoa"]+
+        max(0,-arctan2(ship:verticalspeed,max(1,ground_speed))).
+    set sample_velocity to sample_speed*(vessel_forward*cos(escape_sample_aoa)+pitch_axis*sin(escape_sample_aoa)).
+    set sampled_force to addons:far:aeroforceat(sample_altitude,sample_velocity).
+    set recovery_acceleration to min(recovery_acceleration,
+        terrain_recovery_acceleration(sampled_force,sample_velocity,vessel_top,ship:mass,local_gravity,
+            max(-1,min(1,ship:verticalspeed/max(1,ship:velocity:surface:mag))),navigation_config)).
+    return lex("valid",recovery_acceleration > 0,"acceleration",recovery_acceleration,
+        "configuration",terrain_recovery_config_key(navigation_config),
+        "speed",ship:airspeed,"altitude",ship:altitude,"bottom",bottom_height,
+        "vs",ship:verticalspeed,"mass",ship:mass,"bank",roll_for(),
+        "brakes",brakes,"gear",gear,"sample_speed",sample_speed,"sample_altitude",sample_altitude).
+}
+
+// A cached successful recovery may defer takeover only near its source state.
+// Never use a stale/changed configuration to claim that recovery is possible.
+function envelope_terrain_recovery_usable {
+    parameter scan, navigation_config, bottom_height.
+    set scan["recovery_reason"] to "unavailable".
+    local context is scan["recovery_context"].
+    if not context["valid"] { return false. }
+    set scan["recovery_reason"] to "stale_or_changed".
+    local scan_age is time:seconds-scan["central_ut"].
+    if scan_age < 0 or scan_age > navigation_config["maximum_age"] { return false. }
+    if abs(terrain_heading_delta(compass_for_prograde(),scan["central_course"])) > 5 { return false. }
+    if not context:haskey("configuration") { return false. }
+    if context["configuration"] <> terrain_recovery_config_key(navigation_config) { return false. }
+    if abs(roll_for()) > navigation_config["recovery_defer_bank"] { return false. }
+    if brakes <> context["brakes"] or gear <> context["gear"] { return false. }
+    if abs(ship:mass-context["mass"]) > 0.01*max(1,context["mass"]) { return false. }
+    // The terrain footprint already reserves configured forward acceleration.
+    // Accept that bounded speed growth, but never a comparable loss of lift.
+    if ship:airspeed < context["speed"]-navigation_config["recovery_speed_drift"] or
+       ship:airspeed > context["speed"]+navigation_config["scan_acceleration"]*scan_age+
+           navigation_config["recovery_speed_drift"] or
+       ship:airspeed < context["sample_speed"] { return false. }
+    if abs(ship:altitude-context["altitude"]) > navigation_config["recovery_altitude_drift"] or
+       abs(ship:verticalspeed-context["vs"]) > navigation_config["recovery_vs_drift"] or
+       abs(roll_for()-context["bank"]) > navigation_config["recovery_bank_drift"] { return false. }
+    if bottom_height < context["bottom"]+min(context["vs"],navigation_config["climb_credit"])*scan_age-25 { return false. }
+    set scan["recovery_reason"] to "far_supported".
+    return true.
+}
+
 // Scan only at a fixed low rate and retain the result between scans.  The
 // predicted clearance includes descent during the look-ahead interval and a
 // response margin for the scan period plus the aircraft's pull-up delay.
@@ -313,17 +393,35 @@ function envelope_terrain_refresh {
     local horizontal_velocity is ship:velocity:surface-ship:up:vector*vdot(ship:velocity:surface,ship:up:vector).
     local scan_now is time:seconds.
     if scan["paths"]:length = 0 and scan_now >= scan["next_start"] {
+        local capability is lex("valid",false,"acceleration",0).
+        if scan["phase"] = "central" {
+            set capability to envelope_terrain_recovery_authority(navigation_config,terrain_config,
+                envelope["terrain_bounds"]:bottomalt,horizontal_velocity:mag).
+        }
         terrain_scan_start(scan,ship:geoposition,compass_for_prograde(),horizontal_velocity:mag,
             envelope["terrain_bounds"]:bottomalt,ship:verticalspeed,
-            ship:body:mu/(ship:body:radius+ship:altitude)^2,navigation_config,scan_now,roll_for()).
+            ship:body:mu/(ship:body:radius+ship:altitude)^2,navigation_config,scan_now,roll_for(),capability["acceleration"]).
+        set scan["paths"][0]["recovery_context"] to capability.
     }
     terrain_scan_advance(scan,navigation_config,scan_now).
     local long_threat is scan["central_margin"] < 0.
+    local recovery_usable is envelope_terrain_recovery_usable(scan,navigation_config,envelope["terrain_bounds"]:bottomalt).
+    local remaining_delay is scan["safe_delay"]-max(0,scan_now-scan["central_ut"]).
+    local long_urgent is long_threat.
+    if recovery_usable {
+        set long_urgent to long_threat and remaining_delay <= navigation_config["recovery_reserve_seconds"].
+    }
+    set scan["trigger_reason"] to "clear".
+    if long_threat { set scan["trigger_reason"] to "future_conflict". }
+    if long_urgent {
+        set scan["trigger_reason"] to "recovery_margin".
+        if not recovery_usable { set scan["trigger_reason"] to "conservative_fallback". }
+    }
     local escape_fresh is scan["escape_valid"] and scan_now-scan["completed_ut"] <= navigation_config["maximum_age"] and
         abs(terrain_heading_delta(compass_for_prograde(),scan["escape_snapshot_course"])) <= 5.
     if not escape_fresh { set scan["escape_valid"] to false. }
     set scan["mode"] to "monitor".
-    if long_threat {
+    if long_urgent or (envelope["state"] = "terrain_pullup" and long_threat) {
         set scan["mode"] to "climb".
         if escape_fresh { set scan["mode"] to "turn". }
     }
@@ -341,6 +439,10 @@ function envelope_terrain_refresh {
     local required_clearance is navigation_config["clearance"] +
         vertical_closure_rate * (terrain_config["scan_interval"] + terrain_config["response_time"]).
     set envelope["terrain_required_clearance"] to required_clearance.
+    if envelope["terrain_worst_clearance"] < required_clearance {
+        set scan["trigger_reason"] to "short_clearance".
+    }
+
 
     if envelope["state"] = "terrain_pullup" {
         if scan["mode"] = "monitor" { set scan["mode"] to "climb". }
@@ -349,7 +451,17 @@ function envelope_terrain_refresh {
         // aircraft in full-power recovery solely because it cannot climb.
         if scan["escape_offset"] <> 0 and scan["central_margin"] >= terrain_config["release_margin"] and
            ship:verticalspeed >= -0.5 { set recovery_vertical_safe to true. }
-        if not long_threat and scan_now-scan["central_ut"] <= navigation_config["maximum_age"] and
+        // A stable shallow descent can hand back to CSS when a fresh full
+        // corridor retains ample delay and clearance, including the far ridge.
+        local recovery_path_safe is recovery_usable and
+            remaining_delay >= navigation_config["recovery_release_seconds"] and
+            scan["recovery_margin"] >= terrain_config["release_margin"] and
+            abs(roll_for()) <= navigation_config["recovery_release_bank"] and
+            ship:verticalspeed >= -navigation_config["recovery_release_sink"].
+        if recovery_path_safe { set recovery_vertical_safe to true. }
+        if (not long_threat or recovery_path_safe) and
+           scan_now-scan["central_ut"] <= navigation_config["maximum_age"] and
+           abs(terrain_heading_delta(compass_for_prograde(),scan["central_course"])) <= 5 and
            envelope["terrain_worst_clearance"] >= required_clearance + terrain_config["release_margin"] and
            recovery_vertical_safe {
             set envelope["terrain_clear_timer"] to envelope["terrain_clear_timer"] + dt.
@@ -365,7 +477,7 @@ function envelope_terrain_refresh {
         return.
     }
 
-    if long_threat or envelope["terrain_worst_clearance"] < required_clearance {
+    if long_urgent or envelope["terrain_worst_clearance"] < required_clearance {
         if scan["mode"] = "monitor" {
             set scan["mode"] to "climb".
             if escape_fresh { set scan["mode"] to "turn". }
@@ -373,7 +485,7 @@ function envelope_terrain_refresh {
         set envelope["state"] to "terrain_pullup".
         set envelope["terrain_state"] to "pullup".
         set envelope["terrain_clear_timer"] to 0.
-    } else if envelope["terrain_worst_clearance"] < required_clearance + terrain_config["warning_margin"] {
+    } else if long_threat or envelope["terrain_worst_clearance"] < required_clearance + terrain_config["warning_margin"] {
         set envelope["terrain_state"] to "caution".
     } else {
         set envelope["terrain_state"] to "normal".

@@ -947,6 +947,24 @@ function calculate_high_energy_final_command {
     ).
 }
 
+// One policy for terminal, landing-commit and committed-flare escapes.
+// Suppressed requests are logged once per reason, not on every flight tick.
+function terminal_route_go_around_allowed {
+    parameter route, reason.
+    if AVES["TerminalRoute"]["GoAround"]["enabled"] {
+        set route["go_around_suppressed_reason"] to "".
+        return true.
+    }
+    if not route:haskey("go_around_suppressed_reason") {
+        set route["go_around_suppressed_reason"] to "".
+    }
+    if route["go_around_suppressed_reason"] <> reason {
+        flight_log_event("terminal_go_around_suppressed","reason="+reason+"|enabled=False").
+        set route["go_around_suppressed_reason"] to reason.
+    }
+    return false.
+}
+
 function terminal_route_change_phase {
     parameter route, new_phase.
     if route["phase"] <> new_phase {
@@ -1528,6 +1546,7 @@ function terminal_route_init {
         "|shallow_gradient="+AVES["glideslope"]["angle2"]+"|steep_intercept="+AVES["glideslope"]["target1"]+
         "|preflare_start="+AVES["glideslope"]["preflare_start"]+"|preflare_end="+AVES["glideslope"]["preflare_end"]+
         "|shallow_aimpoint="+AVES["glideslope"]["shallow_aimpoint"]+
+        "|go_around_enabled="+config_TR["GoAround"]["enabled"]+
         "|brake_engage_confirm="+config_TR["BrakeTiming"]["engage_confirm"]+
         "|brake_release_dwell="+config_TR["BrakeTiming"]["release_dwell"]+
         "|brake_overspeed_margin="+config_TR["BrakeTiming"]["overspeed_margin"]).
@@ -2090,10 +2109,11 @@ function terminal_route_update {
         set powered_vertical_escape to abort_state["engines"]["rapier"]["working"] > 0 and
             ship:liquidfuel > abort_state["lf_reserve"].
     }
-    if route["phase"] = "final" and go_around_config["enabled"] and
+    if route["phase"] = "final" and
        surface_clearance > go_around_config["minimum_altitude"] and not contact and
        (vertical_unstable or lateral_unstable) and
-       (energy_margin > go_around_config["minimum_reposition_energy"] or powered_vertical_escape) {
+       (energy_margin > go_around_config["minimum_reposition_energy"] or powered_vertical_escape) and
+       terminal_route_go_around_allowed(route,"unstable_final") {
         set route["go_around_count"] to route["go_around_count"] + 1.
         set route["go_around_reason"] to "unstable_final".
         if vertical_unstable { set route["go_around_reason"] to "unrecovered_descent". }

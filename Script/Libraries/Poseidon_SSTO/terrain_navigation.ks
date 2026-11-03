@@ -24,14 +24,63 @@ function terrain_departure_height_gain {
         (navigation_config["departure_gradient"]-navigation_config["departure_initial_gradient"])*effective_distance.
 }
 
+// Freeze recovery inputs as values, including delay-list contents. A live
+// configuration edit must not reuse clearance from the previous envelope.
+function terrain_recovery_config_key {
+    parameter navigation_config.
+    local config_key is "".
+    for field_key in list("response_seconds","recovery_climb_speed","clearance",
+        "sample_spacing","corridor_width","corridor_growth","horizon_seconds",
+        "minimum_range","maximum_range","scan_acceleration","recovery_force_safety",
+        "recovery_max_acceleration","recovery_sample_aoa","recovery_speed_fraction",
+        "escape_margin","escape_bank","prediction_bank","roll_hold_seconds",
+        "rollout_seconds","climb_credit","recovery_tail_seconds") {
+        set config_key to config_key+"|"+navigation_config[field_key].
+    }
+    for delay_seconds in navigation_config["recovery_delays"] {
+        set config_key to config_key+"|delay="+delay_seconds.
+    }
+    return config_key.
+}
+
+// Recovery is a bounded performance assumption supported by a live FAR sample,
+// never by commanded AoA alone. Absolute integration avoids station-size drift.
+function terrain_recovery_height_gain {
+    parameter elapsed_seconds, initial_vs, extra_delay, recovery_acceleration, navigation_config.
+    local delayed_seconds is navigation_config["response_seconds"]+extra_delay.
+    local initial_climb is min(initial_vs,navigation_config["climb_credit"]).
+    local active_seconds is max(0,elapsed_seconds-delayed_seconds).
+    local climb_limit is max(initial_climb,navigation_config["recovery_climb_speed"]).
+    local accelerating_seconds is min(active_seconds,
+        max(0,(climb_limit-initial_climb)/max(0.001,recovery_acceleration))).
+    return initial_climb*elapsed_seconds + recovery_acceleration*
+        (0.5*accelerating_seconds^2+accelerating_seconds*(active_seconds-accelerating_seconds)).
+}
+
+// Signed lift in the sampled relative-wind frame. kN / tonnes = m/s^2.
+function terrain_recovery_acceleration {
+    parameter sampled_force, sample_velocity, vessel_top, craft_mass, local_gravity,
+        flight_path_fraction, navigation_config.
+    local wind_direction is sample_velocity:normalized.
+    local lift_axis is vessel_top-wind_direction*vdot(vessel_top,wind_direction).
+    if lift_axis:mag < 0.001 { return 0. }
+    local lift_force_kn is vdot(sampled_force,lift_axis:normalized).
+    local vertical_fraction is sqrt(max(0,1-flight_path_fraction^2))*cos(navigation_config["escape_bank"]).
+    local net_acceleration is lift_force_kn/max(0.001,craft_mass)*vertical_fraction-local_gravity.
+    return max(0,min(navigation_config["recovery_max_acceleration"],
+        net_acceleration*navigation_config["recovery_force_safety"])).
+}
+
 function terrain_path_create {
     parameter origin_point, initial_course, first_course, final_course,
         path_speed, bottom_height, path_vs, local_gravity, navigation_config,
-        departure_mode is false, initial_roll is 0.
+        departure_mode is false, initial_roll is 0, recovery_acceleration is 0.
     local path_range is min(navigation_config["maximum_range"],max(navigation_config["minimum_range"],
         path_speed*navigation_config["horizon_seconds"] +
         0.5*navigation_config["scan_acceleration"]*navigation_config["horizon_seconds"]^2)).
     if departure_mode { set path_range to navigation_config["departure_range"]. }
+    local recovery_margins is list().
+    for recovery_delay in navigation_config["recovery_delays"] { recovery_margins:add(999999). }
     return lex("point",origin_point,"origin",origin_point,"course",initial_course,
         "first_course",first_course,"final_course",final_course,
         "speed",max(path_speed,60),"bottom",bottom_height,"vs",path_vs,
@@ -39,6 +88,9 @@ function terrain_path_create {
         "elapsed",0,"range",path_range,"margin",999999,"clearance",999999,
         "conflict_time",999999,"threat_lat",0,"threat_lng",0,"threat_height",0,
         "done",false,"waypoints",list(),"next_waypoint",1000,
+        "recovery_acceleration",recovery_acceleration,"recovery_margins",recovery_margins,
+        "recovery_context",lex("valid",false),"recovery_threat_lat",0,"recovery_threat_lng",0,
+        "recovery_threat_height",0,"initial_speed",path_speed,
         "initial_bottom",bottom_height,"worst_distance",0,"worst_bottom",bottom_height,
         "worst_required_clearance",0,"required_gradient",0).
 }
@@ -85,6 +137,25 @@ function terrain_path_advance {
     set terrain_path_state["elapsed"] to terrain_path_state["elapsed"]+station_dt.
     set terrain_path_state["distance"] to terrain_path_state["distance"]+station_distance.
     local station_floor is navigation_config["clearance"].
+    local recovery_bottoms is list().
+    if not terrain_path_state["departure"] and terrain_path_state["recovery_acceleration"] > 0 {
+        for recovery_delay in navigation_config["recovery_delays"] {
+            // Include the interval's nadir even if descent arrest falls between
+            // terrain stations. Terrain sampling itself remains discrete.
+            local nadir_seconds is navigation_config["response_seconds"]+recovery_delay+
+                max(0,-terrain_path_state["vs"])/terrain_path_state["recovery_acceleration"].
+            local minimum_seconds is terrain_path_state["elapsed"]-station_dt.
+            if terrain_path_state["vs"] < 0 {
+                set minimum_seconds to max(minimum_seconds,min(terrain_path_state["elapsed"],nadir_seconds)).
+            }
+            // The recovery curve decreases to its nadir then increases. One
+            // clamped evaluation gives the exact interval minimum; do not
+            // integrate or reevaluate both endpoints for every candidate.
+            local interval_minimum is terrain_recovery_height_gain(minimum_seconds,
+                terrain_path_state["vs"],recovery_delay,terrain_path_state["recovery_acceleration"],navigation_config).
+            recovery_bottoms:add(terrain_path_state["initial_bottom"]+interval_minimum).
+        }
+    }
     if terrain_path_state["departure"] {
         set terrain_path_state["bottom"] to terrain_path_state["initial_bottom"]+
             terrain_departure_height_gain(terrain_path_state["distance"],navigation_config).
@@ -100,6 +171,9 @@ function terrain_path_advance {
         }
     }
     local corridor_width is navigation_config["corridor_width"] + terrain_path_state["distance"]*navigation_config["corridor_growth"].
+    local highest_probe_height is -999999.
+    local highest_probe_lat is 0.
+    local highest_probe_lng is 0.
     local corridor_sides is list(0,-1,1).
     local corridor_index is 0.
     until corridor_index >= corridor_sides:length {
@@ -114,6 +188,11 @@ function terrain_path_advance {
         if ship:body:hasocean { set probe_height to max(0,probe_height). }
         local probe_clearance is terrain_path_state["bottom"]-probe_height.
         local probe_margin is probe_clearance-station_floor.
+        if probe_height > highest_probe_height {
+            set highest_probe_height to probe_height.
+            set highest_probe_lat to probe_point:lat.
+            set highest_probe_lng to probe_point:lng.
+        }
         if terrain_path_state["departure"] {
             set terrain_path_state["required_gradient"] to max(terrain_path_state["required_gradient"],
                 (probe_height+station_floor-terrain_path_state["initial_bottom"])/max(1,terrain_path_state["distance"])).
@@ -129,6 +208,21 @@ function terrain_path_advance {
             set terrain_path_state["threat_height"] to probe_height.
         }
         if probe_margin < 0 { set terrain_path_state["conflict_time"] to min(terrain_path_state["conflict_time"],terrain_path_state["elapsed"]). }
+    }
+    // Every vertical candidate shares this station's footprint. Compare once
+    // with its highest terrain probe instead of repeating candidate work for
+    // the centre and both edges. All three terrain queries are retained.
+    local recovery_index is 0.
+    until recovery_index >= recovery_bottoms:length {
+        local recovery_margin is recovery_bottoms[recovery_index]-highest_probe_height-station_floor.
+        if recovery_index = 0 and recovery_margin < terrain_path_state["recovery_margins"][0] {
+            set terrain_path_state["recovery_threat_lat"] to highest_probe_lat.
+            set terrain_path_state["recovery_threat_lng"] to highest_probe_lng.
+            set terrain_path_state["recovery_threat_height"] to highest_probe_height.
+        }
+        set terrain_path_state["recovery_margins"][recovery_index] to min(
+            terrain_path_state["recovery_margins"][recovery_index],recovery_margin).
+        set recovery_index to recovery_index+1.
     }
     if terrain_path_state["departure"] and (terrain_path_state["distance"] >= terrain_path_state["next_waypoint"] or terrain_path_state["distance"] >= terrain_path_state["range"]) {
         terrain_path_state["waypoints"]:add(terrain_path_state["point"]).
@@ -273,15 +367,18 @@ function terrain_alignment_pitch {
 
 function terrain_scan_state {
     return lex("paths",list(),"phase","central","candidate_index",1,"active_offset",0,"started_ut",-999999,"completed_ut",-999999,
-        "central_ut",-999999,"central_margin",999999,"conflict_ut",999999,
+        "central_ut",-999999,"central_course",0,"trigger_reason","not_scanned","central_margin",999999,"conflict_ut",999999,
         "threat_lat",0,"threat_lng",0,"threat_height",0,"range",0,
         "escape_course",0,"escape_offset",0,"escape_margin",-999999,
+        "recovery_context",lex("valid",false),"recovery_margin",-999999,"safe_delay",-1,
+        "recovery_acceleration",0,"recovery_reason","not_scanned",
+        "recovery_threat_lat",0,"recovery_threat_lng",0,"recovery_threat_height",0,
         "escape_valid",false,"escape_snapshot_course",0,"snapshot_course",0,"mode","idle","next_start",0).
 }
 
 function terrain_scan_start {
     parameter scan, origin_point, track_course, path_speed, bottom_height, path_vs,
-        local_gravity, navigation_config, scan_ut, initial_roll is 0.
+        local_gravity, navigation_config, scan_ut, initial_roll is 0, recovery_acceleration is 0.
     set scan["started_ut"] to scan_ut.
     set scan["snapshot_course"] to track_course.
     local candidate_offset is 0.
@@ -290,7 +387,7 @@ function terrain_scan_start {
     }
     set scan["active_offset"] to candidate_offset.
     set scan["paths"] to list(terrain_path_create(origin_point,track_course,track_course+candidate_offset,
-        track_course+candidate_offset,path_speed,bottom_height,path_vs,local_gravity,navigation_config,false,initial_roll)).
+        track_course+candidate_offset,path_speed,bottom_height,path_vs,local_gravity,navigation_config,false,initial_roll,recovery_acceleration)).
 }
 
 function terrain_scan_advance {
@@ -304,6 +401,7 @@ function terrain_scan_advance {
     }
     if not active_path["done"] { return. }
     if scan["phase"] = "central" {
+        set scan["central_course"] to scan["snapshot_course"].
         set scan["central_margin"] to active_path["margin"].
         set scan["central_ut"] to scan["started_ut"].
         set scan["conflict_ut"] to scan["started_ut"]+active_path["conflict_time"].
@@ -311,8 +409,35 @@ function terrain_scan_advance {
         set scan["threat_lng"] to active_path["threat_lng"].
         set scan["threat_height"] to active_path["threat_height"].
         set scan["range"] to active_path["range"].
-        // Spend escape-search work only while there is a long-range threat.
-        if scan["central_margin"] < 0 {
+        set scan["recovery_context"] to active_path["recovery_context"].
+        set scan["recovery_acceleration"] to active_path["recovery_acceleration"].
+        set scan["recovery_margin"] to -999999.
+        set scan["safe_delay"] to -1.
+        set scan["recovery_threat_lat"] to active_path["recovery_threat_lat"].
+        set scan["recovery_threat_lng"] to active_path["recovery_threat_lng"].
+        set scan["recovery_threat_height"] to active_path["recovery_threat_height"].
+        if active_path["recovery_acceleration"] > 0 {
+            set scan["recovery_margin"] to active_path["recovery_margins"][0].
+            local delay_index is 0.
+            for recovery_delay in navigation_config["recovery_delays"] {
+                local arrest_seconds is navigation_config["response_seconds"]+recovery_delay+
+                    max(0,-active_path["vs"])/active_path["recovery_acceleration"].
+                // An unfinished recovery cannot authorize further delay. Keep
+                // scanning the complete corridor, past any first impact.
+                if active_path["recovery_margins"][delay_index] >= navigation_config["escape_margin"] and
+                   arrest_seconds+navigation_config["recovery_tail_seconds"] <= active_path["elapsed"] {
+                    set scan["safe_delay"] to recovery_delay.
+                }
+                set delay_index to delay_index+1.
+            }
+        }
+        // While a supported delayed recovery remains safe, prioritize fresh
+        // central terrain over unnecessary lateral searches. Otherwise the
+        // candidate interleave can age a valid descent scan into a fallback.
+        // Urgent/unsupported threats retain the existing lateral search.
+        if scan["central_margin"] < 0 and
+           (not active_path["recovery_context"]["valid"] or
+            scan["safe_delay"] <= navigation_config["recovery_reserve_seconds"]) {
             set scan["phase"] to "candidate".
             // Recheck the selected side between central scans rather than
             // allowing a good escape to age while searching other headings.

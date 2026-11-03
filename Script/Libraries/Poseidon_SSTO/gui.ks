@@ -5,6 +5,7 @@
 // The low-entry graph uses an offline nominal generated from successful flights.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_nominal_profile.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/ascent_gui.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/return_gui.ks").
 
 // Empirical KSP/Unity placement calibration for the five energy-versus-range
 // pages. Shuttle offsets retain their console calibration. Prediction offsets
@@ -54,32 +55,6 @@ global reentry_traj5_vsit_calibration is lex(
     "ssto_y_offset", -15.3,
     "pred_x_offset", 2.8,
     "pred_y_offset", 0
-).
-
-// KSP/Unity placement calibration for the two runway-relative L/SIT pages.
-// The rotated shuttle artwork has a different visible footprint at each
-// angle, so both it and the following prediction widget need independent
-// offsets for every rotation. Values were captured as paired shuttle/pred
-// rows with Script/Tests/POS_M2L_LSIT_GUI_Calibrate.ks.
-global reentry_lsit1_bug_calibration is lex(
-    "0", lex("ssto_x",4.6,"ssto_y",2,"pred_x",18.5,"pred_y",-27),
-    "45", lex("ssto_x",4.6,"ssto_y",-12,"pred_x",18.5,"pred_y",-45.5),
-    "90", lex("ssto_x",11,"ssto_y",-13,"pred_x",18.5,"pred_y",-40.9),
-    "135", lex("ssto_x",13.9,"ssto_y",-9.2,"pred_x",18.5,"pred_y",-45.5),
-    "180", lex("ssto_x",16,"ssto_y",2,"pred_x",18.5,"pred_y",-27),
-    "225", lex("ssto_x",14,"ssto_y",-4,"pred_x",18.5,"pred_y",-45.5),
-    "270", lex("ssto_x",11,"ssto_y",2,"pred_x",18.5,"pred_y",-40),
-    "315", lex("ssto_x",9.2,"ssto_y",-5,"pred_x",18.5,"pred_y",-46)
-).
-global reentry_lsit2_bug_calibration is lex(
-    "0", lex("ssto_x",-277.3,"ssto_y",12,"pred_x",-268.1,"pred_y",-17),
-    "45", lex("ssto_x",-277.3,"ssto_y",0,"pred_x",-268.1,"pred_y",-37),
-    "90", lex("ssto_x",-275,"ssto_y",0,"pred_x",-268.1,"pred_y",-29),
-    "135", lex("ssto_x",-271,"ssto_y",0,"pred_x",-268.1,"pred_y",-35),
-    "180", lex("ssto_x",-272.7,"ssto_y",13,"pred_x",-268.1,"pred_y",-16),
-    "225", lex("ssto_x",-272.7,"ssto_y",5,"pred_x",-268.1,"pred_y",-35),
-    "270", lex("ssto_x",-275,"ssto_y",12,"pred_x",-268.1,"pred_y",-30),
-    "315", lex("ssto_x",-276,"ssto_y",5,"pred_x",-268.1,"pred_y",-35)
 ).
 
 function update_readouts{
@@ -419,17 +394,19 @@ function create_reentry_display {
     set abort_flag to false.
     set end to false.
     
-    global reentry_gui to gui(800).
-    set reentry_gui:style:width to 800.
+    global reentry_gui to gui(680).
+    set reentry_gui:style:width to 680.
 
     reentry_gui:show().
     // GUI Setup
-    local Title_BOX is reentry_gui:addhbox().
+    local Title_BOX is reentry_gui:addhlayout().
     set reentry_gui:style:hstretch to true.
-    set gui_titel to "Reentry and Landing Assistant".
+    set gui_titel to "POSEIDON RETURN".
     set titel to Title_BOX:addlabel(gui_titel).
     set titel:style:align to ("LEFT").
-    set titel:text to " <size=30><b>"+gui_titel+"</b></size>".
+    set titel:text to "<size=16><b>"+gui_titel+"</b></size>".
+    ascent_display_label_style(titel,16).
+    set titel:style:width to 560.
 
     GLOBAL minb IS title_box:ADDBUTTON("-").
     set minb:style:margin:h to 7.
@@ -467,12 +444,13 @@ function create_reentry_display {
     SET quitb:ONCLICK TO quitcheck@.
 
     GLOBAL toggels_box IS reentry_gui:ADDHLAYOUT().
-    SET toggels_box:STYLE:WIDTH TO reentry_gui:style:width - 16.
+    SET toggels_box:STYLE:WIDTH TO 640.
 
     GLOBAL dap_mode_box IS toggels_box:ADDHLAYOUT().
     SET dap_mode_box:STYLE:WIDTH TO 105.
     GLOBAL dap_mode_text IS dap_mode_box:ADDLABEL("<b>DAP</b>"). 
     set dap_mode_text:style:margin:v to -3.
+    ascent_display_label_style(dap_mode_text,12).
     GLOBAL dap_mode_menu IS dap_mode_box:addpopupmenu().
     set dap_mode_menu:style:margin:v to -3.
     SET dap_mode_menu:STYLE:WIDTH TO 65.
@@ -498,6 +476,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     SET Reentry_mode_box:STYLE:WIDTH TO 105.
     GLOBAL Reentry_mode_text IS Reentry_mode_box:ADDLABEL("<b>Mode</b>"). 
     set Reentry_mode_text:style:margin:v to -3.
+    ascent_display_label_style(Reentry_mode_text,12).
     GLOBAL Reentry_mode_menu IS Reentry_mode_box:addpopupmenu().
     set Reentry_mode_menu:style:margin:v to -3.
     SET Reentry_mode_menu:STYLE:WIDTH TO 65.
@@ -519,27 +498,16 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
 
 
 
-    GLOBAL abort_b is toggels_box:ADDBUTTON("ABORT").
-    SET abort_b:STYLE:WIDTH TO 55.
-    SET abort_b:STYLE:HEIGHT TO 25.
-    set abort_b:style:margin:v to -3.
-    set abort_b:STYLE:BG to "Libraries/gui_images/abort_btn.png".
-
-    FUNCTION manual_abort_trigger {
-        if abort_flag {
-            return.
-        }
-        getvoice(0):play(note(300,0.5)).
-        set abort_flag to true.
-        
-    }
-    SET abort_b:ONCLICK TO manual_abort_trigger@.
-
+    // Target setup occupies its own row in the 680px ascent-sized window.
+    local return_target_setup is reentry_gui:addhlayout().
+    set return_target_setup:style:width to 640.
     // Location Selection Popup Menu
-    local location_box is toggels_box:addhlayout().
+    local location_box is return_target_setup:addhlayout().
     local location_label is location_box:addlabel("<b>Location:</b> ").
+    ascent_display_label_style(location_label,12).
     local location_popup is location_box:addpopupmenu().
     SET location_popup:STYLE:HEIGHT TO 25.
+    set location_popup:style:width to 230.
 
     // Add unique locations to the popup menu
     for loc in location_to_runways:keys {
@@ -553,10 +521,12 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     location_box:show().
 
     // Runway Selection Popup Menu (dynamically updated)
-    local runway_box is toggels_box:addhlayout().
+    local runway_box is return_target_setup:addhlayout().
     local runway_label is runway_box:addlabel("<b>Runway:</b> ").
+    ascent_display_label_style(runway_label,12).
     local runway_popup is runway_box:addpopupmenu().
     SET runway_popup:STYLE:HEIGHT TO 25.
+    set runway_popup:style:width to 70.
     runway_box:show().
 
     // Function to update runways based on location selection
@@ -582,7 +552,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     update_runway_options().
 
     // OK button to finalize the inputs
-    local ok_box is toggels_box:addhlayout().
+    local ok_box is return_target_setup:addhlayout().
     local ok_button is ok_box:addbutton("OK").
     ok_box:show().
 
@@ -631,85 +601,6 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     
 }
 
-function create_reentry_gui{
-      // Add the image to the vbox
-    set console to reentry_gui:addvbox().
-    set console:style:height to 300.
-    set console:STYLE:BG to "Libraries/gui_images/console.png".
-    set console_mode to "SETUP".
-    set console_titel to console:addlabel("<size=20><b>"+console_mode+"</b></size>").
-    set console_titel:style:align to "center".
-    set console_time to console:addlabel((timestamp():clock)).
-    SET console:STYLe:HEIGHT TO 400.
-    set console_time:style:align to "right".
-    set console_titel:style:margin:bottom to -30.
-    set console_time:style:margin:top to -30.
-    set traj_disp_mainbox to console:ADDVLAYOUT().
-	SET traj_disp_mainbox:STYLE:ALIGN TO "Center".
-    SET traj_disp_mainbox:STYLe:HEIGHT TO 380.
-    SET traj_disp_mainbox:STYLe:margin:v TO -150.
-    set traj_disp_mainbox:style:padding:v to 0.
-    set traj_disp_mainbox:style:padding:h to 0.
-    set traj_data to console:addvbox().
-
-    GLOBAL traj_disp_ssto IS console:ADDLABEL().
-	SET traj_disp_ssto:IMAGE TO "Libraries/gui_images/ssto_bug.png".
-	SET traj_disp_ssto:STYLe:WIDTH TO 22.
-
-    Global traj_disp_pred is console:ADDLABEL().
-    SET traj_disp_pred:IMAGE TO "Libraries/gui_images/guid_pred_bug.png".
-    SET traj_disp_pred:STYLe:WIDTH TO 8.
-    set traj_disp_pred:visible to false.
-
-    // L/SIT route dots are added after the shuttle and guidance bugs.  kOS
-    // lays labels out cumulatively inside this vbox, so their vertical
-    // positions are applied as deltas in update_reentry_lsit_path().
-    global traj_disp_path is list().
-    for path_bug_index in range(0, 10) {
-        local path_bug is console:addlabel().
-        set path_bug:image to "Libraries/gui_images/guid_pred_bug.png".
-        set path_bug:style:width to 4.
-        set path_bug:visible to false.
-        traj_disp_path:add(path_bug).
-    }
-
-    // Anchor V/SIT dots inside the existing chart, before the shuttle in the
-    // console tree. This transparent 1px origin establishes chart coordinates.
-    // Move label rectangles with margins; keep image padding zero so dots
-    // retain a usable content rectangle both above and below the shuttle.
-    global traj_disp_prediction_origin is traj_disp_mainbox:addvlayout().
-    set traj_disp_prediction_origin:style:bg to "".
-    set traj_disp_prediction_origin:style:width to 1.
-    set traj_disp_prediction_origin:style:height to 1.
-    set traj_disp_prediction_origin:style:hstretch to false.
-    set traj_disp_prediction_origin:style:vstretch to false.
-    set traj_disp_prediction_origin:style:padding:v to 0.
-    set traj_disp_prediction_origin:style:padding:h to 0.
-    set traj_disp_prediction_origin:style:margin:v to 0.
-    set traj_disp_prediction_origin:style:margin:h to 0.
-    set traj_disp_prediction_origin:visible to false.
-    global traj_disp_prediction_path is list().
-    for prediction_dot_index in range(0, 16) {
-        local prediction_dot is traj_disp_mainbox:addlabel().
-        set prediction_dot:image to "Libraries/gui_images/entry_path_dot.png".
-        set prediction_dot:style:width to 2.
-        set prediction_dot:style:height to 2.
-        set prediction_dot:visible to false.
-        traj_disp_prediction_path:add(prediction_dot).
-    }
-
-    set traj_data:style:bg to"Libraries/gui_images/bg_blank.png".
-    set traj_data:style:margin:bottom to -100.
-    SET traj_data:STYLE:ALIGN TO "Left".   
-    set traj_data_pitch to traj_data:addlabel("P "+round(pitch_for())).
-    set traj_data_yaw to traj_data:addlabel("Y "+round(compass_for())).
-    set traj_data_roll to traj_data:addlabel("R "+round(roll_for())).
-    set traj_data_mach to traj_data:addlabel("Mach "+round(ADDONS:FAR:mach)).
-    set traj_data_aoa to traj_data:addlabel("AOA "+round(calc_aoa())).
-    set traj_data_ld to traj_data:addlabel("L/D "+round(0)).
-
-}
-
 // Convert a geoposition to runway-relative coordinates.  Positive along-track
 // is on the approach side of the threshold; cross-track is signed.
 function reentry_lsit_geometry {
@@ -723,51 +614,6 @@ function reentry_lsit_geometry {
         "along_track", distance * cos(bearing_error),
         "cross_track", distance * sin(bearing_error)
     ).
-}
-
-// Map runway-relative metres into the same GUI offset range used by TRAJ 1.
-// The runway remains fixed on the right while the approach extends left.
-// Mirror cross-track about the ERCL: zero keeps its calibrated Y, while
-// positive cross-track appears above it and negative cross-track below it.
-function reentry_lsit_screen_position {
-    parameter position, max_along_track, max_cross_track.
-    local geometry is reentry_lsit_geometry(position).
-    local along_ratio is geometry["along_track"] / max(max_along_track, 1).
-    local cross_ratio is geometry["cross_track"] / max(max_cross_track, 1).
-    set along_ratio to max(-0.03, min(1, along_ratio)).
-    set cross_ratio to max(-1, min(1, cross_ratio)).
-    return lex(
-        "x", 680 - along_ratio * 620,
-        "y", 6 - cross_ratio * 110
-    ).
-}
-
-// The L/SIT shuttle bug faces screen-right in its unrotated artwork. Convert
-// the live surface track into that screen frame, then select the closest one
-// of the eight pre-rotated images. This keeps the icon pointing along the
-// ground track even though the L/SIT map is runway-relative.
-function reentry_lsit_ssto_rotation {
-    parameter course_heading.
-    local outward_heading is runway_heading + 180.
-    local relative_heading is normalized_heading_error(course_heading, outward_heading).
-    // Mirroring the map vertically also reverses the on-screen turn angle.
-    // Keep selecting the calibration belonging to the displayed artwork.
-    local screen_rotation is 180 + relative_heading.
-    until screen_rotation >= 0 { set screen_rotation to screen_rotation + 360. }
-    until screen_rotation < 360 { set screen_rotation to screen_rotation - 360. }
-    return mod(round(screen_rotation / 45), 8) * 45.
-}
-
-function reentry_lsit_ssto_image {
-    parameter course_heading.
-    local rotation_degrees is reentry_lsit_ssto_rotation(course_heading).
-    return "Libraries/gui_images/ssto_lsit_" + rotation_degrees + ".png".
-}
-
-function hide_reentry_lsit_path {
-    for path_bug in traj_disp_path {
-        set path_bug:visible to false.
-    }
 }
 
 function hide_reentry_vsit_prediction_path {
@@ -907,30 +753,6 @@ function update_reentry_vsit_prediction_path {
     return visible_count.
 }
 
-// Return a display-sized sample of the solver's complete planned ground path.
-function reentry_lsit_entry_path {
-    local result is list().
-    if defined entry_traj and entry_traj:haskey("converged_sim") {
-        local converged_sim is entry_traj["converged_sim"].
-        if converged_sim:haskey("controll_inputs") {
-            local controls is converged_sim["controll_inputs"].
-            local control_keys is controls:keys.
-            local sample_count is min(traj_disp_path:length, control_keys:length).
-            if sample_count > 0 {
-                for sample_index in range(0, sample_count) {
-                    local control_index is 0.
-                    if sample_count > 1 {
-                        set control_index to round(sample_index * (control_keys:length - 1) / (sample_count - 1)).
-                    }
-                    local control_key is control_keys[control_index].
-                    result:add(controls[control_key]["simstate"]["latlong"]).
-                }
-            }
-        }
-    }
-    return result.
-}
-
 // Build the remaining terminal route in flight order.  These are real route
 // vertices from terminal_route, not a decorative static line.
 function reentry_lsit_terminal_path {
@@ -958,287 +780,6 @@ function reentry_lsit_terminal_path {
     return result.
 }
 
-// Place route bugs after the shuttle/prediction widgets.  Each padding value
-// is relative to the last visible widget because later kOS vbox children move
-// when an earlier child is moved.
-function update_reentry_lsit_path {
-    parameter positions, max_along_track, max_cross_track, previous_absolute_y.
-    local visible_count is min(positions:length, traj_disp_path:length).
-    for marker_index in range(0, traj_disp_path:length) {
-        local marker is traj_disp_path[marker_index].
-        if marker_index < visible_count {
-            local marker_position is reentry_lsit_screen_position(
-                positions[marker_index], max_along_track, max_cross_track
-            ).
-            set marker:style:padding:top to marker_position["y"] - previous_absolute_y.
-            set marker:style:margin:h to marker_position["x"].
-            set marker:visible to true.
-            set previous_absolute_y to marker_position["y"].
-        } else {
-            set marker:visible to false.
-        }
-    }
-}
-
-function update_reentry_gui {
-    parameter inputs is lex(
-        "mode", console_mode,
-        "alt", ship:altitude,
-        "spd", ship:airspeed,
-        "guid_spd", 0,
-        "guid_alt", 0,
-        "guid_pos", 0,
-        "guid_pos_valid", false,
-        "prediction_path", list(),
-        "prediction_path_valid", false,
-        "range_remaining", 0,
-        "pitch", pitch_for(),
-        "yaw", compass_for(),
-        "roll", roll_for(),
-        "mach", ADDONS:FAR:mach,
-        "aoa", calc_aoa(),
-        "l/d", 0
-    ).
-    // Entry uses five zoomed energy/range V/SIT pages. TEAM starts on the wide
-    // L/SIT 1, then moves to the close-in L/SIT 2 at base. Retain
-    // that close-in view through a possible go-around and the landing step.
-    if not(defined reentry_lsit_terminal_active) {
-        global reentry_lsit_terminal_active is false.
-    }
-    if not(defined step) or (step <> "TEAM" and step <> "landing") {
-        set reentry_lsit_terminal_active to false.
-    }
-    if defined step and step = "TEAM" {
-        set inputs["mode"] to "L/SIT 1".
-        if defined terminal_route and terminal_route:haskey("phase") and
-           (terminal_route["phase"] = "base" or terminal_route["phase"] = "final") {
-            set reentry_lsit_terminal_active to true.
-        }
-    }
-    if defined step and step = "landing" {
-        set reentry_lsit_terminal_active to true.
-    }
-    if reentry_lsit_terminal_active {
-        set inputs["mode"] to "L/SIT 2".
-    }
-    global reentry_display_active_mode is inputs["mode"].
-    set console_titel:text to ("<size=20><b>"+inputs["mode"]+"</b></size>").
-    if inputs["mode"] = "DATA" {
-        set console_time:text to ((timestamp():clock)).
-        set traj_disp_ssto:visible to false.
-        set traj_disp_pred:visible to false.
-        hide_reentry_lsit_path().
-        hide_reentry_vsit_prediction_path().
-        set traj_disp_prediction_origin:visible to false.
-        traj_data:hide().
-        return.
-    } else {
-        set traj_disp_ssto:visible to true.
-        // Keep the legacy marker hidden throughout this update. Only the
-        // L/SIT branch may show it after its target position is ready.
-        // Showing it here can flash between kOS opcode slices in V/SIT.
-        set traj_disp_pred:visible to false.
-        traj_data:show().
-    }
-
-    local lsit_mode is inputs["mode"] = "L/SIT 1" or inputs["mode"] = "L/SIT 2".
-    local vsit_mode is inputs["mode"] = "TRAJ 1 V/SIT" or inputs["mode"] = "TRAJ 2 V/SIT" or
-        inputs["mode"] = "TRAJ 3 V/SIT" or inputs["mode"] = "TRAJ 4 V/SIT" or
-        inputs["mode"] = "TRAJ 5 V/SIT".
-    set traj_disp_prediction_origin:visible to vsit_mode.
-    if vsit_mode {
-        // A populated chart consumes its fixed 380px height. The readouts
-        // and shuttle were calibrated against an empty chart, which consumed
-        // no layout height. Overlap the following data box by exactly 380px
-        // to preserve that original console origin. Pair negative margins
-        // because Unity chooses MAX at each adjacent vertical boundary.
-        set traj_disp_mainbox:style:margin:bottom to -380.
-        set traj_data:style:margin:top to -380.
-    } else {
-        set traj_disp_mainbox:style:margin:bottom to -150.
-        set traj_data:style:margin:top to 0.
-        hide_reentry_vsit_prediction_path().
-    }
-    if not lsit_mode {
-        set traj_disp_ssto:image to "Libraries/gui_images/ssto_bug.png".
-        hide_reentry_lsit_path().
-    }
-
-    // Five independently zoomed pages share one physical energy/range profile.
-    // Their narrower energy and RNG axes make position inside the corridor
-    // readable throughout entry without changing the underlying guidance.
-    if inputs["mode"] = "TRAJ 1 V/SIT" or inputs["mode"] = "TRAJ 2 V/SIT" or
-       inputs["mode"] = "TRAJ 3 V/SIT" or inputs["mode"] = "TRAJ 4 V/SIT" or
-       inputs["mode"] = "TRAJ 5 V/SIT" {
-        set console_time:text to ((timestamp():clock)).
-        local page_energy_min is entry_nominal_traj1_energy_min.
-        local page_energy_max is entry_nominal_traj1_energy_max.
-        local page_range_min is entry_nominal_traj1_range_min.
-        local page_range_max is entry_nominal_traj1_range_max.
-        local vsit_calibration is reentry_traj1_vsit_calibration.
-        set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj1_entry_nominal.png".
-        if inputs["mode"] = "TRAJ 2 V/SIT" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj2_entry_nominal.png".
-            set page_energy_min to entry_nominal_traj2_energy_min.
-            set page_energy_max to entry_nominal_traj2_energy_max.
-            set page_range_min to entry_nominal_traj2_range_min.
-            set page_range_max to entry_nominal_traj2_range_max.
-            set vsit_calibration to reentry_traj2_vsit_calibration.
-        } else if inputs["mode"] = "TRAJ 3 V/SIT" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_entry_nominal.png".
-            set page_energy_min to entry_nominal_traj3_energy_min.
-            set page_energy_max to entry_nominal_traj3_energy_max.
-            set page_range_min to entry_nominal_traj3_range_min.
-            set page_range_max to entry_nominal_traj3_range_max.
-            set vsit_calibration to reentry_traj3_vsit_calibration.
-        } else if inputs["mode"] = "TRAJ 4 V/SIT" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_entry_nominal.png".
-            set page_energy_min to entry_nominal_traj4_energy_min.
-            set page_energy_max to entry_nominal_traj4_energy_max.
-            set page_range_min to entry_nominal_traj4_range_min.
-            set page_range_max to entry_nominal_traj4_range_max.
-            set vsit_calibration to reentry_traj4_vsit_calibration.
-        } else if inputs["mode"] = "TRAJ 5 V/SIT" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj5_entry_nominal.png".
-            set page_energy_min to entry_nominal_traj5_energy_min.
-            set page_energy_max to entry_nominal_traj5_energy_max.
-            set page_range_min to entry_nominal_traj5_range_min.
-            set page_range_max to entry_nominal_traj5_range_max.
-            set vsit_calibration to reentry_traj5_vsit_calibration.
-        }
-
-        local energy_height is entry_nominal_energy_height(inputs["alt"], inputs["spd"]).
-        local nominal_range is entry_nominal_range_at_energy(energy_height).
-        local range_error is inputs["range_remaining"]-nominal_range.
-        set traj_data_pitch:text to ("E "+round(energy_height/1000, 1)+" km").
-        set traj_data_yaw:text to ("RNG "+round(inputs["range_remaining"]/1000, 1)+" km").
-        set traj_data_roll:text to ("dR "+round(range_error/1000, 1)+" km").
-        set traj_data_mach:text to ("Mach "+round(inputs["mach"],2)).
-        set traj_data_aoa:text to ("AOA "+round(inputs["aoa"],2)).
-        set traj_data_ld:text to ("L/D "+round(inputs["l/d"],2)).
-
-        local clamped_energy_height is max(
-            page_energy_min, min(page_energy_max, energy_height)
-        ).
-        local energy_from_left_km is
-            (clamped_energy_height-page_energy_min)/1000.
-        local ssto_margin_h is 50 + energy_from_left_km *
-            vsit_calibration["energy_px_per_km"] +
-            vsit_calibration["ssto_x_offset"].
-        local ssto_margin_v is 140 -
-            (inputs["range_remaining"]-page_range_min)/1000 *
-            vsit_calibration["range_px_per_km"] +
-            vsit_calibration["ssto_y_offset"].
-        set traj_disp_ssto:STYLE:padding:top to ssto_margin_v.
-        set traj_disp_ssto:STYLE:margin:h to ssto_margin_h.
-
-        // Replace the static nominal-centreline bug with the cached path from
-        // the low/high guidance predictions. The live shuttle remains above it.
-        set traj_disp_pred:visible to false.
-        set traj_disp_pred:style:width to 0.
-        set traj_disp_pred:style:height to 0.
-        set traj_disp_pred:style:padding:top to 0.
-        set traj_disp_pred:style:margin:top to 0.
-        hide_reentry_lsit_path().
-        for path_marker in traj_disp_path {
-            set path_marker:style:width to 0.
-            set path_marker:style:height to 0.
-            set path_marker:style:padding:top to 0.
-            set path_marker:style:margin:top to 0.
-        }
-        local prediction_path_valid is false.
-        local prediction_path is list().
-        if inputs:haskey("prediction_path_valid") {
-            set prediction_path_valid to inputs["prediction_path_valid"].
-        }
-        if inputs:haskey("prediction_path") {
-            set prediction_path to inputs["prediction_path"].
-        }
-        if prediction_path_valid {
-            update_reentry_vsit_prediction_path(
-                prediction_path,page_energy_min,page_energy_max,
-                page_range_min,page_range_max,energy_height,vsit_calibration
-            ).
-        } else {
-            hide_reentry_vsit_prediction_path().
-        }
-        hide_reentry_lsit_path().
-    }
-
-    // TEAM starts on the wide L/SIT 1 and moves to the tighter L/SIT 2 after
-    // reaching base. Both views use the live terminal route.
-    if inputs["mode"] = "L/SIT 1" or inputs["mode"] = "L/SIT 2" {
-        hide_reentry_vsit_prediction_path().
-        set traj_disp_pred:style:width to 8.
-        set traj_disp_pred:style:height to 8.
-        for path_marker in traj_disp_path {
-            set path_marker:style:width to 4.
-            set path_marker:style:height to 4.
-        }
-        set console_time:text to ((timestamp():clock)).
-        if inputs["mode"] = "L/SIT 1" {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj3_lsit_bg.png".
-        } else {
-            set traj_disp_mainbox:style:BG to "Libraries/gui_images/traj4_lsit_bg.png".
-        }
-        local ssto_rotation is reentry_lsit_ssto_rotation(compass_for_prograde()).
-        local lsit_bug_calibration is
-            reentry_lsit2_bug_calibration[ssto_rotation:tostring].
-        if inputs["mode"] = "L/SIT 1" {
-            set lsit_bug_calibration to
-                reentry_lsit1_bug_calibration[ssto_rotation:tostring].
-        }
-        set traj_disp_ssto:image to
-            "Libraries/gui_images/ssto_lsit_" + ssto_rotation + ".png".
-        set traj_disp_ssto:style:margin:top to 0.
-
-        local current_geometry is reentry_lsit_geometry(ship:geoposition).
-        set traj_data_pitch:text to ("RNG "+round(current_geometry["distance"] / 1000, 1)+" km").
-        set traj_data_yaw:text to ("XTK "+round(current_geometry["cross_track"] / 1000, 2)+" km").
-        set traj_data_roll:text to ("ATK "+round(current_geometry["along_track"] / 1000, 1)+" km").
-        set traj_data_mach:text to ("SPD "+round(inputs["spd"]) + " m/s").
-        set traj_data_aoa:text to ("ALT "+round(inputs["alt"]) + " m").
-        set traj_data_ld:text to ("HDG "+round(inputs["yaw"]) + " deg").
-
-        local max_along_track is 50000.
-        local max_cross_track is 20000.
-        if inputs["mode"] = "L/SIT 1" {
-            set max_along_track to 350000.
-            set max_cross_track to 150000.
-        }
-        local shuttle_position is reentry_lsit_screen_position(
-            ship:geoposition, max_along_track, max_cross_track
-        ).
-        local shuttle_final_x is
-            shuttle_position["x"] + lsit_bug_calibration["ssto_x"].
-        local shuttle_final_y is
-            shuttle_position["y"] + lsit_bug_calibration["ssto_y"].
-        set traj_disp_ssto:style:padding:top to shuttle_final_y.
-        set traj_disp_ssto:style:margin:h to shuttle_final_x.
-
-        local previous_absolute_y is shuttle_final_y.
-        if defined terminal_route {
-            local target_position is reentry_lsit_screen_position(
-                terminal_route_current_target(terminal_route), max_along_track, max_cross_track
-            ).
-            local target_final_x is
-                target_position["x"] + lsit_bug_calibration["pred_x"].
-            local target_final_y is
-                target_position["y"] + lsit_bug_calibration["pred_y"].
-            set traj_disp_pred:style:padding:top to
-                target_final_y - shuttle_final_y.
-            set traj_disp_pred:style:margin:h to target_final_x.
-            set traj_disp_pred:visible to true.
-            set previous_absolute_y to target_final_y.
-            update_reentry_lsit_path(
-                reentry_lsit_terminal_path(), max_along_track, max_cross_track, previous_absolute_y
-            ).
-        } else {
-            set traj_disp_pred:visible to false.
-            hide_reentry_lsit_path().
-        }
-    }
-}
 function create_main_gui{
     global poseidon_gui_main to gui(400).
     set poseidon_gui_main:style:width to 0.
@@ -1909,57 +1450,4 @@ function get_inputs_Inclination {
     clearscreen.
     // Return the finalized inputs
     return list(Inclination_menu:value,Inclination_alt_menu:text).
-}
-function map_flightpath {
-    parameter simstates.
-    parameter corridor_width is 10.
-    parameter line_distance is 15.
-    // Calculate max/min speed and altitude from the dataset
-    local max_alt is 0.
-    local min_alt is 999999.
-    local max_spd is 0.
-    local min_spd is 999999.
-
-    for simstate in simstates {
-        if simstate["altitude"] > max_alt {
-            set max_alt to simstate["altitude"].
-        }
-        if simstate["altitude"] < min_alt {
-            set min_alt to simstate["altitude"].
-        }
-        if simstate["velocity"]:mag > max_spd {
-            set max_spd to simstate["velocity"]:mag.
-        }
-        if simstate["velocity"]:mag < min_spd {
-            set min_spd to simstate["velocity"]:mag.
-        }
-    }
-
-    local labels is lexicon().
-
-    // Iterate over the timesteps
-    for i in range(0, simstates:length, line_distance) {
-        local simstate is simstates[closest_simstate(simstates,i)].
-        local alt_dif is simstate["altitude"] - min_alt.
-        local spd_dif is simstate["velocity"]:mag - min_spd.
-
-        local v_margin is 220 - alt_dif / (max_alt - min_alt) * 220.
-        local h_margin is 50 + spd_dif / (max_spd - min_spd) * 650.
-
-        // Determine the orientation of the image
-        local angle is round(simstate["velocity"]:heading).
-        if angle >= 180 {
-            set angle to angle - 180.
-        }
-
-        // Draw the corridor
-        for j in range(-corridor_width/2, corridor_width/2) {
-            local img_name is "Libraries/gui_images/TRAJ_lines/line_" + angle + "°.png".
-            local label_name is "traj_disp_ssto_" + i + "_" + j.
-            set labels[label_name] to console:addlabel().
-            set labels[label_name]:IMAGE to img_name.
-            set labels[label_name]:STYLE:margin:v to v_margin + j.
-            set labels[label_name]:STYLE:margin:h to h_margin.
-        }
-    }
 }
