@@ -288,7 +288,7 @@ function envelope_terrain_recovery_authority {
     // Banked flight retains the original immediate protection rather than
     // assuming a roll-out while the pilot is still holding the bank.
     if abs(roll_for()) > navigation_config["recovery_defer_bank"] { return capability. }
-    if not defined addons { return capability. }
+    // ADDONS is a built-in namespace, not a variable accepted by DEFINED.
     if not addons:available("FAR") { return capability. }
     if not addons:far:hassuffix("AEROFORCEAT") { return capability. }
     local vessel_forward is ship:facing:forevector:normalized.
