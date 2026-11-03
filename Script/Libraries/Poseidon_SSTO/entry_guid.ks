@@ -123,6 +123,7 @@ function check_if_entry_possible{
     parameter use_entry_sim_heading is false.
 
     local check_45 is sim_with_bank(simstate, 45, target_altitude, target_latlong,timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,use_entry_sim_heading)["final_state"].
+    if check_45 = 0 { return lex("is_inside",false,"error","entry probe failed: 45-degree reference trajectory exceeded simulation altitude bound"). }
     local c is false.
     // Use a probe point projected along the current simstate heading to avoid great-circle wrap-around
     // Compute the current heading and pick the closer of the 45deg-endpoint or the raw target.
@@ -144,6 +145,7 @@ function check_if_entry_possible{
     local max_distance is sim_with_bank(simstate, 0, target_altitude, target_latlong,timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,use_entry_sim_heading)["final_state"].
     local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
     local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
+    if right_distance = 0 or left_distance = 0 or max_distance = 0 { return lex("is_inside",false,"error","entry probe failed: triangle reachability trajectory exceeded simulation altitude bound"). }
     local left_distance_t to left_distance["latlong"].
     local right_distance_t to right_distance["latlong"].
     set check to check_target_in_triangle(target_latlong,max_distance["latlong"],right_distance_t,left_distance_t).
@@ -161,6 +163,7 @@ function check_if_entry_possible{
         local min_distance is sim_with_bank(simstate, 90, target_altitude,target_latlong,timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,use_entry_sim_heading)["final_state"].
         local right_distance is simulate_trajectory(simstate, 45, "right", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
         local left_distance is simulate_trajectory(simstate, 45, "left", target_altitude,simstate["altitude"]+100,"EGAOA",timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
+        if right_distance = 0 or left_distance = 0 or min_distance = 0 { return lex("is_inside",false,"error","entry probe failed: square reachability trajectory exceeded simulation altitude bound"). }
         local left_distance_t to left_distance["latlong"].
         local right_distance_t to right_distance["latlong"].
         local hed is heading_between(left_distance_t,right_distance_t).
@@ -732,7 +735,15 @@ function calc_entry_traj {
         set start_sim to simulate_trajectory_time(input_simstate, 0, "left", wait_value,"EGAOA",AVES["simulation"]["timestep"],sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right).
     }
     set AVES["simulation"]["timestep"] to org_timestep.
+    if start_sim = 0 {
+        output:add("error",lex("str","entry start trajectory failed: exceeded simulation altitude bound")).
+        return output.
+    }
     local is_eg_pos is check_if_entry_possible(start_sim,target_latlong,target_altitude,org_timestep,sim_context_mu,sim_context_radius,sim_context_angularvel,sim_context_mass,sim_context_vessel_fore,sim_context_vessel_top,sim_context_vessel_right,true).
+    if is_eg_pos:has_key("error") {
+        output:add("error",lex("str",is_eg_pos["error"])).
+        return output.
+    }
     local bank_angle is 0.
     local tgt_dist is calcdistance_m(start_sim["latlong"],target_latlong).
     local lower_bound is lex("bank",is_eg_pos["min"],"dist",99999999999).
