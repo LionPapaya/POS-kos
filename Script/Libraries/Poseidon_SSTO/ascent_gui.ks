@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // Passive takeoff/rotate display, two ascent pages, then an insertion page.
 // No steering, throttle, engine or abort decisions belong in this library.
 
@@ -298,7 +299,7 @@ function ascent_display_collect {
 // Ordinary labels in horizontal rows. Fixed column widths keep changing
 // values aligned without relying on tabs or a platform-specific font.
 function ascent_display_row {
-    parameter parent_box, row_name.
+    parameter parent_box, row_name, compact_row is false.
     local row_group is parent_box:addvlayout().
     local row_box is row_group:addhlayout().
     local caption is row_box:addlabel(row_name).
@@ -314,6 +315,21 @@ function ascent_display_row {
     set row_rule:style:width to 630. set row_rule:style:height to 1.
     set row_rule:style:bg to "Libraries/gui_images/ascent_track.png".
     set row_rule:style:margin:v to 0. set row_rule:style:padding:v to 0.
+    if compact_row {
+        // Nominal readouts: seven visible rows at most, 26px each.
+        for row_layout in list(row_group,row_box,row_rule) {
+            set row_layout:style:padding:v to 0. set row_layout:style:margin:v to 0.
+            set row_layout:style:padding:h to 0. set row_layout:style:margin:h to 0.
+            set row_layout:style:vstretch to false.
+        }
+        set row_group:style:height to 26. set row_box:style:height to 25.
+        for cell_label in list(caption,now_label,goal_label) {
+            set cell_label:style:height to 25. set cell_label:style:vstretch to false.
+            set cell_label:style:wordwrap to false.
+            set cell_label:style:padding:v to 2. set cell_label:style:margin:v to 0.
+            set cell_label:style:margin:h to 0.
+        }
+    }
     return lex("box",row_group,"caption",caption,"now",now_label,"goal",goal_label).
 }
 
@@ -325,18 +341,41 @@ function ascent_display_label_style {
     if muted_text { set label_widget:style:textcolor to RGBA(0.69,0.74,0.78,1). }
 }
 
+// Switch existing widget groups only; never collect a sample or replay guidance.
+function ascent_display_select_view {
+    set ascent_display_overview:visible to ascent_display_view = "overview".
+    set ascent_display_readouts:visible to ascent_display_view = "readouts".
+    if ascent_display_marked_view = ascent_display_view { return. }
+    set ascent_display_marked_view to ascent_display_view.
+    if ascent_display_view = "overview" {
+        set ascent_display_overview_button:text to "[Overview]".
+        set ascent_display_readouts_button:text to "Readouts".
+        set ascent_display_overview_button:style:bg to "Libraries/gui_images/ascent_track.png".
+        set ascent_display_readouts_button:style:bg to "Libraries/gui_images/ascent_panel.png".
+    } else {
+        set ascent_display_overview_button:text to "Overview".
+        set ascent_display_readouts_button:text to "[Readouts]".
+        set ascent_display_overview_button:style:bg to "Libraries/gui_images/ascent_panel.png".
+        set ascent_display_readouts_button:style:bg to "Libraries/gui_images/ascent_track.png".
+    }
+}
+
 function create_assent_gui {
     RUNONCEPATH("0:/Libraries/Poseidon_SSTO/ascent_recovery_gui.ks").
     global assent_gui is gui(680).
+    pos_gui_window_style(assent_gui,680).
+    // Flight content grows downward after setup; start near the top so the
+    // expanded panel stays accessible on a 1080p display.
+    set assent_gui:y to 40.
     set assent_gui:style:width to 680.
     set assent_gui:style:bg to "Libraries/gui_images/ascent_window.png".
     set assent_gui:style:padding:h to 16. set assent_gui:style:padding:v to 16.
     local title_row is assent_gui:addhlayout().
     local title_label is title_row:addlabel("<b>POSEIDON ASCENT</b>").
-    set title_label:style:width to 400.
+    set title_label:style:width to 370.
     ascent_display_label_style(title_label,16).
     global ascent_display_heading is title_row:addlabel("SETUP").
-    set ascent_display_heading:style:width to 180.
+    set ascent_display_heading:style:width to 170.
     ascent_display_label_style(ascent_display_heading,12,"right",true).
     global assent_minb is title_row:addbutton("-").
     set assent_minb:style:width to 24. set assent_minb:style:height to 24.
@@ -358,7 +397,8 @@ function create_assent_gui {
     }.
     local mode_row is ascent_display_body:addhlayout().
     local mode_caption is mode_row:addlabel("DAP").
-    set mode_caption:style:width to 30.
+    set mode_caption:style:width to 44.
+    set mode_caption:style:wordwrap to false.
     ascent_display_label_style(mode_caption,12,"left",true).
     global assent_dap_mode_menu is mode_row:addpopupmenu().
     set assent_dap_mode_menu:style:width to 80.
@@ -369,10 +409,10 @@ function create_assent_gui {
         set dap["dap_mode"] to selected_mode.
     }.
     global ascent_display_target is mode_row:addlabel("Target orbit: setup").
-    set ascent_display_target:style:width to 400.
+    set ascent_display_target:style:width to 360.
     ascent_display_label_style(ascent_display_target,12,"left",true).
     global ascent_display_elapsed is mode_row:addlabel().
-    set ascent_display_elapsed:style:width to 120.
+    set ascent_display_elapsed:style:width to 100.
     ascent_display_label_style(ascent_display_elapsed,12,"right",true).
     global ascent_display_setup is ascent_display_body:addvbox().
     local target_row is ascent_display_setup:addhlayout().
@@ -421,7 +461,32 @@ function create_assent_gui {
     global ascent_display_engines is phase_row:addlabel().
     set ascent_display_engines:style:width to 310.
     ascent_display_label_style(ascent_display_engines,12,"right",true).
-    global ascent_display_hero is ascent_display_flight:addvlayout().
+    // Keep the calibrated 640px chart intact. Pages reduce vertical footprint
+    // instead of scaling chart coordinates or removing numeric readouts.
+    global ascent_display_view is "overview".
+    global ascent_display_marked_view is "".
+    global ascent_display_view_row is ascent_display_flight:addhlayout().
+    global ascent_display_overview_button is ascent_display_view_row:addbutton("Overview").
+    global ascent_display_readouts_button is ascent_display_view_row:addbutton("Readouts").
+    for view_button in list(ascent_display_overview_button,ascent_display_readouts_button) {
+        set view_button:style:height to 26. set view_button:style:vstretch to false.
+    }
+    set ascent_display_overview_button:onclick to {
+        set ascent_display_view to "overview". ascent_display_select_view().
+    }.
+    set ascent_display_readouts_button:onclick to {
+        set ascent_display_view to "readouts". ascent_display_select_view().
+    }.
+    // A bounded page slot keeps the footer at the same Y when switching views.
+    // 264px fits the unscaled 230px chart + caption, or seven 26px table rows.
+    global ascent_display_pages is ascent_display_flight:addvlayout().
+    set ascent_display_pages:style:height to 264.
+    set ascent_display_pages:style:vstretch to false.
+    set ascent_display_pages:style:padding:v to 0. set ascent_display_pages:style:margin:v to 0.
+    global ascent_display_overview is ascent_display_pages:addvlayout().
+    set ascent_display_overview:style:vstretch to false.
+    set ascent_display_overview:style:padding:v to 0. set ascent_display_overview:style:margin:v to 0.
+    global ascent_display_hero is ascent_display_overview:addvlayout().
     set ascent_display_hero:style:width to 640.
     set ascent_display_hero:style:bg to "Libraries/gui_images/ascent_panel.png".
     set ascent_display_hero:style:padding:h to 16. set ascent_display_hero:style:padding:v to 16.
@@ -474,7 +539,7 @@ function create_assent_gui {
     global ascent_display_hero_note is ascent_display_hero:addlabel().
     set ascent_display_hero_note:style:width to 608.
     ascent_display_label_style(ascent_display_hero_note,12,"center",true).
-    global ascent_display_chart is ascent_display_flight:addvlayout().
+    global ascent_display_chart is ascent_display_overview:addvlayout().
     set ascent_display_chart:style:width to 640. set ascent_display_chart:style:height to 230.
     set ascent_display_chart:style:bg to "Libraries/gui_images/ascent_climb.png".
     set ascent_display_chart:style:padding:h to 0. set ascent_display_chart:style:padding:v to 0.
@@ -488,20 +553,29 @@ function create_assent_gui {
         set chart_marker:style:padding:h to 0. set chart_marker:style:padding:v to 0.
         set chart_marker:style:margin:h to 0. set chart_marker:style:margin:v to 0.
     }
-    global ascent_display_summary is ascent_display_flight:addlabel().
+    global ascent_display_summary is ascent_display_overview:addlabel().
     ascent_display_label_style(ascent_display_summary,12,"left",true).
-    global ascent_display_columns is ascent_display_row(ascent_display_flight,"FLIGHT").
+    set ascent_display_summary:style:height to 24.
+    set ascent_display_summary:style:margin:v to 0. set ascent_display_summary:style:padding:v to 0.
+    global ascent_display_readouts is ascent_display_pages:addvlayout().
+    set ascent_display_readouts:style:vstretch to false.
+    set ascent_display_readouts:style:padding:v to 0. set ascent_display_readouts:style:margin:v to 0.
+    global ascent_display_columns is ascent_display_row(ascent_display_readouts,"FLIGHT",true).
     ascent_display_label_style(ascent_display_columns["now"],12,"right",true).
     ascent_display_label_style(ascent_display_columns["goal"],12,"right",true).
     global ascent_display_rows is lex().
     for field_name in list("Altitude / ASL","Speed","Vertical speed","Pitch","Heading","Est. stop distance","Apoapsis","Periapsis","Inclination") {
-        set ascent_display_rows[field_name] to ascent_display_row(ascent_display_flight,field_name).
+        set ascent_display_rows[field_name] to ascent_display_row(ascent_display_readouts,field_name,true).
     }
+    ascent_display_select_view().
     ascent_recovery_create(ascent_display_flight).
     global ascent_display_next is ascent_display_flight:addlabel().
     global ascent_display_footer is ascent_display_flight:addlabel().
     ascent_display_label_style(ascent_display_next,13).
     ascent_display_label_style(ascent_display_footer,11,"left",true).
+    set ascent_display_footer:style:width to 640.
+    set ascent_display_footer:style:vstretch to false.
+    set ascent_display_footer:style:padding:v to 0. set ascent_display_footer:style:margin:v to 0.
     if not (defined confirm_in) { global confirm_in is false. }
     assent_gui:show().
     until confirm_in or step = "end" { wait 0.001. }
@@ -530,8 +604,15 @@ function ascent_display_place {
 
 function ascent_display_value {
     parameter field_name, current_value, target_value is "--".
-    set ascent_display_rows[field_name]["now"]:text to current_value.
-    set ascent_display_rows[field_name]["goal"]:text to target_value.
+    // All flight readout rows live in the Readouts panel. Skip hidden-panel
+    // property writes; the next normal sample repaints them after a view switch.
+    if not ascent_display_readouts:visible { return. }
+    if ascent_display_rows[field_name]["now"]:text <> current_value {
+        set ascent_display_rows[field_name]["now"]:text to current_value.
+    }
+    if ascent_display_rows[field_name]["goal"]:text <> target_value {
+        set ascent_display_rows[field_name]["goal"]:text to target_value.
+    }
 }
 
 function ascent_display_update_hero {
@@ -724,7 +805,16 @@ function update_assent_gui {
     if menu_mode = "AUTO" { set assent_dap_mode_menu:index to 0. }
     if menu_mode = "CSS" { set assent_dap_mode_menu:index to 1. }
     if menu_mode = "OFF" { set assent_dap_mode_menu:index to 2. }
-    if inputs:haskey("abort_display") { ascent_recovery_render(inputs). return. }
+    set ascent_display_view_row:visible to not inputs:haskey("abort_display").
+    set ascent_display_pages:visible to not inputs:haskey("abort_display").
+    if inputs:haskey("abort_display") {
+        ascent_display_overview:hide(). ascent_display_readouts:hide().
+        // Recovery has its own longer footer; retain its natural wrapping.
+        set ascent_display_footer:style:height to 0.
+        set ascent_display_footer:style:wordwrap to true.
+        ascent_recovery_render(inputs). return.
+    }
+    ascent_display_select_view().
     set ascent_recovery_panel:visible to false.
     set ascent_display_columns["box"]:visible to true.
     local air_page is inputs["page"] = "ASCENT 1 / 2".
@@ -817,9 +907,12 @@ function update_assent_gui {
     ascent_display_update_hero(inputs).
     set ascent_display_summary:text to summary_text.
     set ascent_display_next:text to next_text.
+    // Reserve two explicit lines rather than relying on Unity's auto-height.
+    set ascent_display_footer:style:height to 34.
+    set ascent_display_footer:style:wordwrap to false.
     local error_text is "--".
     if inputs["command_valid"] { set error_text to round(inputs["attitude_error"],1)+" deg ("+inputs["command_kind"]+")". }
     set ascent_display_footer:text to "THR "+round(inputs["throttle"]*100)+"% | RAPIER "+inputs["rapier_mode"]+
         "/"+inputs["rapiers"]+" | NERV "+inputs["nervs"]+" | downrange "+round(inputs["downrange"]/1000,1)+
-        " km\nT+ "+round(inputs["elapsed"],1)+" s | steering error "+error_text+" | sample UT "+round(inputs["ut"],1).
+        " km"+char(10)+"T+ "+round(inputs["elapsed"],1)+" s | steering error "+error_text+" | sample UT "+round(inputs["ut"],1).
 }

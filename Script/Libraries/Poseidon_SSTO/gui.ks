@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // Libraries/Poseidon_SSTO/gui.ks
 // Purpose: UI and HUD for the Poseidon reentry/landing assistant.
 // - Provides GUI creation/update functions used by `Poseidon_SSTO_Reentry.ks`.
@@ -76,9 +77,14 @@ function update_team_dap_gui {
         if defined team_dap_gui { team_dap_gui:hide(). }
         return.
     }
+    // Display formatting is independent of the faster steering loop.
+    if not(defined team_dap_next_display) { global team_dap_next_display is -1. }
+    if time:seconds < team_dap_next_display { return. }
+    set team_dap_next_display to time:seconds+0.5.
 
     if not(defined team_dap_gui){
         global team_dap_gui to gui(260).
+        pos_gui_window_style(team_dap_gui,260).
         set team_dap_gui:style:width to 260.
         set team_dap_gui:style:hstretch to true.
         team_dap_gui:show().
@@ -139,9 +145,16 @@ function update_team_dap_gui {
 // Live state for the terminal-route planner.  The panel remains hidden until
 // terminal_route_init/update/fly has populated terminal_route_debug.
 function update_terminal_route_gui {
-
+    if not(defined terminal_route_debug) or not(defined terminal_route) {
+        if defined terminal_route_gui { terminal_route_gui:hide(). }
+        return.
+    }
+    if not(defined terminal_route_next_display) { global terminal_route_next_display is -1. }
+    if time:seconds < terminal_route_next_display { return. }
+    set terminal_route_next_display to time:seconds+0.5.
     if not (defined terminal_route_gui){
         global terminal_route_gui to gui(340).
+        pos_gui_window_style(terminal_route_gui,340).
         set terminal_route_gui:style:width to 340.
         set terminal_route_gui:style:hstretch to true.
         terminal_route_gui:show().
@@ -395,6 +408,8 @@ function create_reentry_display {
     set end to false.
     
     global reentry_gui to gui(680).
+
+    pos_gui_window_style(reentry_gui,680).
     set reentry_gui:style:width to 680.
 
     reentry_gui:show().
@@ -488,7 +503,7 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     set Reentry_mode_menu:index to 0.
     local deorbit_help is reentry_gui:addlabel("AUTO: plan + execute | Ex: execute next node | Man: pilot deorbit").
     set deorbit_help:style:wordwrap to true.
-    set deorbit_help:style:width to 780.
+    set deorbit_help:style:width to 640.
     if hasnode {
         reentry_gui:addlabel("Next node: " + round(nextnode:deltav:mag,1) + " m/s; UT " + round(nextnode:time,1)).
     }
@@ -781,8 +796,10 @@ function reentry_lsit_terminal_path {
 }
 
 function create_main_gui{
-    global poseidon_gui_main to gui(400).
-    set poseidon_gui_main:style:width to 0.
+    global poseidon_gui_main to gui(440).
+    pos_gui_window_style(poseidon_gui_main,440).
+    set poseidon_gui_main:style:width to 440.
+    set poseidon_gui_main:skin:popupmenuitem:wordwrap to false.
 
     poseidon_gui_main:show().
     // GUI Setup
@@ -791,19 +808,21 @@ function create_main_gui{
     set gui_titel to "POSEIDON OPERATING SYSTEM".
     set titel to Title_BOX:addlabel(gui_titel).
     set titel:style:align to ("LEFT").
-    set titel:text to " <size=20><b>"+gui_titel+"</b></size>".
+    set titel:text to "<size=16><b>"+gui_titel+"</b></size>".
 
 
     GLOBAL Main_toggels_box IS poseidon_gui_main:ADDHLAYOUT().
-    SET Main_toggels_box:STYLE:WIDTH TO poseidon_gui_main:style:width - 16.
+    SET Main_toggels_box:STYLE:WIDTH TO 400.
 
     GLOBAL main_dap_mode_box IS Main_toggels_box:ADDHLAYOUT().
-    SET main_dap_mode_box:STYLE:WIDTH TO 105.
+    SET main_dap_mode_box:STYLE:WIDTH TO 140.
     GLOBAL main_dap_mode_text IS main_dap_mode_box:ADDLABEL("<b>DAP</b>"). 
+    set main_dap_mode_text:style:width to 44.
+    set main_dap_mode_text:style:wordwrap to false.
     set main_dap_mode_text:style:margin:v to -3.
     GLOBAL main_dap_mode_menu IS main_dap_mode_box:addpopupmenu().
     set main_dap_mode_menu:style:margin:v to -3.
-    SET main_dap_mode_menu:STYLE:WIDTH TO 65.
+    SET main_dap_mode_menu:STYLE:WIDTH TO 80.
     SET main_dap_mode_menu:STYLE:HEIGHT TO 25.
     SET main_dap_mode_menu:STYLE:ALIGN TO "center".
     main_dap_mode_menu:addoption("AUTO").
@@ -831,12 +850,15 @@ function create_main_gui{
         }
     }
 
-    local Programm_box is main_toggels_box:addhlayout().
-    local Programm_label is Programm_box:addlabel("<b>Programm</b> ").
-    SET Programm_label:STYLE:width TO 80.
+    // Give program names their own row without widening the whole menu.
+    local Programm_box is poseidon_gui_main:addhlayout().
+    local Programm_label is Programm_box:addlabel("<b>Program</b>").
+    SET Programm_label:STYLE:width TO 70.
+    set Programm_label:style:wordwrap to false.
     local Programm_popup is Programm_box:addpopupmenu().
     SET Programm_popup:STYLE:HEIGHT TO 25.
-    SET Programm_popup:STYLE:width TO 170.
+    SET Programm_popup:STYLE:width TO 310.
+    set Programm_popup:style:wordwrap to false.
     Programm_popup:addoption("Select program").
     Programm_popup:addoption("Manual Flight Logging").
     Programm_popup:addoption("Launch").
@@ -894,10 +916,12 @@ function create_main_gui{
 function get_inputs_rsvp {
     // Initialize GUI and variables
     local rsvp_gui is GUI(400, 300).
+    pos_gui_window_style(rsvp_gui,400).
     set rsvp_gui:style:width to 400.
     set rsvp_gui:style:height to 300.
 
     local confirm_in is false.
+    local cancel_in is false.
 
     rsvp_gui:show().
     
@@ -986,6 +1010,12 @@ function get_inputs_rsvp {
         set confirm_in to true.
         rsvp_gui:hide().
     }.
+
+    local cancel_button is ok_button_box:addbutton("Cancel").
+    set cancel_button:onclick to {
+        set cancel_in to true.
+        rsvp_gui:hide().
+    }.
     ok_button_box:show().
 
     // Function to dynamically update target options
@@ -1012,8 +1042,13 @@ function get_inputs_rsvp {
     update_target_options(target_type_menu:value ).
 
     // Wait for confirmation
-    until confirm_in {
+    until confirm_in or cancel_in {
         wait 0.01.
+    }
+
+    if cancel_in {
+        clearscreen.
+        return false.
     }
 
     // Return the finalized inputs
@@ -1024,6 +1059,7 @@ function get_inputs_rsvp {
     set OM_Orbit_Orientation to remove_spaces( orbit_orientation_menu:value).
 
     clearscreen.
+    return true.
 }
 
 
@@ -1123,10 +1159,11 @@ clearscreen.
 
 }
 function get_om_mode {
-    // Initialize GUI and variables
-    local OM_gui is GUI(400, 300).
-    set OM_gui:style:width to 400.
-    set OM_gui:style:height to 300.
+    // Keep the selector compact while giving every command label room to fit.
+    local OM_gui is GUI(500, 190).
+    pos_gui_window_style(OM_gui,500).
+    set OM_gui:style:width to 500.
+    set OM_gui:style:height to 190.
 
     local confirm_in is false.
 
@@ -1135,19 +1172,28 @@ function get_om_mode {
     // Title
     local title_box is OM_gui:addhbox().
     set title_box:style:hstretch to true.
-    set title_box:style:margin:v to 10.
+    set title_box:style:margin:v to 6.
     local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Mode selector</b></size>").
     title_box:show().
 
     // Input Fields
     local input_box is OM_gui:addvbox().
-    set input_box:style:margin:v to 10.
+    set input_box:style:margin:v to 4.
     set input_box:style:margin:h to 10.
+    set input_box:style:hstretch to true.
 
-    // Target Type Selector
+    // Keep the label and the full-width menu on a single readable row.
     local OM_MODE_box is input_box:addhlayout().
+    set OM_MODE_box:style:hstretch to true.
     local OM_MODE_label is OM_MODE_box :addlabel("OM MODE:").
+    set OM_MODE_label:style:width to 90.
+    set OM_MODE_label:style:wordwrap to false.
+    set OM_gui:skin:popupmenuitem:wordwrap to false.
     local OM_MODE_menu is OM_MODE_box :addpopupmenu().
+    set OM_MODE_menu:style:width to 350.
+    set OM_MODE_menu:style:hstretch to true.
+    set OM_MODE_menu:style:wordwrap to false.
+    set OM_gui:skin:popupmenuitem:wordwrap to false.
     OM_MODE_menu:addoption("RSVP").
     OM_MODE_menu:addoption("Rendezvous").
     OM_MODE_menu:addoption("Execute node").
@@ -1163,7 +1209,7 @@ function get_om_mode {
 
     // OK Button to Finalize Inputs
     local ok_button_box is OM_gui:addhbox().
-    set ok_button_box:style:margin:v to 15.
+    set ok_button_box:style:margin:v to 6.
     local ok_button is ok_button_box:addbutton("OK").
     set ok_button:onclick to {
         set confirm_in to true.
@@ -1185,7 +1231,9 @@ function get_om_mode {
 
 function get_rendezvous_target {
     local rendezvous_gui is GUI(420,220).
+    pos_gui_window_style(rendezvous_gui,420).
     local confirmed is false.
+    local was_cancelled is false.
     rendezvous_gui:show().
     local row is rendezvous_gui:addhbox().
     row:addlabel("<size=18><b>Same-body rendezvous target</b></size>").
@@ -1201,31 +1249,42 @@ function get_rendezvous_target {
     }
     local button_row is rendezvous_gui:addhbox().
     local ok_button is button_row:addbutton("Plan and execute").
-    set ok_button:onclick to { set confirmed to true. rendezvous_gui:hide(). }.
+    // Keep the primary action visibly unavailable until a real vessel is selected.
+    if target_menu:value = "None" { set ok_button:text to "Select a vessel first". }
+    set target_menu:onchange to {
+        if target_menu:value = "None" { set ok_button:text to "Select a vessel first". }
+        else { set ok_button:text to "Plan and execute". }
+    }.
+    set ok_button:onclick to {
+        if target_menu:value <> "None" { set confirmed to true. rendezvous_gui:hide(). }
+    }.
+    local cancel_button is button_row:addbutton("Cancel").
+    set cancel_button:onclick to { set was_cancelled to true. set confirmed to true. rendezvous_gui:hide(). }.
     until confirmed { wait 0.01. }
+    if was_cancelled { return "CANCELLED". }
     return target_menu:value.
 }
 function get_inputs_Periapsis {
     // Initialize GUI and variables
-    local Periapsis_gui is GUI(400, 300).
-    set Periapsis_gui:style:width to 400.
-    set Periapsis_gui:style:height to 300.
+    local Periapsis_gui is GUI(360, 190).
+    pos_gui_window_style(Periapsis_gui,360).
 
     local confirm_in is false.
+    local cancel_in is false.
 
     Periapsis_gui:show().
     
     // Title
     local title_box is Periapsis_gui:addhbox().
     set title_box:style:hstretch to true.
-    set title_box:style:margin:v to 10.
+    set title_box:style:margin:v to 4.
     local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Periapsis</b></size>").
     title_box:show().
 
     // Input Fields
     local input_box is Periapsis_gui:addvbox().
-    set input_box:style:margin:v to 10.
-    set input_box:style:margin:h to 10.
+    set input_box:style:margin:v to 4.
+    set input_box:style:margin:h to 8.
 
     // Target Type Selector
     local Periapsis_box is input_box:addhlayout().
@@ -1239,7 +1298,9 @@ function get_inputs_Periapsis {
     local Periapsis_alt_label is Periapsis_alt_box:addlabel("Periapsis alt:").
     local Periapsis_alt_menu is Periapsis_alt_box:addtextfield().
  
-    local Periapsis_alt_label_value is Periapsis_alt_box:addlabel(Periapsis_alt_menu:text+"Meters").
+    Periapsis_alt_box:addlabel("Meters").
+    local validation_message is input_box:addlabel("").
+    set Periapsis_alt_menu:onchange to { set validation_message:text to "". }.
 
     Periapsis_box :show().
 
@@ -1247,47 +1308,51 @@ function get_inputs_Periapsis {
 
     // OK Button to Finalize Inputs
     local ok_button_box is Periapsis_gui:addhbox().
-    set ok_button_box:style:margin:v to 15.
+    set ok_button_box:style:margin:v to 4.
     local ok_button is ok_button_box:addbutton("OK").
     set ok_button:onclick to {
-        set confirm_in to true.
-        Periapsis_gui:hide().
+        local value is Periapsis_alt_menu:text:tonumber(-1).
+        if value > 0 {
+            set confirm_in to true.
+            Periapsis_gui:hide().
+        } else { set validation_message:text to "Enter a valid altitude greater than 0 meters.". }
+
     }.
+    local cancel_button is ok_button_box:addbutton("Cancel").
+    set cancel_button:onclick to { set cancel_in to true. Periapsis_gui:hide(). }.
     ok_button_box:show().
 
 
 
 
     // Wait for confirmation
-    until confirm_in {
-        wait 0.01.
-        set Periapsis_alt_label_value:text to (Periapsis_alt_menu:text+"Meters").
-    }
+    until confirm_in or cancel_in { wait 0.1. }
+    if cancel_in { clearscreen. return "CANCELLED". }
     clearscreen.
     // Return the finalized inputs
     return list(Periapsis_menu:value,Periapsis_alt_menu:text).
 }
 function get_inputs_circliurisation {
     // Initialize GUI and variables
-    local circliurisation_gui is GUI(400, 300).
-    set circliurisation_gui:style:width to 400.
-    set circliurisation_gui:style:height to 300.
+    local circliurisation_gui is GUI(360, 170).
+    pos_gui_window_style(circliurisation_gui,360).
 
     local confirm_in is false.
+    local cancel_in is false.
 
     circliurisation_gui:show().
     
     // Title
     local title_box is circliurisation_gui:addhbox().
     set title_box:style:hstretch to true.
-    set title_box:style:margin:v to 10.
-    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering circliurisation</b></size>").
+    set title_box:style:margin:v to 4.
+    local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Circularization</b></size>").
     title_box:show().
 
     // Input Fields
     local input_box is circliurisation_gui:addvbox().
-    set input_box:style:margin:v to 10.
-    set input_box:style:margin:h to 10.
+    set input_box:style:margin:v to 4.
+    set input_box:style:margin:h to 8.
 
     // Target Type Selector
     local circliurisation_box is input_box:addhlayout().
@@ -1305,47 +1370,47 @@ function get_inputs_circliurisation {
 
     // OK Button to Finalize Inputs
     local ok_button_box is circliurisation_gui:addhbox().
-    set ok_button_box:style:margin:v to 15.
+    set ok_button_box:style:margin:v to 4.
     local ok_button is ok_button_box:addbutton("OK").
     set ok_button:onclick to {
         set confirm_in to true.
         circliurisation_gui:hide().
     }.
+    local cancel_button is ok_button_box:addbutton("Cancel").
+    set cancel_button:onclick to { set cancel_in to true. circliurisation_gui:hide(). }.
     ok_button_box:show().
 
 
 
 
     // Wait for confirmation
-    until confirm_in {
-        wait 0.01.
-        
-    }
+    until confirm_in or cancel_in { wait 0.1. }
+    if cancel_in { clearscreen. return "CANCELLED". }
     clearscreen.
     // Return the finalized inputs
     return circliurisation_menu:value.
 }
 function get_inputs_Apoapsis {
     // Initialize GUI and variables
-    local Apoapsis_gui is GUI(400, 300).
-    set Apoapsis_gui:style:width to 400.
-    set Apoapsis_gui:style:height to 300.
+    local Apoapsis_gui is GUI(360, 190).
+    pos_gui_window_style(Apoapsis_gui,360).
 
     local confirm_in is false.
+    local cancel_in is false.
 
     Apoapsis_gui:show().
     
     // Title
     local title_box is Apoapsis_gui:addhbox().
     set title_box:style:hstretch to true.
-    set title_box:style:margin:v to 10.
+    set title_box:style:margin:v to 4.
     local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Apoapsis</b></size>").
     title_box:show().
 
     // Input Fields
     local input_box is Apoapsis_gui:addvbox().
-    set input_box:style:margin:v to 10.
-    set input_box:style:margin:h to 10.
+    set input_box:style:margin:v to 4.
+    set input_box:style:margin:h to 8.
 
     // Target Type Selector
     local Apoapsis_box is input_box:addhlayout().
@@ -1360,7 +1425,9 @@ function get_inputs_Apoapsis {
     local Apoapsis_alt_label is Apoapsis_alt_box:addlabel("Apoapsis alt:").
     local Apoapsis_alt_menu is Apoapsis_alt_box:addtextfield().
  
-    local Apoapsis_alt_label_value is Apoapsis_alt_box:addlabel(Apoapsis_alt_menu:text+"Meters").
+    Apoapsis_alt_box:addlabel("Meters").
+    local validation_message is input_box:addlabel("").
+    set Apoapsis_alt_menu:onchange to { set validation_message:text to "". }.
 
     Apoapsis_box :show().
 
@@ -1368,47 +1435,50 @@ function get_inputs_Apoapsis {
 
     // OK Button to Finalize Inputs
     local ok_button_box is Apoapsis_gui:addhbox().
-    set ok_button_box:style:margin:v to 15.
+    set ok_button_box:style:margin:v to 4.
     local ok_button is ok_button_box:addbutton("OK").
     set ok_button:onclick to {
-        set confirm_in to true.
-        Apoapsis_gui:hide().
+        local value is Apoapsis_alt_menu:text:tonumber(-1).
+        if value > 0 {
+            set confirm_in to true.
+            Apoapsis_gui:hide().
+        } else { set validation_message:text to "Enter a valid altitude greater than 0 meters.". }
     }.
+    local cancel_button is ok_button_box:addbutton("Cancel").
+    set cancel_button:onclick to { set cancel_in to true. Apoapsis_gui:hide(). }.
     ok_button_box:show().
 
 
 
 
     // Wait for confirmation
-    until confirm_in {
-        wait 0.01.
-        set Apoapsis_alt_label_value:text to (Apoapsis_alt_menu:text+"Meters").
-    }
+    until confirm_in or cancel_in { wait 0.1. }
+    if cancel_in { clearscreen. return "CANCELLED". }
     clearscreen.
     // Return the finalized inputs
     return list(Apoapsis_menu:value,Apoapsis_alt_menu:text).
 }
 function get_inputs_Inclination {
     // Initialize GUI and variables
-    local Inclination_gui is GUI(400, 300).
-    set Inclination_gui:style:width to 400.
-    set Inclination_gui:style:height to 300.
+    local Inclination_gui is GUI(360, 190).
+    pos_gui_window_style(Inclination_gui,360).
 
     local confirm_in is false.
+    local cancel_in is false.
 
     Inclination_gui:show().
     
     // Title
     local title_box is Inclination_gui:addhbox().
     set title_box:style:hstretch to true.
-    set title_box:style:margin:v to 10.
+    set title_box:style:margin:v to 4.
     local title_label is title_box:addlabel("<size=18><b>Orbital Maneuvering Inclination</b></size>").
     title_box:show().
 
     // Input Fields
     local input_box is Inclination_gui:addvbox().
-    set input_box:style:margin:v to 10.
-    set input_box:style:margin:h to 10.
+    set input_box:style:margin:v to 4.
+    set input_box:style:margin:h to 8.
 
     // Target Type Selector
     local Inclination_box is input_box:addhlayout().
@@ -1423,7 +1493,9 @@ function get_inputs_Inclination {
     local Inclination_alt_label is Inclination_alt_box:addlabel("Inclination Deg:").
     local Inclination_alt_menu is Inclination_alt_box:addtextfield().
  
-    local Inclination_alt_label_value is Inclination_alt_box:addlabel(Inclination_alt_menu:text+"Degrees").
+    Inclination_alt_box:addlabel("Degrees").
+    local validation_message is input_box:addlabel("").
+    set Inclination_alt_menu:onchange to { set validation_message:text to "". }.
 
     Inclination_box :show().
 
@@ -1431,22 +1503,25 @@ function get_inputs_Inclination {
 
     // OK Button to Finalize Inputs
     local ok_button_box is Inclination_gui:addhbox().
-    set ok_button_box:style:margin:v to 15.
+    set ok_button_box:style:margin:v to 4.
     local ok_button is ok_button_box:addbutton("OK").
     set ok_button:onclick to {
-        set confirm_in to true.
-        Inclination_gui:hide().
+        local value is Inclination_alt_menu:text:tonumber(-1).
+        if value >= 0 and value <= 180 {
+            set confirm_in to true.
+            Inclination_gui:hide().
+        } else { set validation_message:text to "Enter an inclination from 0 to 180 degrees.". }
     }.
+    local cancel_button is ok_button_box:addbutton("Cancel").
+    set cancel_button:onclick to { set cancel_in to true. Inclination_gui:hide(). }.
     ok_button_box:show().
 
 
 
 
     // Wait for confirmation
-    until confirm_in {
-        wait 0.01.
-        set Inclination_alt_label_value:text to (Inclination_alt_menu:text+"Degrees").
-    }
+    until confirm_in or cancel_in { wait 0.1. }
+    if cancel_in { clearscreen. return "CANCELLED". }
     clearscreen.
     // Return the finalized inputs
     return list(Inclination_menu:value,Inclination_alt_menu:text).

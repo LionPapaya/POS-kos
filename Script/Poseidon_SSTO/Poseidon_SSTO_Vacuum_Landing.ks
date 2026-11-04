@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // NERV-only PDI landing. Omitted coordinates open the target GUI. POS4 passes
 // "suborbital" to wait for impact, then selects the current trajectory's site.
 // Every inclination/deorbit node requires an explicit in-game Execute click.
@@ -79,6 +80,7 @@ function pdi_run {
         if contains_fuel { fuel_parts:add(part). }
     }
     local gui_ is GUI(470,220).
+    pos_gui_window_style(gui_,470).
     local display is gui_:addlabel("Preparing Poseidon PDI").
     set PDI_PLANNING_DISPLAY to display.
     set PDI_PLANNING_STATUS_ACTIVE to true.

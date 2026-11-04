@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // Live vacuum ascent support routines. The main flight loop lives in the program entry script.
 
 // Supporting routines for the vacuum ascent entry script. Landing ends with
@@ -8,6 +9,7 @@ function vacuum_ascent_target_input {
     parameter ascent_config.
     local result is lex("valid",false,"altitude",0,"inclination",0,"heading",0).
     local dialog is GUI(440,250).
+    pos_gui_window_style(dialog,440).
     dialog:addlabel("Poseidon vacuum ascent target orbit").
     dialog:addlabel("Circular orbit altitude (m)").
     local altitude_field is dialog:addtextfield(ascent_config["default_orbit_altitude"]:tostring).

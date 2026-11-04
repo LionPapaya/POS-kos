@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // Poseidon_SSTO_Docking.ks
 // Short-range rendezvous and docking assistant.  The target vessel must first
 // be selected in KSP.  Start in space, within 1 km and below 5 m/s relative
@@ -266,6 +267,7 @@ function docking_abort {
 
 function docking_create_control_gui {
     set docking_control_gui to GUI(260,90).
+    pos_gui_window_style(docking_control_gui,260).
     set docking_control_gui:style:width to 260.
     set docking_control_gui:style:height to 90.
     local title_row is docking_control_gui:addhbox().

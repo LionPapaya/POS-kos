@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // Poseidon_SSTO/Poseidon_SSTO_Aerobrake.ks
 // Hold the AVES entry AoA schedule and a pilot-selected bank through one
 // atmospheric pass.  This assistant never deploys the air/wheel brakes.
@@ -33,6 +34,8 @@ if not SHIP:BODY:atm:exists {
     }
 
     global aerobrake_gui is GUI(400).
+
+    pos_gui_window_style(aerobrake_gui,400).
     set aerobrake_gui:style:width to 400.
     set aerobrake_gui:style:hstretch to true.
     local title_box is aerobrake_gui:addhbox().

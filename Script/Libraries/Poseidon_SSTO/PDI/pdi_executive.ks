@@ -1,3 +1,5 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_dialogs.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // Live Poseidon PDI mission, approvals, control handovers and telemetry.
 // Pure guidance and prediction live in pdi_guidance.ks / pdi_terminal.ks.
 
@@ -15,37 +17,8 @@ function pdi_planning_status {
     }
 }
 
-function vacuum_target_input {
-    parameter target_lat, target_lng.
-    local result is lex("valid",false,"lat",0,"lng",0).
-    local dialog is GUI(430,210).
-    dialog:addlabel("Poseidon PDI landing coordinates").
-    dialog:addlabel("Latitude (-90..90)").
-    local lat_field is dialog:addtextfield("").
-    dialog:addlabel("Longitude (-180..180)").
-    local lng_field is dialog:addtextfield("").
-    if target_lat <> "ASK" { set lat_field:text to target_lat:tostring. }
-    if target_lng <> "ASK" { set lng_field:text to target_lng:tostring. }
-    local message is dialog:addlabel("").
-    local done is false.
-    local accept is dialog:addbutton("Use landing site").
-    set accept:onclick to {
-        local lat_value is lat_field:text:tonumber(-9999).
-        local lng_value is lng_field:text:tonumber(-9999).
-        if abs(lat_value) <= 90 and abs(lng_value) <= 180 {
-            set result["lat"] to lat_value.
-            set result["lng"] to lng_value.
-            set result["valid"] to true.
-            set done to true.
-        }else{ set message:text to "Enter valid numeric latitude and longitude.". }
-    }.
-    local cancel is dialog:addbutton("Cancel").
-    set cancel:onclick to { set done to true. }.
-    dialog:show().
-    until done { wait 0.1. }
-    dialog:hide().
-    return result.
-}
+// Passive dialog moved to gui_dialogs.ks.
+
 
 function vacuum_phase {
     parameter mission, phase, reason.
@@ -157,6 +130,7 @@ function vacuum_approve_node {
     local fingerprint is vacuum_node_fingerprint(maneuver).
     local decision is "pending".
     local dialog is GUI(470,270).
+    pos_gui_window_style(dialog,470).
     dialog:addlabel("Review "+purpose+" node in the map").
     dialog:addlabel(details).
     dialog:addlabel("Target: "+round(mission["site"]:lat,5)+", "+round(mission["site"]:lng,5)).

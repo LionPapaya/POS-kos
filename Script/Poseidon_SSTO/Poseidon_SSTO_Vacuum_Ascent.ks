@@ -1,3 +1,4 @@
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // NERV ascent from a completed airless-body landing.  The live executive
 // presents a target-orbit dialog, performs the brief closed-cycle RAPIER
 // liftoff kick, and automatically executes its circularization node.
@@ -38,6 +39,7 @@ function vacuum_ascent_run {
     flight_log_begin("vacuum_ascent").
     flight_log_set_vacuum_ascent_target(ascent_target["altitude"],ascent_target["inclination"],ascent_target["heading"]).
     local gui_ is GUI(500,210).
+    pos_gui_window_style(gui_,500).
     local display is gui_:addlabel("Preparing Poseidon vacuum ascent").
     local cancel is gui_:addbutton("Abort ascent / release controls").
     local inclination_command is ascent_inclination_guidance(ascent_target["inclination"],ship:geoposition:lat).

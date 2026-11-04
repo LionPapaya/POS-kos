@@ -15,7 +15,7 @@ else if om_mode_ = "Execute node" {
 
 // Preserve RSVP as an independent planner; review each generated burn.
 function do_rsvp {
-    get_inputs_rsvp().
+    if not get_inputs_rsvp() { return. }
     if hasnode { print "Resolve existing nodes before planning with RSVP.". return. }
     local options is lexicon("create_maneuver_nodes",OM_Nodes,"final_orbit_type",OM_Orbit_Type,"final_orbit_orientation",OM_Orbit_Orientation,"verbose",true).
     local destination is 0.
@@ -32,6 +32,7 @@ function do_rsvp {
 
 function do_orbital_rendezvous {
     local target_name is get_rendezvous_target().
+    if target_name = "CANCELLED" { return. }
     if target_name = "None" {
         set Lastest_status to "Rendezvous cancelled: no target selected".
         flight_log_event("rendezvous_rejected","reason=no_target_selected").
