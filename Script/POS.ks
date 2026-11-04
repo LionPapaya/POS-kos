@@ -1,6 +1,3 @@
-// Temporary GUI investigation entry (pre-existing). Never fall through to flight.
-RUNPATH("0:/GUI_TEST.ks").
-until false { wait 1. } // Reboot after restoring normal startup.
 // POS.ks
 // Purpose: top-level launcher/menu for Poseidon scripts.
 // - Loads shared libraries and selects the appropriate Poseidon sub-script (orbit, reentry, docking) based on vessel conditions.
