@@ -5,14 +5,7 @@
 // Notes: comments only; no code changes.
 function remove_spaces {
     parameter input_string.
-    
-    local result_string is "".
-    for input_character in input_string {
-        if not(input_character = " ") {
-            set result_string to result_string + input_character.
-        }
-    }
-    return result_string.
+    return input_string:replace(" ", "").
 }
 function time_to_alt {
   parameter cur_alt.
@@ -247,7 +240,6 @@ function find_closest_entry {
     parameter entries.
     parameter target_time.
 
-    local closest_time is -1.
     local min_difference is 1e+308. // Set to a large number to ensure the first entry is always closer.
     local closest_entry is lex().
 
@@ -260,7 +252,6 @@ function find_closest_entry {
 
         if difference < min_difference {
             set min_difference to difference.
-            set closest_time to entry_time.
             set closest_entry to entries[key].
         }
     }
@@ -279,8 +270,9 @@ function vec2pos {
 		set phi to 360 - phi.
 	}
 	//angle between x-axis and geocoordinates
-	local alpha is vang(v(1,0,0), latlng(0,0):position - ship:body:position).
-	if (latlng(0,0):position - ship:body:position):z >= 0 {
+	local zero_reference is latlng(0,0):position - ship:body:position.
+	local alpha is vang(v(1,0,0), zero_reference).
+	if zero_reference:z >= 0 {
 		set alpha to 360 - alpha.
 	}
 	return latlng(lat, phi + alpha).
@@ -293,23 +285,22 @@ FUNCTION rodrigues {
 	
 	SET zvec TO zvec:NORMALIZED.
 	
-	LOCAL outVector IS inVector*COS(alph).
 	IF (swch=1) {
-		SET outVector TO outVector + VCRS(zvec, inVector)*SIN(alph).
+		// ANGLEAXIS uses a lower-precision rotation representation. Preserve
+		// the original zero-axis result, for which no rotation axis exists.
+		IF zvec:SQRMAGNITUDE = 0 { RETURN inVector*COS(alph). }
+		RETURN ANGLEAXIS(alph,zvec)*inVector.
 	}
 	ELSE {
-		SET outVector TO outVector + CROSS(zvec, inVector)*SIN(alph).
+		RETURN inVector*COS(alph) + CROSS(zvec, inVector)*SIN(alph) + zvec*VDOT(zvec, inVector)*(1-COS(alph)).
 	}
-	SET outVector TO outVector + zvec*VDOT(zvec, inVector)*(1-COS(alph)).
-	
-	RETURN outVector.
 }
 FUNCTION CROSS {
 	DECLARE PARAMETER v1.
 	DECLARE PARAMETER v2.
 	
-	LOCAL out IS VCRS(vecYZ(v1), vecYZ(v2)).
-	RETURN vecYZ(out).
+	// Swapping Y and Z before and after a cross product reverses handedness.
+	RETURN VCRS(v2, v1).
 }
 FUNCTION vecYZ {
 	DECLARE PARAMETER input.	//	Expects a vector
@@ -399,10 +390,7 @@ FUNCTION find_zero_input {
     if b = 0 {
         return x2.
     }
-    LOCAL m IS (y2 - y1) / b.
-    
-
-    RETURN -y1 / m + x1.
+    RETURN -y1 / ((y2 - y1) / b) + x1.
 }
 FUNCTION FindClosestTimeStep {
     PARAMETER data.            // Lexicon { time_step : distance }
@@ -524,9 +512,7 @@ function lin_interpol {
     // Calculate the velocity using linear interpolation
     //local velocity is initial_velocity + (final_velocity - initial_velocity) * ((distance - initial_distance) / (final_distance - initial_distance)).
 
-    local a is i_v + (f_v - i_v) * ((d - i_d) / (f_d - i_d)).
-
-    return a.
+    return i_v + (f_v - i_v) * ((d - i_d) / (f_d - i_d)).
 }
 function normalize{
   parameter num.
