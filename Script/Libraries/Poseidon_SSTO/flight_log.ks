@@ -667,7 +667,7 @@ function flight_log_set_vacuum_ascent_target {
 function flight_log_entry_solver_result {
     parameter result.
     if POS_LOG_LEVEL < 1 { return. }
-    local detail is "converged=" + result["converged"] + "|iterations=" + result["iterations"] + "|reason=" + result["error"]["str"].
+    local detail is "converged=" + result["converged"] + "|iterations=" + result["iterations"] + "|reason=" + result["error"]["str"] + "|simstate_integrator=velocity_cached|rodrigues=quaternion|geoframe=local|gravity=direct|aerosampler=shared_quaternion|heading_sampler=load_only".
     if result["converged"] { set detail to detail + "|bank=" + round(result["bank"],3). }
     if result["error"]:haskey("min_bank") { set detail to detail + "|min_bank=" + round(result["error"]["min_bank"],3). }
     flight_log_event("entry_solver",detail).

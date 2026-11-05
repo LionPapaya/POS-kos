@@ -31,9 +31,7 @@ FUNCTION clone_simstate {
 function gravitacc {
     parameter pos.
     parameter sim_context_mu is BODY:mu.
-    local grav_acc to -sim_context_mu * pos:normalized / pos:sqrmagnitude.
-    //log "Gravitational acceleration: " + grav_acc to "simstate.log".
-    return grav_acc.
+    return -sim_context_mu * pos:normalized / pos:sqrmagnitude.
 }
 
 function update_simstate {
@@ -74,8 +72,9 @@ function update_simstate_total_accel {
     parameter sim_context_radius is BODY:radius.
 
     // Keep the same constant-acceleration Euler equations as update_simstate.
-    local new_velocity to simstate["velocity"] + total_accel * timestep.
-    local new_position to simstate["position"] + simstate["velocity"] * timestep + 0.5 * total_accel * timestep^2.
+    local old_velocity to simstate["velocity"].
+    local new_velocity to old_velocity + total_accel * timestep.
+    local new_position to simstate["position"] + old_velocity * timestep + 0.5 * total_accel * timestep^2.
 
     return lexicon(
         "simtime", simstate["simtime"] + timestep,
@@ -219,14 +218,14 @@ function simulate_trajectory_hed{
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
 
-        set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
+        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
 
 
         // Calculate the gravitational acceleration
         local gravity_acceleration is gravitacc(temp_simstate["position"]).
 
         // Update the simstate with all accelerations
-        set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), timestep).
+        set temp_simstate to update_simstate(temp_simstate, list(air_acceleration, gravity_acceleration), timestep).
 
 
     }
@@ -272,14 +271,14 @@ function simulate_trajectory_hed_pos{
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
 
-        set air_acceleration to aeroaccel_ld(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
+        set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,bank_angle)).
 
 
         // Calculate the gravitational acceleration
         local gravity_acceleration is gravitacc(temp_simstate["position"]).
 
         // Update the simstate with all accelerations
-        set temp_simstate to update_simstate(temp_simstate, list(air_acceleration["load"], gravity_acceleration), timestep).
+        set temp_simstate to update_simstate(temp_simstate, list(air_acceleration, gravity_acceleration), timestep).
 
         set hed to heading_between(simstate["latlong"],pos).
     }
@@ -295,8 +294,9 @@ declare function sim_aeroaccel_load {
     parameter attitude.
     parameter sim_context_radius is BODY:radius.
 
-    local roll is attitude[1].
     local aoa is attitude[0].
+    local roll is attitude[1].
+
 
     local altt is pos:mag-sim_context_radius.
 
@@ -308,7 +308,15 @@ declare function sim_aeroaccel_load {
     local vesseltop is SHIP:FACING:TOPVECTOR:NORMALIZED.
     local vesselright is VCRS(vesseltop,vesselfore):NORMALIZED.
 
-    local airspeedaoa is surfvel:MAG*rodrigues(vesselfore,vesselright,aoa):NORMALIZED.
+    // Match Rodrigues normalization and zero-axis behavior while reusing rotations.
+    local axis_one is vesselright:NORMALIZED.
+    local rot_one is V(0,0,0).
+    if axis_one:SQRMAGNITUDE <> 0 {
+        set rot_one to ANGLEAXIS(aoa,axis_one)*vesselfore.
+    } else {
+        set rot_one to vesselfore*COS(aoa).
+    }
+    local airspeedaoa is surfvel:MAG*rot_one:NORMALIZED.
     local totalforce is ADDONS:FAR:AEROFORCEAT(altt,airspeedaoa).
 
     // Convert the aerodynamic force into the frame defined by the vessel orientation vectors.
@@ -333,10 +341,24 @@ declare function sim_aeroaccel_load {
     set velup to VCRS(velforward,velright):NORMALIZED.
 
     // Build the predicted vessel orientation vectors using the existing AoA and roll convention.
-    local pred_vesseltop is rodrigues(velup,velforward,-roll).
+    local axis_two is velforward:NORMALIZED.
+    local pred_vesseltop is V(0,0,0).
+    if axis_two:SQRMAGNITUDE <> 0 {
+        set pred_vesseltop to ANGLEAXIS(-roll,axis_two)*velup.
+    } else {
+        set pred_vesseltop to velup*COS(-roll).
+    }
     local pred_vesselright is VCRS(pred_vesseltop,velforward):NORMALIZED.
-    local pred_vesselfore is rodrigues(velforward,pred_vesselright,-aoa).
-    set pred_vesseltop to rodrigues(pred_vesseltop,pred_vesselright,-aoa).
+    local axis_three is pred_vesselright:NORMALIZED.
+    local pred_vesselfore is V(0,0,0).
+    if axis_three:SQRMAGNITUDE <> 0 {
+        local rot_three is ANGLEAXIS(-aoa,axis_three).
+        set pred_vesselfore to rot_three*velforward.
+        set pred_vesseltop to rot_three*pred_vesseltop.
+    } else {
+        set pred_vesselfore to velforward*COS(-aoa).
+        set pred_vesseltop to pred_vesseltop*COS(-aoa).
+    }
 
     return (pred_vesselright*localforce:X + pred_vesseltop*localforce:Y + pred_vesselfore*localforce:Z) / SHIP:MASS.
 }

@@ -397,3 +397,128 @@ mass, coefficients, validity and limiting status at the existing low/medium/high
 cadence. This remains a passive display estimate: it does not change runway-stop,
 RTLS, or contingency dispatch. Validate stopping and GUI behavior in KSP; the
 offline GUI is experimental.
+
+### KerboScript performance guidance
+
+For literal ASCII space removal from a string, consider `text:replace(" ", "")`
+instead of a character-by-character KerboScript loop. In KSP with kOS 1.4.0.0
+and 2,000 IPU, three batches of 5,000 calls over eight short strings took
+9.24 seconds per batch with the loop and 1.44–1.46 seconds with `:replace`.
+The results matched for the sampled strings, including empty, repeated-space,
+and mixed-case inputs. A separate KSP run generated 5,000 distinct strings
+of 5–37 characters with varying space density; the original and replacement
+outputs also matched in a case-sensitive comparison of the recorded results.
+This measures in-game elapsed time including loop and
+call overhead, not CPU wall time. Check the expected input types and semantics:
+this removes literal spaces, not other whitespace.
+
+Compare real functions against candidate implementations using representative
+and boundary inputs. Time multiple batches with setup and logging outside the
+timed interval, and check outputs as well as timings. Scheduler ticks quantize
+short measurements, and harness overhead contributes to the reported time.
+
+Removing an unused local assignment from a loop can also reduce scheduled work.
+For `find_closest_entry`, removing the unused `closest_time` variable and its
+updates reduced three 1,000-call numeric-key batches from 1.72–1.74 seconds to
+1.66 seconds in the same KSP setup. Empty lexicons, numeric and string keys,
+and tied targets matched in 27 sampled cases. The checkout had no call sites
+for this helper, so this measurement does not imply a current flight speedup.
+
+Do not assume that replacing exponentiation with explicit multiplication is
+faster in kOS: in the same setup, a `pdi_gravity` candidate that cached the
+radius magnitude and multiplied it three times took 1.76 seconds per 5,000
+calls, versus 1.54 seconds for the existing `radius:mag^3` expression, across
+three batches. The 28 sampled results matched, but this does not establish
+numerical equivalence for every input. Measure the complete expression before
+using this transformation, especially in flight guidance.
+
+Entry trajectory helpers can read live KSP state while a calculation spans
+physics ticks. For example, `vec2pos` reads the body's rotating frame. In a
+36-case side-by-side state-update experiment, otherwise identical sequential
+calculations differed in longitude by up to 0.000334 degrees as the body moved.
+Compare such results with their timestamps and assess downstream trajectory
+effects; do not treat sequential live-state results as an exact equality test
+or cache live inputs across ticks without checking the intended semantics.
+
+The default Rodrigues branch now uses a guarded quaternion rotation. In KSP it
+took 1.44 seconds per 3,000 calls, versus 1.92 seconds for the prior general
+helper in the same direct-call harness. Across 4,000 generated comparisons,
+including zero axes and the alternate cross-product branch, the maximum vector
+difference was 0.000643 and the maximum difference relative to input magnitude
+was 5.03e-7; the sampled alternate-branch results matched. Zero axes retain
+the original cosine-scaled result. The quaternion's precision difference can
+affect downstream predictions; the user accepted it, and a full entry flight
+remains to be checked. An isolated KSP logger check confirmed that the entry
+solver event records implementation identifiers for later flight comparison.
+
+For `vec2pos`, reusing the body reference within one call reduced 3,000-call
+batches from 2.76 seconds to 2.58–2.60 seconds in KSP. The actual updated
+function matched the previous implementation in 911 same-tick comparisons.
+The current logger's synthetic KSP check also recorded the quaternion and
+local-geoframe identifiers. Full entry-flight validation remains outstanding.
+
+Returning `gravitacc`'s computed vector directly avoided an otherwise unused
+temporary. In a post-change KSP comparison the actual function took 1.44
+seconds per 5,000 calls versus 1.46 seconds for the previous body; 2,000
+generated inputs matched. The small timing difference includes harness and
+physics-tick scheduling overhead and does not establish a whole-solver gain.
+
+For whole-predictor measurements, account for physics-tick time resolution and
+live vessel or body state. In ten synthetic 66-step entry predictions, removing
+an immediately overwritten zero-vector initialization produced a 0.312-second
+mean versus 0.316 seconds before, with individual timings quantized to 0.02
+seconds. This is not enough evidence of a speedup; the candidate was reverted.
+In powered descent, `lambda` and `lambda_dot` are constant over a prediction,
+but their combination depends on the integration step's midpoint time. Do not
+hoist normalization of that time-varying thrust direction out of the loop.
+
+In `sim_aeroaccel_load`, inlining the existing guarded quaternion operations
+and reusing the final angle-axis rotation for two vectors reduced three KSP
+batches from 2.76-2.78 to 2.16 seconds per 1,000 calls. The sampler retains
+its list-based interface, live vessel frame, axis normalization and zero-axis
+handling. The updated function matched the earlier sampler in 910 same-tick
+comparisons over varied altitudes, angles and velocities, including vertical
+velocity cases. A separate ten-run synthetic entry prediction averaged 0.274
+seconds versus 0.316 seconds in an earlier run; live conditions differed, so
+this is indicative rather than a controlled whole-solver comparison. The
+entry-solver event records `aerosampler=shared_quaternion` for flight analysis.
+
+The heading trajectory loops consume only aerodynamic load, so using the
+load-only sampler avoids calculating unused lift and drag. In KSP, 1,000 load
+samples took 2.16 seconds instead of 3.46 seconds, and 898 same-tick samples
+matched. Forty two-step tests of each updated heading predictor completed;
+sequential output comparisons are affected by live KSP state and are not a
+full flight validation. Do not cache heading across ticks without accounting
+for the live rotating body frame and threshold decisions.
+
+For `lin_interpol`, returning the existing expression directly instead of
+assigning a temporary reduced three KSP batches from 2.06 to 1.94 seconds per
+5,000 calls. The updated function matched the prior expression on 5,000
+generated finite cases with nonzero interpolation ranges. This is a helper
+benchmark and does not establish a measurable whole-flight speedup.
+
+A branch-based clamp in `interpolate_entry_reference_energy` matched the
+existing max/min clamp in 5,000 generated finite cases, including reversed and
+nearly equal distance ranges. Both variants took 2.80 seconds per 5,000 calls
+in each of three KSP batches using an interior blend. The candidate was not
+adopted; clamp performance may depend on the input distribution.
+
+Returning `find_zero_input`'s existing slope expression directly avoided a
+local assignment. In three KSP batches, 5,000 calls took 2.10 seconds instead
+of 2.20 seconds. The updated function matched the previous expression on 5,000
+generated finite cases, including zero-width intervals; flat nonzero-width
+intervals were not covered by that numerical comparison.
+
+For `calc_circle_distance`, a double-modulo angle wrap took 0.86 seconds per
+2,000 calls versus 2.48 seconds for the existing loop at 1085.25 degrees.
+Across 5,000 generated angles it differed in 216 fractional-angle cases,
+with a maximum distance difference of 1.46e-11 for the tested radii; all 2,500
+integer-angle cases matched. The candidate was not adopted because the sampled
+rounding difference is not established as behavior-preserving for all callers.
+
+The `CROSS` helper's Y/Z permutation before and after `VCRS` reverses the
+cross product's handedness. Replacing those three permutations with
+`VCRS(v2,v1)` reduced three KSP batches from 3.64 to 1.16 seconds per 5,000
+calls. The updated helper matched the prior implementation on 5,000 generated
+finite vector pairs. This is a direct helper measurement; it does not by
+itself establish a whole-flight speedup.
