@@ -671,7 +671,7 @@ The flight-start event now adds `dap_commands=local_maps`,
 are unchanged. The updated logger loads in the final KSP check; event emission
 and full vehicle behavior remain to be validated in a flight.
 
-`POS.ks` now routes to `POS_DAP_BENCH.ks` and idles after completion. It must
+During this benchmark pass, `POS.ks` routed to `POS_DAP_BENCH.ks` and idled after completion. It must
 start on a fresh idle CPU. It never invokes DAP setup/update, engine helpers,
 actuator commands, or protection scans. Remove the temporary call and following
 idle loop together, then reboot, to restore normal POS startup. The same edited
@@ -689,3 +689,6 @@ completed benchmark, with built-in clobber protection left enabled.
 PR preparation: the optimization branch was rebased onto the newer landing-recovery
 fixes in main (a92059a) after these KSP measurements. No additional flight run or
 game-archive deployment was performed during PR preparation.
+
+Normal POS guidance startup was restored after merging PR #5. The benchmark
+scripts remain available for explicit runs on a fresh idle CPU.
