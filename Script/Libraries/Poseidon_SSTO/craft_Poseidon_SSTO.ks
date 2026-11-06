@@ -117,7 +117,7 @@ function goto_target{
         local heading_error is normalized_heading_error(heading_to_target(reentry_target),compass_for_prograde()).
         // A lateral undershoot still deserves a turn if a modest bank reduces
         // predicted geographic miss. Do not spend range on a turn that worsens it.
-        if t_bank < 1 and abs(heading_error) > AVES["EG_rev°"] and ship:altitude > basic_target_altitude {
+        if t_bank < 1 and abs(heading_error) > AVES["EG_reversal_degrees"] and ship:altitude > basic_target_altitude {
             local turn_probe_bank is min(25,abs(heading_error)).
             local turn_probe is sim_with_bank(sim,turn_probe_bank,basic_target_altitude,reentry_target).
             if calcdistance(turn_probe["final_state"]["latlong"],reentry_target) < calcdistance(x,reentry_target) {
@@ -133,10 +133,10 @@ function goto_target{
                 set entry_turnside to "left".
             }
         }
-        if heading_error > AVES["EG_rev°"]{
+        if heading_error > AVES["EG_reversal_degrees"]{
             set entry_turnside to "right".
         }
-        if heading_error < -AVES["EG_rev°"]{
+        if heading_error < -AVES["EG_reversal_degrees"]{
             set entry_turnside to "left".
         }
         if entry_turnside = "right"{
@@ -880,18 +880,33 @@ Poseidon_SSTO:add("Landing",lex(
     "touchdown_altitude",3,
     "approach_vertical_speed",-7,
     "touchdown_vertical_speed",-0.7,
+    "runway_touchdown_distance",350,"runway_touchdown_sink",2,
+    "runway_flare_maximum_sink",7,"runway_flare_acceleration",2,
+    "runway_contact_height",1.5,"minimum_rollout_distance",500,
+    "centreline_lookahead",400,"centreline_heading_limit",5,"centreline_bank_limit",8,
     "pitch_gain",2.9,
+    // Preflare/flare tracking: support the flight-path angle, damp the
+    // measured sink response and prevent rapid unloading (flight 488).
+    "tracking_pitch_gain",1.8,"pitch_response_lead",0.5,
+    "pitch_acceleration_filter",0.25,"pitch_acceleration_limit",8,
+    "pitch_rate_up",6,"pitch_rate_down",3,
+    // Match the shallow 3-degree glide at approach speed. Capturing -4 too
+    // early held the craft above profile and moved flare beyond its aimpoint.
+    "preflare_capture_vs",-6.5,"preflare_height_reserve",10,
     "corridor_height_gain",0.35,
     "maximum_flare_climb",3,"maximum_flare_trim",15,
     "maximum_flare_sink_error",3.5,"maximum_flare_height_deficit",8,
     "minimum_turn_pitch",-2,
     "maximum_turn_pitch",25,
-    "rollout_pitch",0,"rollout_pitch_rate",3,
+    "rollout_pitch",0,"rollout_pitch_rate",6,
     // Preserve the 125 m/s approach reference through the long preflare.
     "brake_on_speed",135,
     "brake_off_speed",130,
     "speed_gain",0.12,"speed_preview_seconds",3,"maximum_deceleration",5,
     "maximum_throttle",0.70,
+    // Lower escape speed only in the final metres over the runway itself.
+    "touchdown_minimum_speed",110,"touchdown_speed_gate_height",10,
+    "touchdown_speed_gate_cross_track",15,
     "wheel_brake_altitude",10
 )).
 Poseidon_SSTO:add("HacDistance",10000).
@@ -1026,6 +1041,11 @@ Poseidon_SSTO:add("TerminalRoute",lex(
     "low_energy_margin",220,
     "brake_energy",150,
     "hold_exit_energy",250,
+    // Once subsonic terminal turns are practical, shed excess energy in the
+    // existing hold instead of flying an unreachable final to the threshold.
+    "FinalEnergyGate",lex("maximum_turn_speed",350,"minimum_clearance",1500,
+        "entry_margin",1000,"exit_margin",250,"maximum_profile_excess",500,
+        "capture_time_reserve",5),
     "rehold_energy",99999,
     "phase_change_delay",12,
     "hold_descent_rate",24,
@@ -1140,10 +1160,10 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "vertical_sink_limit",-10,"vertical_tracking_error",8,
         "vertical_recovery_arrest_margin",200,"vertical_critical_arrest_margin",125,
         "vertical_persistence",3,"vertical_critical_persistence",0.25,"recovery_throttle",0.70,
-        "minimum_turn_climb_rate",2,
+        "climbout_throttle",1,"established_climb_rate",5,"established_climb_time",2,
         "maximum_heading_error",22,"maximum_cross_track",900,
         "minimum_reposition_energy",-500,"target_altitude",800,"target_climb_rate",8,"climb_aoa",20,
-        "turn_altitude",350,"passed_threshold",0
+        "passed_threshold",0
     ),
     // Commit on the established curved preflare, while there is still height
     // to arrest sink. Waiting for shallow-glide sink before giving the landing
@@ -1180,7 +1200,7 @@ Poseidon_SSTO:add("TerminalRoute",lex(
         "lock_altitude",1500
     )
 )).
-Poseidon_SSTO:add("EG_rev°",5).
+Poseidon_SSTO:add("EG_reversal_degrees",5).
 Poseidon_SSTO:add("EG_am_range",10).
 Poseidon_SSTO:add("EntryHandoff",lex(
     "distance_tolerance",5000,

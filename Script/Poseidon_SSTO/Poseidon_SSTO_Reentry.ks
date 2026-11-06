@@ -96,7 +96,7 @@ function reentry_ground_complete {
     return contact = "LANDED" and ground_speed < 1.
 }
 
-parameter force_tgt is lex("force",false,"Location","","Runway","").
+parameter force_tgt is lex("force",true,"Location","Sandy-Island","Runway","22").
 global reentry_context is reentry_recovery_context(force_tgt).
 global reentry_preserve_propulsion is reentry_recovery_preserved(reentry_context).
 if not SHIP:BODY:atm:exists {
@@ -436,9 +436,9 @@ until running = false{
 
                 local heading_error is normalized_heading_error(
                     heading_to_target(Team_interface["target_latlng"]),compass_for_prograde()).
-                if heading_error > AVES["EG_rev°"]{
+                if heading_error > AVES["EG_reversal_degrees"]{
                     set entry_turnside to "right".
-                }else if heading_error < -AVES["EG_rev°"]{
+                }else if heading_error < -AVES["EG_reversal_degrees"]{
                     set entry_turnside to "left".
                 }
                 // Every ten seconds, simulate two complete trajectories from one
@@ -447,7 +447,15 @@ until running = false{
                 // remains the center of the overall authority envelope.
                 if time:seconds >= entry_predictive_next_update {
                     local prediction_start_time is time:seconds.
-                    set entry_predictive_next_update to prediction_start_time+10.
+                    local prediction_deadline is prediction_start_time+2.
+                    flight_log_event("entry_prediction_started","altitude="+round(ship:altitude,1)+
+                        "|bank="+entry_predictive_bank+"|budget_s=2").
+                    // Apply the converged command before any yielding calculation.
+                    if entry_turnside = "right" {
+                        set dap["aoa"]["target_bank"] to -entry_predictive_bank.
+                    } else {
+                        set dap["aoa"]["target_bank"] to entry_predictive_bank.
+                    }
                     local prediction_start is current_simstate().
                     // Keep the body/model scalars consistent between candidates.
                     // Do not freeze SHIP:FACING: sim_aeroaccel_load deliberately
@@ -468,14 +476,14 @@ until running = false{
                         Team_interface["target_altitude"],Team_interface["target_latlng"],AVES["simulation"]["timestep"],
                         prediction_mu,prediction_radius,prediction_angularvel,prediction_mass,
                         SHIP:FACING:FOREVECTOR:NORMALIZED,SHIP:FACING:TOPVECTOR:NORMALIZED,
-                        VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED,true
+                        VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED,true,prediction_deadline
                     ).
                     local prediction_high is sim_with_bank(
                         clone_simstate(prediction_start),entry_predictive_upper_bank,
                         Team_interface["target_altitude"],Team_interface["target_latlng"],AVES["simulation"]["timestep"],
                         prediction_mu,prediction_radius,prediction_angularvel,prediction_mass,
                         SHIP:FACING:FOREVECTOR:NORMALIZED,SHIP:FACING:TOPVECTOR:NORMALIZED,
-                        VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED,true
+                        VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED,true,prediction_deadline
                     ).
                     set entry_predictive_lower_miss to entry_team_box_miss(
                         prediction_low["final_state"],Team_interface["target_latlng"],Team_interface["team_interface_box"]
@@ -494,7 +502,12 @@ until running = false{
                         entry_predictive_lower_miss,entry_predictive_upper_bank,entry_predictive_upper_range_error,
                         entry_predictive_upper_miss,prediction_minimum_bank,prediction_maximum_bank,3
                     ).
-                    set entry_predictive_valid to prediction_command["valid"].
+                    set entry_predictive_valid to prediction_command["valid"] and
+                        prediction_low["valid"] and prediction_high["valid"].
+                    set entry_predictive_next_update to time:seconds+10.
+                    flight_log_event("entry_prediction_completed","valid="+entry_predictive_valid+
+                        "|low_reason="+prediction_low["reason"]+"|high_reason="+prediction_high["reason"]+
+                        "|elapsed_s="+round(time:seconds-prediction_start_time,3)).
                     set entry_predictive_sensitivity to prediction_command["sensitivity"].
                     local prediction_was_frozen is entry_predictive_frozen.
                     set entry_predictive_frozen to entry_predictive_valid and
@@ -749,10 +762,16 @@ until running = false{
                 set terminal_route["landing_pullup_since"] to -1.
                 set landing_flare_started to false.
                 set terminal_route["landing_corridor_since"] to -1.
-                set terminal_route["landing_flare_trim"] to 0.
+                set terminal_route["landing_arrest_request_vs"] to 0.
+                set terminal_route["landing_flare_trim"] to max(0,min(AVES["Landing"]["maximum_flare_trim"],
+                    pitch_for()-arcsin(max(-1,min(1,ship:verticalspeed/max(1,ship:velocity:surface:mag)))))).
+                set terminal_route["landing_pitch_time"] to time:seconds.
+                set terminal_route["landing_pitch_vs"] to ship:verticalspeed.
+                set terminal_route["landing_pitch_command"] to dap["aerostr"]["targetPitch"].
+                set terminal_route["landing_pitch_acceleration"] to 0.
                 set terminal_route["landing_last_flare_vs"] to 0.
                 set terminal_route_debug["flare_corridor_active"] to false.
-                set terminal_route_debug["flare_trim_pitch"] to 0.
+                set terminal_route_debug["flare_trim_pitch"] to terminal_route["landing_flare_trim"].
                 set terminal_route_debug["landing_preflare_active"] to landing_preflare_active.
                 local handoff_exit_margin is 0.
                 if landing_commit:haskey("exit_margin") { set handoff_exit_margin to landing_commit["exit_margin"]. }
@@ -760,7 +779,8 @@ until running = false{
                     "|altitude="+round(ship:altitude-runway_altitude,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
                     "|target_vertical_speed="+round(terminal_route_debug["desired_vertical_speed"],2)+
                     "|profile_region="+terminal_route["profile_region"]+"|glideslope_error="+round(landing_commit["glideslope_error"],1)+
-                    "|kind="+terminal_route["landing_handoff_kind"]+"|exit_margin="+round(handoff_exit_margin,1)).
+                    "|kind="+terminal_route["landing_handoff_kind"]+"|exit_margin="+round(handoff_exit_margin,1)+
+                    "|ground_brakes=confirmed_contact|speed_support=until_contact").
                 set terminal_route_debug["preflare_pullup_active"] to false.
                 set terminal_route_debug["preflare_pullup_fraction"] to 0.
                 set step to "landing".
@@ -800,15 +820,14 @@ until running = false{
         // the craft level over the runway.
         local desired_vs is landing_config["approach_vertical_speed"].
         local landing_corridor_floor is -999.
-        local landing_position_vs is 999.
+        local preflare_command is lex("runway_flare_vs",landing_config["touchdown_vertical_speed"],
+            "touchdown_aim",0,"touchdown_time",0,"safe_sink",0).
         if not landing_ground_contact_seen and ship:status = "FLYING" {
-            local preflare_command is lex().
             if landing_preflare_active and not landing_flare_started and
                alt_ovr_runway > landing_config["flare_start_altitude"] {
                 set preflare_command to terminal_landing_preflare_guidance(terminal_route).
             } else {
                 set preflare_command to terminal_landing_flare_guidance(terminal_route).
-                set landing_position_vs to preflare_command["position_vs"].
                 if terminal_route_debug["flare_corridor_active"] {
                     set landing_corridor_floor to preflare_command["desired_vs"].
                 }
@@ -833,9 +852,11 @@ until running = false{
                         "|vertical_speed="+round(ship:verticalspeed,2)+"|profile_error="+round(preflare_command["profile_error"],1)+
                         "|exit_margin="+round(preflare_command["exit_margin"],1)+
                         "|escape_reason="+preflare_command["escape_reason"]+"|pullup_margin="+round(preflare_command["pullup_margin"],1)+
-                        "|remaining_response_delay="+round(preflare_command["response_delay"],2)).
+                        "|remaining_response_delay="+round(preflare_command["response_delay"],2)+
+                        "|along_track="+round(terminal_route_debug["along_track"],1)+
+                        "|cross_track="+round(terminal_route_debug["cross_track"],1)).
                     terminal_route_change_phase(terminal_route,"go_around").
-                    set terminal_route["recovery_throttle_floor"] to AVES["TerminalRoute"]["GoAround"]["recovery_throttle"].
+                    set terminal_route["recovery_throttle_floor"] to AVES["TerminalRoute"]["GoAround"]["climbout_throttle"].
                     set terminal_route["propulsion_mode"] to "air".
                     set step to "TEAM".
                     terminal_route_fly(terminal_route).
@@ -856,10 +877,9 @@ until running = false{
                     pitch_for()-arcsin(max(-1,min(1,ship:verticalspeed/max(1,ship:velocity:surface:mag)))))).
                 set terminal_route_debug["flare_trim_pitch"] to terminal_route["landing_flare_trim"].
                 set flare_started_now to true.
-                local entry_vs is landing_config["approach_vertical_speed"].
-                if terminal_route["landing_last_desired_vs"] < 0 {
-                    set entry_vs to terminal_route["landing_last_desired_vs"].
-                }
+                // Use achieved sink at the boundary. Clearance guidance can
+                // still request a stronger arrest; pitch changes remain smooth.
+                local entry_vs is min(0,ship:verticalspeed).
                 set terminal_route["landing_flare_entry_vs"] to entry_vs.
             }
             set landing_preflare_active to false.
@@ -867,30 +887,54 @@ until running = false{
             set terminal_route_debug["landing_pullup_active"] to false.
             local flare_command is terminal_landing_flare_command(alt_ovr_runway,
                 terminal_route["landing_flare_entry_vs"],terminal_route["landing_last_flare_vs"],landing_config).
-            set desired_vs to flare_command["desired_vs"].
+            // Keep the height fraction for display, but use the runway
+            // contact plan for the actual sink command (flight 492).
+            set desired_vs to preflare_command["runway_flare_vs"].
+            if terminal_route["landing_last_flare_vs"] < 0 {
+                set desired_vs to max(desired_vs,terminal_route["landing_last_flare_vs"]).
+            }
             set terminal_route["landing_last_flare_vs"] to desired_vs.
             if flare_started_now {
                 flight_log_event("landing_flare_start","altitude="+round(alt_ovr_runway,1)+
                     "|distance="+round(calcdistance_m(ship:geoposition,runway_start),1)+
                     "|vertical_speed="+round(ship:verticalspeed,2)+
                     "|entry_vertical_speed="+round(terminal_route["landing_flare_entry_vs"],2)+
-                    "|target_vertical_speed="+round(desired_vs,2)).
+                    "|target_vertical_speed="+round(desired_vs,2)+
+                    "|touchdown_aim="+round(preflare_command["touchdown_aim"],1)+
+                    "|touchdown_time="+round(preflare_command["touchdown_time"],2)+
+                    "|safe_sink="+round(preflare_command["safe_sink"],2)).
             }
             set flare_fraction to max(terminal_route_debug["landing_flare_fraction"],flare_command["fraction"]).
         }
         if not landing_ground_contact_seen {
-            // A clearance intervention is not irreversible flare progress.
-            // Keep a bounded descent toward the configured touchdown point.
-            set desired_vs to max(landing_corridor_floor,min(desired_vs,landing_position_vs)).
+            // Before the threshold, preserve the clearance floor. The runway
+            // flare plan owns descent over the runway; the old unbounded
+            // position request must not override that plan.
+            set desired_vs to terminal_landing_descent_command(desired_vs,landing_corridor_floor).
         }
         set terminal_route["landing_last_desired_vs"] to desired_vs.
         set terminal_route_debug["landing_desired_vs"] to desired_vs.
         set terminal_route_debug["landing_flare_fraction"] to flare_fraction.
+        if flare_started_now {
+            flight_log_landing_flare_command(terminal_route["landing_last_flare_vs"],desired_vs,
+                alt_ovr_runway,terminal_route_debug["along_track"]).
+        }
 
         // Keep aerostr control for final alignment.  Drive turn_pitch directly
         // so the flare has pitch authority without using distance_pitch.
         local flare_pitch is terminal_landing_pitch_command(desired_vs,ship:verticalspeed,landing_config,
             terminal_route["landing_flare_trim"]).
+        if not landing_ground_contact_seen {
+            local pitch_control is terminal_landing_pitch_control(desired_vs,ship:verticalspeed,
+                ship:velocity:surface:mag,terminal_route["landing_flare_trim"],
+                terminal_route["landing_pitch_vs"],terminal_route["landing_pitch_command"],
+                terminal_route["landing_pitch_acceleration"],time:seconds-terminal_route["landing_pitch_time"],landing_config).
+            set flare_pitch to pitch_control["command"].
+            set terminal_route["landing_pitch_time"] to time:seconds.
+            set terminal_route["landing_pitch_vs"] to ship:verticalspeed.
+            set terminal_route["landing_pitch_command"] to flare_pitch.
+            set terminal_route["landing_pitch_acceleration"] to pitch_control["acceleration"].
+        }
         if landing_ground_contact_seen {
             if terminal_route["landing_rollout_time"] < 0 {
                 set terminal_route["landing_rollout_pitch"] to max(landing_config["rollout_pitch"],
@@ -914,8 +958,19 @@ until running = false{
         set dap["str_mode"] to "aerostr".
         set dap["aerostr"]["turn_pitch"] to flare_pitch.
         set dap["aerostr"]["distance_pitch"] to 0.
-        set dap["aerostr"]["turn_roll"] to 0.
-        set dap["aerostr"]["turn_heading"] to heading_to_target(runway_end).
+        // Follow the centreline rather than a runway-end point that moves
+        // behind the aircraft. Bounded bank corrects drift during the flare.
+        local centreline_heading is runway_heading+max(-landing_config["centreline_heading_limit"],
+            min(landing_config["centreline_heading_limit"],
+                arctan(terminal_route_debug["cross_track"]/landing_config["centreline_lookahead"]))).
+        local centreline_bank is terminal_route_bank_command(centreline_heading,AVES["TerminalRoute"]).
+        set dap["aerostr"]["turn_roll"] to max(-landing_config["centreline_bank_limit"],
+            min(landing_config["centreline_bank_limit"],centreline_bank)).
+        set dap["aerostr"]["turn_heading"] to centreline_heading.
+        if landing_ground_contact_seen {
+            set dap["aerostr"]["turn_roll"] to 0.
+            set dap["aerostr"]["turn_heading"] to runway_heading.
+        }
 
         local landing_speed_scale is terminal_mass_speed_scale(ship:mass,AVES["TerminalRoute"]).
         local speed_assist is terminal_landing_speed_command(ship:airspeed,
@@ -955,8 +1010,8 @@ until running = false{
         }
         local brake_reason is "speed_band".
         if landing_preflare_active { set brake_reason to "landing_config_hold". }
-        if ship:status = "LANDED" or alt_ovr_runway <= landing_config["wheel_brake_altitude"] {
-            set brake_reason to "wheel_contact_zone".
+        if landing_ground_contact_seen {
+            set brake_reason to "wheel_contact".
         }
         if landing_brake_command <> brakes or terminal_route_debug["brake_mode"] <> "landing" or
            terminal_route_debug["brake_reason"] <> brake_reason {
@@ -968,21 +1023,31 @@ until running = false{
         set terminal_route_debug["brake_reason"] to brake_reason.
         set terminal_route_debug["airbrake"] to landing_brake_command.
         if landing_brake_command { brakes on. } else { brakes off. }
-        if ship:status = "LANDED" and ship:airspeed < 5 {
-
-            log_status("Landing completed").
-        }
         // A momentary stall or a bounce can have near-zero airspeed while
         // still airborne.  Only wheel contact is a valid terminal condition.
         if reentry_ground_complete(ship:status,ship:groundspeed) {
-            set recovery_result to lex("complete",true,"success",true,"reason","landing_complete").
+            local stop_geometry is terminal_route_geometry().
+            local stop_runway_length is calcdistance_m(runway_start,runway_end).
+            local runway_stop_valid is stop_geometry["along_track"] <= 0 and
+                stop_geometry["along_track"] >= -stop_runway_length and
+                abs(stop_geometry["cross_track"]) <= landing_config["touchdown_speed_gate_cross_track"] and
+                abs(stop_geometry["altitude"]) <= landing_config["touchdown_speed_gate_height"].
+            local landing_result_reason is "landing_complete".
+            if not runway_stop_valid { set landing_result_reason to "off_runway_stop". }
+            set recovery_result to lex("complete",true,"success",runway_stop_valid,"reason",landing_result_reason).
+            flight_log_event("landing_outcome","success="+runway_stop_valid+"|reason="+landing_result_reason+
+                "|along_track="+round(stop_geometry["along_track"],1)+
+                "|cross_track="+round(stop_geometry["cross_track"],1)+
+                "|height="+round(stop_geometry["altitude"],1)).
             if reentry_preserve_propulsion {
                 set abort_state["active"] to false.
-                set abort_state["result"] to lex("success",true,"reason","landing_complete").
-                flight_log_event("recovery_outcome","mode="+abort_state["mode"]+"|success=true|reason=landing_complete").
+                set abort_state["result"] to lex("success",runway_stop_valid,"reason",landing_result_reason).
+                flight_log_event("recovery_outcome","mode="+abort_state["mode"]+
+                    "|success="+runway_stop_valid+"|reason="+landing_result_reason).
             }
             set step to "end".
-            log_status("Landing completed, switching to end phase").
+            if runway_stop_valid { log_status("Runway landing completed"). }
+            else { log_status("Runway landing failed: stopped outside runway"). }
         }
         } // end landing owner guard
     }

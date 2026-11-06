@@ -3,7 +3,7 @@
 // - Provides simstate creation/cloning (`current_simstate`, `clone_simstate`).
 // - Simple physics helpers: `gravitacc`, `update_simstate` (Euler integration).
 // - Trajectory simulators (`simulate_trajectory*`) which use aerodynamic sampling via `aeroforce_ld`.
-// Notes: Comments added only — no behavior changes.
+// Notes: Comments added only â€” no behavior changes.
 FUNCTION current_simstate {
     RETURN  LEXICON(
         "simtime",0,
@@ -150,7 +150,6 @@ function simulate_trajectory_time {
     parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
 
     local temp_simstate is simstate.
-    local t0 is simstate["simtime"].
     // Preserve the established guided-entry convention exactly:
     // "right" maps to negative roll; every other side maps to positive roll.
     local signed_bank_angle is bank_angle.
@@ -158,13 +157,17 @@ function simulate_trajectory_time {
         set signed_bank_angle to -bank_angle.
     }
 
-    until temp_simstate["simtime"] - t0 >= t {
+    // Compare a local duration, not a difference of large absolute times.
+    // A sub-ULP remainder can otherwise prevent absolute simtime advancing.
+    local integrated_duration is 0.
+    until integrated_duration >= t-0.000001 {
         if aoa_temp = "EGAOA"{
             set aoa to AVES["EGAOA"](temp_simstate["altitude"]).
         }else{
             set aoa to aoa_temp.
         }
-        local remaining_time is t - (temp_simstate["simtime"] - t0).
+        local remaining_time is t-integrated_duration.
+        local integration_step is min(timestep,remaining_time).
         // Calculate the air acceleration
         local air_acceleration is v(0, 0, 0).
         set air_acceleration to sim_aeroaccel_load(temp_simstate["position"],temp_simstate["surfvel"] ,list(aoa,signed_bank_angle),sim_context_radius).
@@ -173,7 +176,8 @@ function simulate_trajectory_time {
         local gravity_acceleration is gravitacc(temp_simstate["position"],sim_context_mu).
 
         // Entry simulation has exactly aerodynamic plus gravitational acceleration.
-        set temp_simstate to update_simstate_total_accel(temp_simstate, air_acceleration + gravity_acceleration, min(timestep,remaining_time), sim_context_angularvel, sim_context_radius).
+        set temp_simstate to update_simstate_total_accel(temp_simstate, air_acceleration + gravity_acceleration, integration_step, sim_context_angularvel, sim_context_radius).
+        set integrated_duration to integrated_duration+integration_step.
         //log temp_simstate to "simstate.log".
        
     }

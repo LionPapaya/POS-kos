@@ -426,6 +426,18 @@ function flight_log_flare_transition {
     set POS_LOG_FLARE_CORRIDOR_ACTIVE to active_corridor.
 }
 
+// Low mode records the final selected command once per flare. Existing
+// medium/high samples retain desired sink, position sink and corridor sink.
+function flight_log_landing_flare_command {
+    parameter flare_vs, selected_vs, runway_height, along_track.
+    if POS_LOG_LEVEL < 1 { return. }
+    flight_log_event("landing_flare_command","flare_vs="+round(flare_vs,3)+
+        "|selected_vs="+round(selected_vs,3)+"|position_vs="+round(terminal_route_debug["flare_position_vs"],3)+
+        "|corridor_vs="+round(terminal_route_debug["flare_corridor_vs"],3)+
+        "|height="+round(runway_height,2)+"|along_track="+round(along_track,1)+
+        "|vertical_speed="+round(ship:verticalspeed,3)).
+}
+
 function flight_log_landing_contact {
     parameter confirmed_contact, runway_height, pitch_command.
     if POS_LOG_LEVEL < 1 { return. }
