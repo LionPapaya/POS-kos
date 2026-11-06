@@ -98,20 +98,20 @@ FUNCtion bench_original_changeRate {
     PARAMETER start, end, dt, changerate_.
 
     //clearScreen.
-    //set Terminal:width to 301. 
+    //set Terminal:width to 301.
     //set Terminal:HEIGHT to 300.
     //print start+","+end+","+dt+","+changerate_.
-    
+
     // Calculate the amount to change based on the changerate and dt
     local change TO changerate_ * dt.
-    
+
     // Adjust the start value towards the end, without overshooting
     IF start < end {
         SET start TO MIN(start + change, end).  // Move towards end
     } ELSE {
         SET start TO MAX(start - change, end).  // Move towards end
     }
-    
+
     // Return the updated start value
     RETURN start.
 }
@@ -120,20 +120,20 @@ FUNCtion bench_candidate_changeRate {
     PARAMETER start, end, dt, changerate_.
 
     //clearScreen.
-    //set Terminal:width to 301. 
+    //set Terminal:width to 301.
     //set Terminal:HEIGHT to 300.
     //print start+","+end+","+dt+","+changerate_.
-    
+
     // Calculate the amount to change based on the changerate and dt
     local change TO changerate_ * dt.
-    
+
     // Adjust the start value towards the end, without overshooting
     IF start < end {
         RETURN MIN(start + change, end).  // Move towards end
     } ELSE {
         RETURN MAX(start - change, end).  // Move towards end
     }
-    
+
     // Return the updated start value
 
 }
@@ -171,14 +171,14 @@ function bench_original_checksrt_inputs{
   if input_pitch < AVES["MinPitch"]{
     set dap["aerostr"]["aerostr_pitch"] to AVES["MinPitch"].
   }
-  
+
 
 
 }
 
 function bench_candidate_checksrt_inputs{
   declare parameter input_pitch, input_heading, input_roll.
-  
+
   local aero_state is dap["aerostr"].
 local heading_err to normalized_heading_error(input_heading,compass_for_prograde()).
   if input_roll < -AVES["MaxRoll"]{
@@ -205,7 +205,7 @@ local heading_err to normalized_heading_error(input_heading,compass_for_prograde
   if input_pitch < AVES["MinPitch"]{
     set aero_state["aerostr_pitch"] to AVES["MinPitch"].
   }
-  
+
 
 
 }
@@ -224,7 +224,7 @@ function bench_original_aerostr{
    set dap["aerostr"]["aerostr_heading"] to dap["aerostr"]["turn_heading"].
     set dap["aerostr"]["aerostr_Roll"] to dap["aerostr"]["turn_roll"].
 
-  bench_original_checksrt_inputs(dap["aerostr"]["aerostr_pitch"],dap["aerostr"]["aerostr_heading"],dap["aerostr"]["aerostr_Roll"]).  
+  bench_original_checksrt_inputs(dap["aerostr"]["aerostr_pitch"],dap["aerostr"]["aerostr_heading"],dap["aerostr"]["aerostr_Roll"]).
   set dap["aerostr"]["targetPitch"] to dap["aerostr"]["aerostr_pitch"].
   set dap["aerostr"]["targetDirection"] to dap["aerostr"]["aerostr_heading"].
   set dap["aerostr"]["targetRoll"] to dap["aerostr"]["aerostr_Roll"].
@@ -240,7 +240,7 @@ function bench_candidate_aerostr{
    set aero_state["aerostr_heading"] to aero_state["turn_heading"].
     set aero_state["aerostr_Roll"] to aero_state["turn_roll"].
 
-  bench_candidate_checksrt_inputs(aero_state["aerostr_pitch"],aero_state["aerostr_heading"],aero_state["aerostr_Roll"]).  
+  bench_candidate_checksrt_inputs(aero_state["aerostr_pitch"],aero_state["aerostr_heading"],aero_state["aerostr_Roll"]).
   set aero_state["targetPitch"] to aero_state["aerostr_pitch"].
   set aero_state["targetDirection"] to aero_state["aerostr_heading"].
   set aero_state["targetRoll"] to aero_state["aerostr_Roll"].
@@ -453,7 +453,7 @@ function bench_original_dap_auto_aoa_commands {
             if defined ascent_alignment_debug and step = "ascent_alignment" {
                 set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(dap["aoa"]["aoa_pitch"],ascent_alignment_debug,AVES["Ascent"]).
             }
-        
+
 }
 
 function bench_candidate_dap_auto_aoa_commands {
@@ -477,7 +477,7 @@ function bench_candidate_dap_auto_aoa_commands {
             if defined ascent_alignment_debug and step = "ascent_alignment" {
                 set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(dap["aoa"]["aoa_pitch"],ascent_alignment_debug,AVES["Ascent"]).
             }
-        
+
 }
 
 function bench_run_original_dap_auto_aoa_commands { parameter bench_case. bench_original_dap_auto_aoa_commands(). return 0. }
@@ -505,7 +505,7 @@ function bench_production_dap_auto_aoa_commands {
             if defined ascent_alignment_debug and step = "ascent_alignment" {
                 set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(dap["aoa"]["aoa_pitch"],ascent_alignment_debug,AVES["Ascent"]).
             }
-        
+
 }
 
 function bench_run_production_dap_auto_aoa_commands { parameter bench_case. bench_production_dap_auto_aoa_commands(). return 0. }

@@ -603,7 +603,7 @@ function bench_original_calc_vvdot {
     }
     local t is distance / speed.
     set t to max( t/AVES["TEAM_vvdot_t"],AVES["TEAM_vvdot_t"]).
-    
+
     local vvdot is (t_alt - alt_) / t.
     return vvdot.
 }
@@ -619,7 +619,7 @@ function bench_candidate_calc_vvdot {
     }
     local t is distance / speed.
     set t to max( t/AVES["TEAM_vvdot_t"],AVES["TEAM_vvdot_t"]).
-    
+
     return (t_alt - alt_) / t.
 }
 
@@ -689,9 +689,9 @@ FUNCTION bench_original_rodrigues {
 	DECLARE PARAMETER zvec.		//	Expects a vector
 	DECLARE PARAMETER alph.	//	Expects a scalar
 	DECLARe PARAMETER swch IS 1.
-	
+
 	SET zvec TO zvec:NORMALIZED.
-	
+
 	IF (swch=1) {
 		// ANGLEAXIS uses a lower-precision rotation representation. Preserve
 		// the original zero-axis result, for which no rotation axis exists.
@@ -708,9 +708,9 @@ FUNCTION bench_candidate_rodrigues {
 	DECLARE PARAMETER zvec.		//	Expects a vector
 	DECLARE PARAMETER alph.	//	Expects a scalar
 	DECLARe PARAMETER swch IS 1.
-	
+
 	SET zvec TO zvec:NORMALIZED.
-	
+
 	IF (swch=1) {
 		// ANGLEAXIS uses a lower-precision rotation representation. Preserve
 		// the original zero-axis result, for which no rotation axis exists.
