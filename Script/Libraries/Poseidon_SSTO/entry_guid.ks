@@ -295,8 +295,12 @@ function sim_with_bank{
     parameter sim_context_vessel_top is SHIP:FACING:TOPVECTOR:NORMALIZED.
     parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
     parameter use_entry_sim_heading is false.
+    parameter live_deadline is -1.
 
     local out is lex().
+    local candidate_valid is true.
+    local candidate_reason is "complete".
+    local candidate_start_time is simstate["simtime"].
     local contrl is lex().
     local bank_side is "left".
 
@@ -315,6 +319,15 @@ function sim_with_bank{
         set bank_side to "left".
     }
     until simstate["altitude"] < target_altitude{
+        // Live prediction must release guidance even on a skip-out or bad model.
+        if live_deadline >= 0 {
+            if time:seconds >= live_deadline {
+                set candidate_valid to false. set candidate_reason to "live_time_budget". break.
+            }
+            if simstate["simtime"]-candidate_start_time >= 3600 {
+                set candidate_valid to false. set candidate_reason to "simulation_horizon". break.
+            }
+        }
         set hed to 0.
         if use_entry_sim_heading {
             set hed to entry_sim_heading_for_simstate(simstate).
@@ -323,10 +336,10 @@ function sim_with_bank{
         }
         set hed2tgt to heading_between(simstate["latlong"],target_latlong).
         set heading_error to normalized_heading_error(hed,hed2tgt).
-        if heading_error > AVES["EG_rev°"]{
+        if heading_error > AVES["EG_reversal_degrees"]{
             set bank_side to "right".
         }
-        if heading_error < -AVES["EG_rev°"]{
+        if heading_error < -AVES["EG_reversal_degrees"]{
             set bank_side to "left".
         }
         contrl:add(simstate["simtime"],lex("simstate",simstate,"inputs",lex("bank_side",bank_side,"bank_angle",bank_angle))).
@@ -336,6 +349,8 @@ function sim_with_bank{
     // Include the terminal point so even a one-step recovery trajectory has
     // a chronological segment for the live reference lookup.
     contrl:add(simstate["simtime"],lex("simstate",simstate,"inputs",lex("bank_side",bank_side,"bank_angle",bank_angle))).
+    out:add("valid",candidate_valid).
+    out:add("reason",candidate_reason).
     out:add("control",contrl).
     out:add("final_state",simstate).
     return out.
@@ -678,7 +693,7 @@ function entry_traj_debug_iteration {
 //    a) simulate forward using `sim_with_bank(simstate, pred_b, ...)` to get a predicted final state and control trace.
 //    b) compare the predicted distance to `tgt_dist` and tighten the bank bounds accordingly (binary/predictive search).
 //    c) If the predicted final state lies inside `team_interface_box` (checked with `is_within_team_interface`), the solver
-//       has converged — it returns a lexicon with `converged_sim`, `final_state`, `bank`, and `error` information.
+//       has converged â€” it returns a lexicon with `converged_sim`, `final_state`, `bank`, and `error` information.
 // 5) If iterations exceed the max allowed without convergence, return with `converged=false` and an error description.
 //
 // Inputs:
