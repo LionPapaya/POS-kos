@@ -684,3 +684,8 @@ audit, full suite and portable binding gate are still unavailable because
 Real kOS compilation and execution do not replace those gates. kOS rejected a
 reserved name in the initial test harness; it was renamed before the first
 completed benchmark, with built-in clobber protection left enabled.
+
+
+PR preparation: the optimization branch was rebased onto the newer landing-recovery
+fixes in main (a92059a) after these KSP measurements. No additional flight run or
+game-archive deployment was performed during PR preparation.
