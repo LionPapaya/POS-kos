@@ -522,3 +522,165 @@ cross product's handedness. Replacing those three permutations with
 calls. The updated helper matched the prior implementation on 5,000 generated
 finite vector pairs. This is a direct helper measurement; it does not by
 itself establish a whole-flight speedup.
+
+
+### Additional function optimization pass — 2026-11-06
+
+Eighteen candidates were measured with kOS 1.4.0.0 in KSP at 2,000 IPU. Seven
+function bodies changed; `calculate_distance_from_alt` also benefits through
+its call to the optimized altitude helper. The final run executes the actual
+edited libraries against snapshots of their original bodies, with varied
+synthetic inputs prepared outside timing. Three rounds alternate execution
+order. The table reports median simulated seconds per complete batch, including
+identical harness/call overhead; it does not measure CPU wall time or a flight.
+
+| Function | Calls / batch | Original (s) | Updated (s) | Less elapsed time |
+| --- | ---: | ---: | ---: | ---: |
+| `positive_difference` | 2000 | 0.86 | 0.82 | 4.7% |
+| `vecYZ` | 2000 | 0.84 | 0.80 | 4.8% |
+| `avg` | 2000 | 3.48 | 3.00 | 13.8% |
+| `calculate_glideslope_profile` | 1000 | 1.42 | 1.34 | 5.6% |
+| `calculate_glideslope_alt` | 1000 | 1.60 | 1.10 | 31.3% |
+| `calculate_distance_from_alt` | 100 | 2.80 | 1.86 | 33.6% |
+| `calc_vvdot` | 2000 | 1.36 | 1.32 | 2.9% |
+| `compass_and_pitch_for` | 1000 | 1.38 | 1.30 | 5.8% |
+
+The full verification's 558 input cases reported no candidate or production
+output mismatches. A further 67 cases rechecked the final average change. In
+two additional 4,000-element average tests, a timed callback appended an element
+during execution: original and updated functions both retained the original
+sample denominator and returned 1. This covers finite synthetic inputs, not every possible
+argument or a complete flight. The full profile compares altitude, gradient,
+and region; vector/list results compare components. Glide cases include exact
+boundaries, the Hermite interior, steep/shallow regions, and varied profiles.
+
+Keep altitude-only queries scalar when a full profile record is unused. The
+scalar helper deliberately retains the full profile's formula order and branch
+boundaries; maintain both together and compare their altitude outputs after
+future edits. Reusing `t^2` and `t^3` helps the full profile without reassociating
+its expressions. Hoisting the weight-mode branch out of `avg` avoids repeated
+dispatch; its existing exclusive RANGE endpoint and resulting sample set are
+preserved. Its unweighted denominator captures the iteration bound before the
+loop, preserving the count even if another callback appends while it yields;
+that final adjustment also received a focused KSP verification and remeasurement.
+Single-return temporaries in `positive_difference`, `vecYZ`, and
+`calc_vvdot` were removable. The smallest gains remain close to tick resolution.
+
+`compass_and_pitch_for` captures north/up once per invocation and computes east
+directly, avoiding a helper call and duplicate suffix reads. Never cache this
+frame across calls or physics ticks. Captured synthetic frames establish math
+agreement, not dynamic flight equivalence at scheduler boundaries.
+
+The other measured candidates were left unchanged: `time_to_alt`,
+`get_geoposition_along_heading`, `heading_between`, `compass_for`,
+`compass_for_prograde`, `pitch_for`, `pitch_for_prograde`, `calc_turn_radius`,
+and alternate-branch `rodrigues` offered little or inconsistent improvement.
+The `time_to_pos` early return saved work for zero speed but changes evaluation
+order and leaves moving-case performance unestablished, so it was not adopted.
+
+Flight logger review: the existing flight-start event identifies
+`glideslope_alt=scalar_profile`, `glideslope_powers=cached`, and
+`navball_frame=local_axes`. Existing terminal telemetry already records profile
+commands and transitions. CSV schema, low/medium/high cadence, and trajectory
+simulation logging remain unchanged; no logger call was added to a math helper.
+The modified logger loads in KSP as part of final verification; its event payload
+was source-reviewed, not exercised in a new full flight.
+
+At the end of this pass, `POS.ks` routed to `POS_FUNCTION_BENCH.ks` before flight imports
+and idles after completion. Remove the temporary call and idle loop together
+and reboot to restore normal startup. The benchmark requires a fresh idle CPU.
+The normal guidance was stopped before its deorbit burn; no quicksave was loaded.
+Changed libraries and launcher are also present in the running KSP archive.
+
+Local evidence: `tools/pos_sim/results/function_perf_20261106/benchmark.log`
+and `summary.json` (generated, not committed). The required offline audit,
+full suite, and portable binding gate remain unavailable because this checkout
+lacks `tools/test-pos`, the runtime, and `tools/check-kos-bindings`. Real kOS
+loaded and ran the final imported sources; that does not replace those gates.
+The existing GUI harness's old startup assertion is obsolete for the requested
+benchmark route, and another test relies on pre-extraction HEAD function bodies.
+
+
+### DAP command-math optimization pass — 2026-11-06
+
+This pass changes six DAP math helpers (`changeRate`, `checksrt_inputs`,
+`aerostr`, `aoa_bank_management`, and both envelope-apply helpers), plus the
+nominal entry-range lookup. It preserves the previous optimization pass.
+
+The benchmark runs real current `.ks` function bodies in kOS 1.4.0.0 in KSP,
+at 2,000 IPU. Synthetic lexicons and deterministic pose getters isolate command
+math from the live vehicle. Original snapshots redirect helper dependencies to
+their original snapshots, so the reference does not inherit the candidate gain.
+Three alternating-order rounds time 1,000–4,000 calls per batch. Setup, field
+comparison, and logging are outside timing. Values below are median simulated
+seconds per batch, including the same wrapper and fixture-provider overhead.
+
+| Function or composed command segment | Calls / batch | Original (s) | Updated (s) | Less elapsed time |
+| --- | ---: | ---: | ---: | ---: |
+| `changeRate` | 4000 | 2.50 | 2.36 | 5.6% |
+| `checksrt_inputs` | 2000 | 4.66 | 4.60 | 1.3% |
+| `aerostr` | 2000 | 6.54 | 5.94 | 9.2% |
+| `aoa_bank_management` | 3000 | 3.82 | 3.76 | 1.6% |
+| `envelope_apply_aoa_limits` | 4000 | 3.40 | 2.72 | 20.0% |
+| `envelope_apply_aerostr_limits` | 4000 | 3.96 | 2.84 | 28.3% |
+| `entry_nominal_range_at_energy` | 2000 | 7.20 | 4.38 | 39.2% |
+| DAP auto/aerostr command segment (composed) | 1000 | 4.46 | 3.88 | 13.0% |
+| DAP auto/AoA command segment (composed) | 1000 | 3.80 | 3.54 | 6.8% |
+
+All 1166 final fixture cases matched the original outputs. Comparisons cover
+every command field written by these helpers, smoothing/base-pitch state, and
+pose-getter call counts. Exact clamps, heading wrap, zero/equal targets,
+negative/zero timestep, overshoot, both CSS/AoA output maps, and varied commands
+are represented. A further 200-step AoA sequence changes targets, bank limits,
+timestep, altitude regime, and base-pitch consumption; it also matched exactly.
+The lookup matched another 178 cases around every production knot and on
+one/two-element and duplicate-knot sorted tables.
+
+The composed segments are source-extracted command blocks from `dap:update`,
+executed against the actual helpers. The AoA fixture rebinds its live altitude
+read to a synthetic scalar. These are **not full DAP-loop timings**: they exclude
+live pose collection, protection/terrain scans, recovery/mode ownership,
+actuators, steering-manager work, flight logging and vehicle physics. Synthetic
+pose-provider costs differ from the real providers, so the percentages must
+not be extrapolated to complete DAP updates or flights. Timing repeatedly uses
+an initialized workload; the wider correctness matrix runs separately. Short
+differences remain quantized by the 0.02-second scheduler clock.
+
+Per-call command-map aliases reduce repeated nested lexicon indexing without
+retaining maps across invocations. Pose getter calls remain at their original
+sites and in their original order; the changing-getter fixture checks this.
+Direct slew returns avoid local reassignment with identical branch and clamp
+expressions. The envelope helpers inline the exact existing
+`max(lower,min(value,upper))` expression, with a per-call bank bound. Alias-only
+clamps were measured first; eliminating their pure wrapper calls performed
+better. Future changes must keep the inlined clamp and `envelope_clamp` aligned.
+No rates, limits, timers, mode transitions, recovery gates, or explicit yields
+were removed or retuned.
+
+The nominal lookup uses a lower-bound binary search over ascending generated
+energies, retaining the first matching upper knot and the same interpolation
+order. No production call site was found for this helper, so its isolated gain
+does not establish a current flight improvement.
+
+Logger review: existing medium/high samples already include `dap_dt`, target
+and smoothed AoA/bank, base pitch, aerostr/AoA/CSS outputs, envelope limits and
+recovery timers; existing low-level events record DAP/steering transitions.
+The flight-start event now adds `dap_commands=local_maps`,
+`dap_clamp=inline_bounds`, `slew=direct_return`, and
+`nominal_lookup=lower_bound`. Cadence/schema and trajectory simulation logging
+are unchanged. The updated logger loads in the final KSP check; event emission
+and full vehicle behavior remain to be validated in a flight.
+
+`POS.ks` now routes to `POS_DAP_BENCH.ks` and idles after completion. It must
+start on a fresh idle CPU. It never invokes DAP setup/update, engine helpers,
+actuator commands, or protection scans. Remove the temporary call and following
+idle loop together, then reboot, to restore normal POS startup. The same edited
+files are present in the game archive. No quicksave was loaded.
+
+Raw logs, source snapshots and `summary.json` are local generated artifacts in
+`tools/pos_sim/results/dap_perf_20261106/`; they are not committed. The offline
+audit, full suite and portable binding gate are still unavailable because
+`tools/test-pos`, the offline runtime and `tools/check-kos-bindings` are missing.
+Real kOS compilation and execution do not replace those gates. kOS rejected a
+reserved name in the initial test harness; it was renamed before the first
+completed benchmark, with built-in clobber protection left enabled.

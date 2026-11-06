@@ -1,3 +1,9 @@
+// Temporary passive function benchmark. Use a fresh, idle CPU.
+// To restore flight startup, remove this call and the following idle loop,
+// then reboot the CPU to clear synthetic test state and cached libraries.
+RUNPATH("0:/POS_DAP_BENCH.ks").
+until false { wait 1. }
+
 // POS.ks
 // Purpose: top-level launcher/menu for Poseidon scripts.
 // - Loads shared libraries and selects the appropriate Poseidon sub-script (orbit, reentry, docking) based on vessel conditions.

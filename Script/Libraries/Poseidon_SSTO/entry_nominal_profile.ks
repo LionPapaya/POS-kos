@@ -42,15 +42,22 @@ function entry_nominal_range_at_energy {
     if energy_height_ >= entry_nominal_energy_samples[last_index] {
         return entry_nominal_range_samples[last_index].
     }
-    for profile_index in range(1, entry_nominal_energy_samples:length) {
-        local upper_energy is entry_nominal_energy_samples[profile_index].
-        if energy_height_ <= upper_energy {
-            local lower_energy is entry_nominal_energy_samples[profile_index-1].
-            local fraction is (energy_height_-lower_energy)/(upper_energy-lower_energy).
-            local lower_range is entry_nominal_range_samples[profile_index-1].
-            local upper_range is entry_nominal_range_samples[profile_index].
-            return lower_range+(upper_range-lower_range)*fraction.
+    // Generated energies are ascending. Retain the first matching upper knot,
+    // including duplicate interior energies, without a linear scan per query.
+    local lower_index is 1.
+    local upper_index is last_index.
+    until lower_index >= upper_index {
+        local middle_index is floor((lower_index+upper_index)/2).
+        if energy_height_ <= entry_nominal_energy_samples[middle_index] {
+            set upper_index to middle_index.
+        } else {
+            set lower_index to middle_index+1.
         }
     }
-    return entry_nominal_range_samples[last_index].
+    local upper_energy is entry_nominal_energy_samples[lower_index].
+    local lower_energy is entry_nominal_energy_samples[lower_index-1].
+    local fraction is (energy_height_-lower_energy)/(upper_energy-lower_energy).
+    local lower_range is entry_nominal_range_samples[lower_index-1].
+    local upper_range is entry_nominal_range_samples[lower_index].
+    return lower_range+(upper_range-lower_range)*fraction.
 }

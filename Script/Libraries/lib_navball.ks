@@ -122,11 +122,14 @@ function compass_and_pitch_for {
     set pointing to type_to_vector(ves,thing).
   }
 
-  local east is east_for(ves).
+  // Reuse this call's local frame; do not retain it across physics ticks.
+  local north_vector is ves:north:vector.
+  local up_vector is ves:up:vector.
+  local east is vcrs(up_vector,north_vector).
 
-  local trig_x is vdot(ves:north:vector, pointing).
+  local trig_x is vdot(north_vector, pointing).
   local trig_y is vdot(east, pointing).
-  local trig_z is vdot(ves:up:vector, pointing).
+  local trig_z is vdot(up_vector, pointing).
 
   local compass is arctan2(trig_y, trig_x).
   if compass < 0 {
