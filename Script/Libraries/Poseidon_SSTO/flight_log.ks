@@ -572,7 +572,9 @@ function flight_log_begin {
     // Record the configured VM budget once at low cost. This lets a later
     // replay distinguish guidance behavior from a differently configured CPU.
     flight_log_event("flight_start","mode=" + POS_LOGGING_MODE + "|body=" + POS_LOG_LAST_BODY +
-        "|directory=" + POS_LOG_DIRECTORY + "|ipu=" + CONFIG:IPU).
+        "|directory=" + POS_LOG_DIRECTORY + "|ipu=" + CONFIG:IPU +
+        "|glideslope_alt=scalar_profile|glideslope_powers=cached|navball_frame=local_axes" +
+        "|dap_commands=local_maps|dap_clamp=inline_bounds|slew=direct_return|nominal_lookup=lower_bound").
 }
 
 // Recovery state is sampled only at the logger's existing medium/high cadence.

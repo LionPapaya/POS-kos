@@ -79,46 +79,51 @@ function aeroturn {
     set dap["aoa"]["target_bank"] to bank_angle.
 }
 function aerostr{
+  // Resolve the command map per invocation; never cache it across updates.
+  local aero_state is dap["aerostr"].
+
   if not(defined turn_roll){
     set turn_roll to 0.
   }
-   set dap["aerostr"]["aerostr_pitch"] to (dap["aerostr"]["distance_pitch"]+dap["aerostr"]["turn_pitch"]).
-   set dap["aerostr"]["aerostr_heading"] to dap["aerostr"]["turn_heading"].
-    set dap["aerostr"]["aerostr_Roll"] to dap["aerostr"]["turn_roll"].
+  set aero_state["aerostr_pitch"] to (aero_state["distance_pitch"]+aero_state["turn_pitch"]).
+  set aero_state["aerostr_heading"] to aero_state["turn_heading"].
+   set aero_state["aerostr_Roll"] to aero_state["turn_roll"].
 
-  checksrt_inputs(dap["aerostr"]["aerostr_pitch"],dap["aerostr"]["aerostr_heading"],dap["aerostr"]["aerostr_Roll"]).  
-  set dap["aerostr"]["targetPitch"] to dap["aerostr"]["aerostr_pitch"].
-  set dap["aerostr"]["targetDirection"] to dap["aerostr"]["aerostr_heading"].
-  set dap["aerostr"]["targetRoll"] to dap["aerostr"]["aerostr_Roll"].
+  checksrt_inputs(aero_state["aerostr_pitch"],aero_state["aerostr_heading"],aero_state["aerostr_Roll"]).
+  set aero_state["targetPitch"] to aero_state["aerostr_pitch"].
+  set aero_state["targetDirection"] to aero_state["aerostr_heading"].
+  set aero_state["targetRoll"] to aero_state["aerostr_Roll"].
 }
 function checksrt_inputs{
   declare parameter input_pitch, input_heading, input_roll.
+
+  local aero_state is dap["aerostr"].
   local heading_err to normalized_heading_error(input_heading,compass_for_prograde()).
   if input_roll < -AVES["MaxRoll"]{
-    set dap["aerostr"]["aerostr_Roll"] to -AVES["MaxRoll"].
+    set aero_state["aerostr_Roll"] to -AVES["MaxRoll"].
   }
   if input_roll > AVES["MaxRoll"]{
-    set dap["aerostr"]["aerostr_Roll"] to AVES["MaxRoll"].
+    set aero_state["aerostr_Roll"] to AVES["MaxRoll"].
   }
   if roll_for() < -AVES["MaxRoll"]{
-    set dap["aerostr"]["aerostr_Roll"] to -AVES["MaxRoll"].
+    set aero_state["aerostr_Roll"] to -AVES["MaxRoll"].
   }
   if roll_for() > AVES["MaxRoll"]{
-    set dap["aerostr"]["aerostr_Roll"] to AVES["MaxRoll"].
+    set aero_state["aerostr_Roll"] to AVES["MaxRoll"].
   }
   if heading_err > AVES["MaxYaw"]{
-    set dap["aerostr"]["aerostr_heading"] to compass_for_prograde() +AVES["MaxYaw"].
+    set aero_state["aerostr_heading"] to compass_for_prograde() +AVES["MaxYaw"].
   }
   if heading_err < -AVES["MaxYaw"]{
-    set dap["aerostr"]["aerostr_heading"] to compass_for_prograde() -AVES["MaxYaw"].
+    set aero_state["aerostr_heading"] to compass_for_prograde() -AVES["MaxYaw"].
   }
   if input_pitch > AVES["MaxPitch"]{
-    set dap["aerostr"]["aerostr_pitch"] to AVES["MaxPitch"].
+    set aero_state["aerostr_pitch"] to AVES["MaxPitch"].
   }
   if input_pitch < AVES["MinPitch"]{
-    set dap["aerostr"]["aerostr_pitch"] to AVES["MinPitch"].
+    set aero_state["aerostr_pitch"] to AVES["MinPitch"].
   }
-  
+
 
 
 }
@@ -134,8 +139,7 @@ function calc_vvdot {
     local t is distance / speed.
     set t to max( t/AVES["TEAM_vvdot_t"],AVES["TEAM_vvdot_t"]).
     
-    local vvdot is (t_alt - alt_) / t.
-    return vvdot.
+    return (t_alt - alt_) / t.
 }
 // Return the continuously differentiable final-approach profile.  The steep
 // line is joined to a three-degree shallow glide with a cubic Hermite curve,
@@ -168,16 +172,18 @@ function calculate_glideslope_profile {
     local t is (distance - preflare_end) / span.
     local shallow_altitude is (preflare_end + gs["shallow_aimpoint"]) * shallow_gradient.
     local steep_altitude is (preflare_start - gs["target1"]) * steep_gradient.
+    local t_squared is t^2.
+    local t_cubed is t^3.
     local profile_height is
-        (2*t^3 - 3*t^2 + 1) * shallow_altitude +
-        (t^3 - 2*t^2 + t) * span * shallow_gradient +
-        (-2*t^3 + 3*t^2) * steep_altitude +
-        (t^3 - t^2) * span * steep_gradient.
+        (2*t_cubed - 3*t_squared + 1) * shallow_altitude +
+        (t_cubed - 2*t_squared + t) * span * shallow_gradient +
+        (-2*t_cubed + 3*t_squared) * steep_altitude +
+        (t_cubed - t_squared) * span * steep_gradient.
     local altitude_derivative is
-        (6*t^2 - 6*t) * shallow_altitude +
-        (3*t^2 - 4*t + 1) * span * shallow_gradient +
-        (-6*t^2 + 6*t) * steep_altitude +
-        (3*t^2 - 2*t) * span * steep_gradient.
+        (6*t_squared - 6*t) * shallow_altitude +
+        (3*t_squared - 4*t + 1) * span * shallow_gradient +
+        (-6*t_squared + 6*t) * steep_altitude +
+        (3*t_squared - 2*t) * span * steep_gradient.
     return lex(
         "altitude",profile_height+rnw_alt,
         "gradient",altitude_derivative/span,
@@ -186,7 +192,30 @@ function calculate_glideslope_profile {
 }
 function calculate_glideslope_alt {
     parameter distance,rnw_alt is runway_altitude, gs is AVES["glideslope"].
-    return calculate_glideslope_profile(distance,rnw_alt,gs)["altitude"].
+    // Same altitude expressions and boundary order as calculate_glideslope_profile.
+    // Scalar callers (including inverse bisection) need no gradient or lexicon.
+    local steep_gradient is gs["angle1"].
+    local shallow_gradient is gs["angle2"].
+    local preflare_start is gs["preflare_start"].
+    local preflare_end is gs["preflare_end"].
+
+    if distance >= preflare_start {
+        return ((distance - gs["target1"]) * steep_gradient)+rnw_alt.
+    }
+    if distance <= preflare_end {
+        return ((distance + gs["shallow_aimpoint"]) * shallow_gradient)+rnw_alt.
+    }
+
+    local span is preflare_start - preflare_end.
+    local t is (distance - preflare_end) / span.
+    local shallow_altitude is (preflare_end + gs["shallow_aimpoint"]) * shallow_gradient.
+    local steep_altitude is (preflare_start - gs["target1"]) * steep_gradient.
+    local profile_height is
+        (2*t^3 - 3*t^2 + 1) * shallow_altitude +
+        (t^3 - 2*t^2 + t) * span * shallow_gradient +
+        (-2*t^3 + 3*t^2) * steep_altitude +
+        (t^3 - t^2) * span * steep_gradient.
+    return profile_height+rnw_alt.
 }
 // Convert the desired flight-path vertical speed into an absolute pitch trim,
 // then add immediate closed-loop correction for sink-rate error.  Keeping the
@@ -314,12 +343,14 @@ function aoa_bank_management {
     local new_yaw to compass_for_prograde() - aoa_yaw.
 
     if not(css){
-        set dap["aoa"]["aoa_pitch"] to new_pitch.
-        set dap["aoa"]["aoa_yaw"] to new_yaw.
-        set dap["aoa"]["aoa_roll"] to target_bank.
+        local output_state is dap["aoa"].
+        set output_state["aoa_pitch"] to new_pitch.
+        set output_state["aoa_yaw"] to new_yaw.
+        set output_state["aoa_roll"] to target_bank.
     }else{
-        set dap["css"]["pitch_out"] to new_pitch.
-        set dap["css"]["yaw_out"] to new_yaw.
-        set dap["css"]["roll_out"] to target_bank.
+        local output_state is dap["css"].
+        set output_state["pitch_out"] to new_pitch.
+        set output_state["yaw_out"] to new_yaw.
+        set output_state["roll_out"] to target_bank.
     }
 }

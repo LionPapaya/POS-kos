@@ -819,13 +819,19 @@ function envelope_refresh {
 }
 
 function envelope_apply_aoa_limits {
-    set dap["aoa"]["target_aoa"] to min(dap["aoa"]["target_aoa"],dap["envelope"]["max_aoa"]).
-    set dap["aoa"]["target_bank"] to envelope_clamp(dap["aoa"]["target_bank"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
+    // Match envelope_clamp: max(lower,min(value,upper)).
+    local command_state is dap["aoa"].
+    local maximum_bank is dap["envelope"]["max_bank"].
+    set command_state["target_aoa"] to min(command_state["target_aoa"],dap["envelope"]["max_aoa"]).
+    set command_state["target_bank"] to max(-maximum_bank,min(command_state["target_bank"],maximum_bank)).
 }
 
 function envelope_apply_aerostr_limits {
-    set dap["aerostr"]["targetPitch"] to envelope_clamp(dap["aerostr"]["targetPitch"],AVES["MinPitch"],AVES["MaxPitch"]).
-    set dap["aerostr"]["targetRoll"] to envelope_clamp(dap["aerostr"]["targetRoll"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
+    // Match envelope_clamp: max(lower,min(value,upper)).
+    local command_state is dap["aerostr"].
+    local maximum_bank is dap["envelope"]["max_bank"].
+    set command_state["targetPitch"] to max(AVES["MinPitch"],min(command_state["targetPitch"],AVES["MaxPitch"])).
+    set command_state["targetRoll"] to max(-maximum_bank,min(command_state["targetRoll"],maximum_bank)).
 }
 
 function envelope_run_recovery {

@@ -228,13 +228,8 @@ FUNCTION arrow_ship {
 
 }
 function positive_difference {
-    parameter value1.
-    parameter value2.
-
-    // Calculate the difference and ensure it is positive
-    local difference is abs(value1 - value2).
-
-    return difference.
+    parameter value1, value2.
+    return abs(value1 - value2).
 }
 function find_closest_entry {
     parameter entries.
@@ -303,51 +298,42 @@ FUNCTION CROSS {
 	RETURN VCRS(v2, v1).
 }
 FUNCTION vecYZ {
-	DECLARE PARAMETER input.	//	Expects a vector
-	LOCAL output IS V(input:X, input:Z, input:Y).
-	RETURN output.
+    DECLARE PARAMETER input. // Expects a vector
+    RETURN V(input:X, input:Z, input:Y).
 }
 function lerp {
     parameter start, end, t.
     return start + (end - start) * t.
 }
-FUNCtion changeRate {
-    PARAMETER start, end, dt, changerate_.
-
-    //clearScreen.
-    //set Terminal:width to 301. 
-    //set Terminal:HEIGHT to 300.
-    //print start+","+end+","+dt+","+changerate_.
-    
-    // Calculate the amount to change based on the changerate and dt
-    local change TO changerate_ * dt.
-    
-    // Adjust the start value towards the end, without overshooting
-    IF start < end {
-        SET start TO MIN(start + change, end).  // Move towards end
-    } ELSE {
-        SET start TO MAX(start - change, end).  // Move towards end
+function changeRate {
+    parameter start, end, dt, changerate_.
+    local change is changerate_ * dt.
+    if start < end {
+        return min(start + change, end).
+    } else {
+        return max(start - change, end).
     }
-    
-    // Return the updated start value
-    RETURN start.
 }
-function avg{
+function avg {
   parameter a is list().
   parameter weight is "none".
   local sum is 0.
   local count is 0.
-  for b in range(0,a:length-1){
-    if weight = "none"{
+  // RANGE's exclusive endpoint intentionally preserves the existing sample set.
+  if weight = "none" {
+    // Capture the same bound for both iteration and denominator, even if
+    // another callback appends to the list while this function yields.
+    set count to max(0,a:length-1).
+    for b in range(0,count) {
       set sum to sum + a[b].
-      set count to count + 1.
-    }else{
+    }
+  } else {
+    for b in range(0,a:length-1) {
       set sum to sum + a[b]*weight[b].
       set count to count + weight[b].
     }
   }
   return sum/count.
-
 }
 function merge_lex {
     parameter lex1, lex2.
