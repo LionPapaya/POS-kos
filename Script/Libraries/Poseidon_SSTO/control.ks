@@ -5,7 +5,8 @@ RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terrain_navigation.ks").
 // Purpose: Poseidon autopilot and control helpers (the `dap` control lexicon).
 // - Initializes `dap` with `dap:setup()` and updates via `dap:update()`.
 // - Implements autopilot modes (auto/aoa/aerostr/vector/css/off), engine helpers and utility actions (execute_node, reset_sys).
-// Notes: only comments inserted; no logic or code changed.
+// Baseline pitch uses the AoA pitch-rate schedule; protection handbacks slew
+// from the last applied recovery attitude before normal guidance resumes.
 global dap is lex().
 if not (dap:haskey("setup_done")) {
     dap:add("setup_done", false).
@@ -38,7 +39,15 @@ if not (dap:haskey("setup")) {
         aoa_str:add("smooth_target_aoa", 0).
         aoa_str:add("smooth_target_bank", 0).
         aoa_str:add("base_pitch", 0).
+        aoa_str:add("base_pitch_override",false).
+        aoa_str:add("requested_base_pitch",0).
+        aoa_str:add("smooth_base_pitch",pitch_for_prograde()).
         dap:add("aoa", aoa_str).
+    }
+
+    if not dap:haskey("handoff") {
+        dap:add("handoff",lex("active",false,"protected",false,
+            "pitch",0,"yaw",0,"bank",0,"raw_pitch",0,"raw_yaw",0,"raw_bank",0)).
     }
 
     if not (dap:haskey("vector")) {
@@ -144,6 +153,83 @@ if not (dap:haskey("setup")) {
 function envelope_clamp {
     parameter value, lower, upper.
     return max(lower,min(value,upper)).
+}
+
+// The baseline is an absolute pitch, just like aoa_bank_management's third
+// argument. Slew it independently of AoA so an unsmoothed baseline cannot
+// bypass the existing pitch-rate limit. Zero remains a valid explicit value.
+function dap_smooth_baseline {
+    parameter previous_pitch, requested_pitch, elapsed, pitch_rate.
+    // A slow solve must not accumulate permission for a large catch-up step.
+    return changeRate(previous_pitch,requested_pitch,max(0,min(0.5,elapsed)),pitch_rate).
+}
+
+function dap_smooth_angle {
+    parameter previous_angle, requested_angle, elapsed, angle_rate.
+    local delta_angle is mod(requested_angle-previous_angle+540,360)-180.
+    return previous_angle+changeRate(0,delta_angle,max(0,min(0.5,elapsed)),angle_rate).
+}
+
+function dap_handoff_step {
+    parameter handoff, requested_pitch, requested_yaw, requested_bank, elapsed, pitch_rate, rotation_rate.
+    set handoff["raw_pitch"] to requested_pitch.
+    set handoff["raw_yaw"] to requested_yaw.
+    set handoff["raw_bank"] to requested_bank.
+    set handoff["pitch"] to dap_smooth_baseline(handoff["pitch"],requested_pitch,elapsed,pitch_rate).
+    set handoff["yaw"] to dap_smooth_angle(handoff["yaw"],requested_yaw,elapsed,rotation_rate).
+    set handoff["bank"] to dap_smooth_angle(handoff["bank"],requested_bank,elapsed,rotation_rate).
+    set handoff["active"] to abs(handoff["pitch"]-requested_pitch) > 0.01 or
+        abs(mod(handoff["yaw"]-requested_yaw+540,360)-180) > 0.01 or
+        abs(mod(handoff["bank"]-requested_bank+540,360)-180) > 0.01.
+}
+
+// Called only after normal commands or protection have produced the final
+// attitude. Emergency protection is immediate; only its return is damped.
+function dap_protection_handoff {
+    parameter protection_active.
+    local handoff is dap["handoff"].
+    if protection_active {
+        set handoff["pitch"] to dap["aoa"]["aoa_pitch"].
+        set handoff["yaw"] to dap["aoa"]["aoa_yaw"].
+        set handoff["bank"] to dap["aoa"]["aoa_roll"].
+        set handoff["protected"] to true. set handoff["active"] to false.
+        return.
+    }
+    if dap["dap_mode"] = "off" or dap["str_mode"] = "vector" {
+        set handoff["protected"] to false. set handoff["active"] to false.
+        return.
+    }
+    if handoff["protected"] {
+        set handoff["protected"] to false. set handoff["active"] to true.
+        // The normal controller ran in the background during recovery.
+        // Rebase its smoothing state on the command that really held STEERING.
+        set dap["aoa"]["smooth_target_bank"] to handoff["bank"].
+        set dap["aoa"]["smooth_target_aoa"] to min(dap["envelope"]["max_aoa"],
+            max(0,handoff["pitch"]-pitch_for_prograde())).
+        set dap["aoa"]["smooth_base_pitch"] to handoff["pitch"]-
+            dap["aoa"]["smooth_target_aoa"]*cos(handoff["bank"]).
+        flight_log_event("protection_handoff_start","mode="+dap["str_mode"]+
+            "|pitch="+round(handoff["pitch"],2)+"|bank="+round(handoff["bank"],2)).
+    }
+    if not handoff["active"] { return. }
+    local command_state is dap["aoa"].
+    local pitch_key is "aoa_pitch". local yaw_key is "aoa_yaw". local bank_key is "aoa_roll".
+    if dap["str_mode"] = "aerostr" {
+        set command_state to dap["aerostr"].
+        set pitch_key to "targetPitch". set yaw_key to "targetDirection". set bank_key to "targetRoll".
+    }
+    if dap["dap_mode"] = "css" {
+        set command_state to dap["css"].
+        set pitch_key to "pitch_out". set yaw_key to "yaw_out". set bank_key to "roll_out".
+    }
+    local rate_band is "low".
+    if ship:altitude > AVES["TEAMAltitude"] { set rate_band to "high". }
+    dap_handoff_step(handoff,command_state[pitch_key],command_state[yaw_key],command_state[bank_key],
+        dap["dt"],AVES["Pitch_rate"][rate_band],AVES["Rotation_rate"][rate_band]).
+    set command_state[pitch_key] to handoff["pitch"].
+    set command_state[yaw_key] to handoff["yaw"].
+    set command_state[bank_key] to handoff["bank"].
+    if not handoff["active"] { flight_log_event("protection_handoff_complete","mode="+dap["str_mode"]). }
 }
 
 // Return the predicted clearance between the terrain and the vessel's lowest
@@ -915,12 +1001,18 @@ if not (dap:haskey("update")) {
             }
             set dap["aoa"]["smooth_target_aoa"] to min(dap["aoa"]["smooth_target_aoa"],dap["envelope"]["max_aoa"]).
             set dap["aoa"]["smooth_target_bank"] to envelope_clamp(dap["aoa"]["smooth_target_bank"],-dap["envelope"]["max_bank"],dap["envelope"]["max_bank"]).
-            if dap["aoa"]["base_pitch"] = 0 {
-                aoa_bank_management(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["smooth_target_bank"]).
-            } else {
-                aoa_bank_management(dap["aoa"]["smooth_target_aoa"], dap["aoa"]["smooth_target_bank"], dap["aoa"]["base_pitch"]).
-                set dap["aoa"]["base_pitch"] to 0.
+            local baseline_rate_band is "low".
+            if ship:altitude > AVES["TEAMAltitude"] { set baseline_rate_band to "high". }
+            local requested_baseline is pitch_for_prograde().
+            if dap["aoa"]["base_pitch_override"] or dap["aoa"]["base_pitch"] <> 0 {
+                set requested_baseline to dap["aoa"]["base_pitch"].
             }
+            set dap["aoa"]["requested_base_pitch"] to requested_baseline.
+            set dap["aoa"]["smooth_base_pitch"] to dap_smooth_baseline(
+                dap["aoa"]["smooth_base_pitch"],requested_baseline,dap["dt"],AVES["Pitch_rate"][baseline_rate_band]).
+            aoa_bank_management(dap["aoa"]["smooth_target_aoa"],dap["aoa"]["smooth_target_bank"],dap["aoa"]["smooth_base_pitch"]).
+            set dap["aoa"]["base_pitch"] to 0.
+            set dap["aoa"]["base_pitch_override"] to false.
             if defined ascent_alignment_debug and step = "ascent_alignment" {
                 set dap["aoa"]["aoa_pitch"] to terrain_alignment_pitch(dap["aoa"]["aoa_pitch"],ascent_alignment_debug,AVES["Ascent"]).
             }
@@ -999,9 +1091,13 @@ if not (dap:haskey("update")) {
     }
     if ((dap["envelope"]["state"] = "upset_zero_aoa" or dap["envelope"]["state"] = "upset_pullup") and dap["str_mode"] <> "vector") or dap["envelope"]["state"] = "terrain_pullup" {
         envelope_run_recovery().
-    } else if dap["envelope"]["restore_steering"] {
-        lock steering to dap_steering.
-        set dap["envelope"]["restore_steering"] to false.
+        dap_protection_handoff(true).
+    } else {
+        dap_protection_handoff(false).
+        if dap["envelope"]["restore_steering"] {
+            lock steering to dap_steering.
+            set dap["envelope"]["restore_steering"] to false.
+        }
     }
 }).
 }
@@ -1011,6 +1107,7 @@ if not (dap:haskey("set_aoa_auto")) {
         dap:setup().
     }
     lock dap_steering to heading(dap["aoa"]["aoa_yaw"], dap["aoa"]["aoa_pitch"], dap["aoa"]["aoa_roll"]).
+    set dap["aoa"]["smooth_base_pitch"] to pitch_for_prograde().
     lock steering to dap_steering.
     lock throttle to recovery_throttle(dapthrottle,dap["envelope"]["min_throttle"]).
     set dap["dap_mode"] to "auto".
