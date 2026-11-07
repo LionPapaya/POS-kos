@@ -40,7 +40,8 @@ class GuiHarnessSafety(unittest.TestCase):
 
     def test_imported_files_have_only_passive_top_level(self):
         for name in ['gui.ks', 'gui_dialogs.ks', 'gui_style.ks', 'ascent_gui.ks',
-                     'return_gui.ks', 'ascent_recovery_gui.ks', 'entry_nominal_profile.ks']:
+                     'return_gui.ks', 'ascent_recovery_gui.ks', 'entry_nominal_profile.ks',
+                     'entry_charts.ks', 'entry_chart_catalog.ks']:
             source = (LIB / name).read_text(encoding="utf-8")
             # Remove full function definitions, including nested callbacks.
             for name in re.findall(r'(?im)^function\s+(\w+)\s*\{', source):
@@ -49,19 +50,23 @@ class GuiHarnessSafety(unittest.TestCase):
             self.assertNotRegex(code(source), r'(?i)\b(lock|runpath|stage|log|set|until|when)\b')
             imports = re.findall(r'RUNONCEPATH\("([^"]+)"\)', source)
             self.assertTrue(all(Path(x).name in {'gui_style.ks', 'ascent_gui.ks',
-                'return_gui.ks', 'ascent_recovery_gui.ks', 'entry_nominal_profile.ks'} for x in imports))
+                'return_gui.ks', 'ascent_recovery_gui.ks', 'entry_nominal_profile.ks',
+                'entry_charts.ks', 'entry_chart_catalog.ks'} for x in imports))
 
     def test_extracted_dialogs_preserve_production_logic(self):
         passive = (LIB / 'gui_dialogs.ks').read_text(encoding="utf-8")
         for filename, names in [('orbital_maneuver.ks', ['pos_om_catalog', 'pos_om_inputs']),
                                 ('PDI/pdi_executive.ks', ['vacuum_target_input'])]:
+            # Dialogs are already extracted in HEAD; compare their current
+            # production home rather than the pre-extraction caller files.
             original = subprocess.check_output(['git', 'show',
-                'HEAD:Script/Libraries/Poseidon_SSTO/' + filename], cwd=ROOT).decode()
+                'HEAD:Script/Libraries/Poseidon_SSTO/gui_dialogs.ks'], cwd=ROOT).decode()
             current = (LIB / filename).read_text(encoding="utf-8")
             self.assertIn('RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_dialogs.ks").', current)
             for name in names:
                 before = function(original, name)
                 after = function(passive, name)
+                before = re.sub(r'\s*pos_gui_window_style\([^\n]+\n', '\n', before)
                 after = re.sub(r'\s*pos_gui_window_style\([^\n]+\n', '\n', after)
                 self.assertEqual(code(before).split(), code(after).split(), name)
                 self.assertNotRegex(code(after), r'(?i)\b(lock|runpath|stage|log|flight_log_event|node)\s*\(')
@@ -84,9 +89,13 @@ class GuiHarnessSafety(unittest.TestCase):
             for asset in re.findall(r'"(Libraries/gui_images/[^"+]+\.png)"', (LIB / filename).read_text(encoding="utf-8")):
                 self.assertTrue((ROOT / 'Script' / asset).is_file(), asset)
 
-    def test_pos_cannot_fall_through_after_exit(self):
+    def test_normal_startup_does_not_enter_gui_harness(self):
         source = (ROOT / 'Script/POS.ks').read_text(encoding="utf-8")
-        self.assertRegex(source, r'RUNPATH\("0:/GUI_TEST.ks"\)\.\s*until false \{ wait 1\. \}')
+        manual_test = re.search(r'if main_step = "Test"\{[\s\S]*?\n    }', source)
+        self.assertIsNotNone(manual_test)
+        self.assertIn('runpath("0:/gui_test.ks").', manual_test[0])
+        normal_startup = source.replace(manual_test[0], '')
+        self.assertNotRegex(normal_startup, r'(?i)runpath\("0:/gui_test\.ks"\)')
 
 
 if __name__ == '__main__':

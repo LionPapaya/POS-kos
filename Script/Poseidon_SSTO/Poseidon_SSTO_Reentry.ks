@@ -159,6 +159,7 @@ global entry_predictive_sensitivity is 0.
 global entry_predictive_valid is false.
 global entry_predictive_frozen is false.
 global entry_display_prediction_path is entry_display_empty_path("not_ready").
+global entry_chart_selection is lex("ready",false,"pages",list()).
 global entry_team_closest_distance is 999999999.
 global entry_team_gate_since is -1.
 global entry_solver_next_retry_time is -1.
@@ -312,6 +313,7 @@ until running = false{
                 set entry_reference_time to -1.
 
                 if entry_traj:converged{
+                    reentry_select_entry_charts(entry_traj).
                     // Entry solver converged: configure guidance to follow the planned bank profile.
                     // - Provide user feedback via Lastest_status and logs.
                     // - Disable the basic reentry fallback and initialize the live-state
@@ -351,9 +353,8 @@ until running = false{
             
 
         }
-        // The V/SIT is one energy/range corridor split into five zoomed energy
-        // bands. Values outside the 100-290 km display span stay clamped on
-        // the nearest edge while the logger records every live transition.
+        // The five energy phases use backgrounds selected once from the
+        // initial usable prediction. No chart search/rescaling on this path.
         if step = "reentry_low" or step = "reentry_mid" or
            step = "reentry_high" or step = "reentry_int" {
             if ship:altitude < 70000 {

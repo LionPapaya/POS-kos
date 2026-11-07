@@ -2995,11 +2995,12 @@ function terminal_route_fly {
 
     }
 
-    // aoa_bank_management treats a nonzero base_pitch as an absolute pitch
+    // aoa_bank_management treats base_pitch as an absolute pitch
     // baseline, replacing pitch_for_prograde().  Terminal-route pitch_bias is
     // therefore passed directly in every AoA phase; adding prograde here
     // would double-count the baseline and make the DAP command disagree with
     // the displayed bias.
+    set dap["aoa"]["base_pitch_override"] to true.
     if route["phase"] ="final"{
         set dap["aoa"]["base_pitch"] to pitch_bias.
         set dap["aoa"]["target_aoa"] to target_aoa + config_TR["final_aoa_offset"].

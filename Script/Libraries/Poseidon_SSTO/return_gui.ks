@@ -1,6 +1,7 @@
 // Passive return display. Never select a target, solve a trajectory or command controls.
 // Entry retains the five pages and the original fixed 16-slot energy sampler.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/ascent_recovery_gui.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_charts.ks").
 
 function return_get {
     parameter record, field, fallback.
@@ -181,6 +182,9 @@ function return_entry_page {
         list(entry_nominal_traj5_energy_min,entry_nominal_traj5_energy_max,entry_nominal_traj5_range_min,entry_nominal_traj5_range_max)).
     for page_index in range(0,5) {
         if display_mode = "TRAJ "+(page_index+1)+" V/SIT" {
+            if defined entry_chart_selection and entry_chart_selection["ready"] {
+                return entry_chart_selection["pages"][page_index].
+            }
             return lex("number",page_index+1,"energy_min",pages[page_index][0],"energy_max",pages[page_index][1],
                 "range_min",pages[page_index][2],"range_max",pages[page_index][3]).
         }
@@ -202,7 +206,9 @@ function return_signed_range {
 
 function return_render_entry {
     parameter inputs, page.
-    set return_chart:style:bg to "Libraries/gui_images/return_entry_"+page["number"]+".png".
+    local chart_image is "Libraries/gui_images/return_entry_"+page["number"]+".png".
+    if page:haskey("image") { set chart_image to page["image"]. }
+    set return_chart:style:bg to chart_image.
     set return_title:text to "ENTRY GUIDANCE".
     set return_state_label:text to "PLANNING / WAITING".
     set return_detail:text to "Waiting for a converged entry plan".
@@ -249,6 +255,9 @@ function return_render_entry {
         return_place(traj_disp_ssto,vehicle_xy["x"],vehicle_xy["y"],12,12,previous_widget,previous_top,previous_height).
     }
     set return_legend:text to "Historical band: reference only / prediction dots / vehicle: circle".
+    if page:haskey("fits") and not page["fits"] {
+        set return_legend:text to "Chart catalog exceeded / vehicle or prediction may be off-scale".
+    }
     set return_next:text to "NEXT: TEAM interface / "+inputs["mode"].
     // No nominal-deviation number: this average is neither a command nor a safety envelope.
 }

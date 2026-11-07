@@ -461,6 +461,21 @@ function entry_display_empty_path {
         "weight",0,"energy_min",0,"energy_max",0).
 }
 
+// Live orchestration only: sample an existing solved trace, then cache five
+// static PNGs. Do not call from simulations or reselect on predictor updates.
+function reentry_select_entry_charts {
+    parameter solved_plan.
+    if entry_chart_selection["ready"] or not solved_plan["converged"] { return. }
+    local samples is entry_display_prediction_samples(
+        lex("control",solved_plan["converged_sim"]["controll_inputs"]),Team_interface["target_latlng"]).
+    if samples:length < 2 { return. }
+    set entry_chart_selection["pages"] to entry_chart_select(samples,
+        entry_nominal_energy_height(ship:altitude,ship:airspeed),
+        calcdistance_m(ship:geoposition,Team_interface["target_latlng"])).
+    set entry_chart_selection["ready"] to true.
+    flight_log_entry_charts(entry_chart_selection["pages"]).
+}
+
 // The prediction traces are chronological, so energy height should be
 // monotonic apart from sub-metre integration noise. Larger reversals make the
 // energy-to-range mapping ambiguous; hide the path instead of drawing a loop.
@@ -1055,6 +1070,7 @@ function reentry_apply_target {
         set entry_reference_time to -1.
         set entry_turnside to "".
         set entry_display_prediction_path to entry_display_empty_path("target_reset").
+        set entry_chart_selection to lex("ready",false,"pages",list()).
     }
     if runway_changed {
         set reentry_tr_target_pending to true.
@@ -1170,6 +1186,7 @@ function reentry_recovery_update {
     set entry_reference_time to -1.
     if entry_traj["converged"] {
         reentry_apply_target(selection).
+        reentry_select_entry_charts(entry_traj).
         set val_tgt to true.
         set basice_reentry_guidance to false.
         set entry_predictive_plan_bank to entry_traj["bank"].
