@@ -4,7 +4,7 @@
 //   global POS_LOGGING_MODE is "none" | "low" | "medium" | "high".
 //global POS_LOGGING_MODE is "none".
 //global POS_LOGGING_MODE is "low".
-global POS_LOGGING_MODE is "medium".
+global POS_LOGGING_MODE is "high".
 //global POS_LOGGING_MODE is "high".
 //
 // All normal-flight records use the same CSV schema so the local replay UI
@@ -1084,12 +1084,44 @@ function flight_log_tick {
 // Observed maneuver phases (not private upstream state names). Runs only in
 // real-flight execution. Low logs transitions; medium samples at 1 Hz; high
 // samples once per physics tick. Samples share events.csv for schema stability.
+// Passive docking observer. Low logs transitions; medium samples at 1 Hz;
+// high samples each controller update. No guidance reads logger state.
+function flight_log_docking_observe {
+    parameter evidence, phase, paused, capture_active, axial_distance, lateral_error,
+        alignment_error, relative_speed, closing_speed, lateral_speed, own_state, target_state, detail.
+    if POS_LOG_LEVEL = 0 { return. }
+    local observed_state is phase+"|"+paused+"|"+capture_active+"|"+own_state+"|"+target_state+"|"+detail.
+    if observed_state <> evidence["state"] {
+        flight_log_event("docking_state","phase="+phase+"|paused="+paused+
+            "|capture="+capture_active+"|own_port="+own_state+"|target_port="+target_state+
+            "|axial_m="+axial_distance+"|lateral_m="+lateral_error+
+            "|face_angle_deg="+alignment_error+"|detail="+detail).
+        set evidence["state"] to observed_state.
+    }
+    if POS_LOG_LEVEL < 2 { return. }
+    if time:seconds < evidence["next_sample"] { return. }
+    local requested_translation is v(0,0,0).
+    if evidence:haskey("requested_translation") {
+        set requested_translation to evidence["requested_translation"].
+    }
+    local sample_period is 0.02.
+    if POS_LOG_LEVEL = 2 { set sample_period to 1. }
+    set evidence["next_sample"] to time:seconds+sample_period.
+    flight_log_event("docking_sample","phase="+phase+"|axial_m="+axial_distance+
+        "|lateral_m="+lateral_error+"|face_angle_deg="+alignment_error+
+        "|relative_mps="+relative_speed+"|closing_mps="+closing_speed+
+        "|lateral_mps="+lateral_speed+"|fore="+ship:control:fore+
+        "|starboard="+ship:control:starboard+"|top="+ship:control:top+
+        "|requested_fore="+requested_translation:x+"|requested_starboard="+requested_translation:y+
+        "|requested_top="+requested_translation:z+"|detail="+detail).
+}
+
 function flight_log_maneuver_observe {
     parameter maneuver, half_time, evidence.
     parameter deorbit_sample is false.
     if POS_LOG_LEVEL = 0 { return. }
     local phase is "aligning".
-    if ship:control:mainthrottle > 0 { set phase to "burning". }
+    if ship:thrust > 0 { set phase to "burning". }
     else if evidence["burn_seen"] { set phase to "cutoff". }
     else if warp > 0 { set phase to "coasting". }
     else if vang(ship:facing:vector,maneuver:deltav) <= 0.5 { set phase to "waiting". }
@@ -1106,7 +1138,7 @@ function flight_log_maneuver_observe {
     if deorbit_sample {
         set deorbit_fields to "|actual_thrust="+ship:thrust+"|lf="+ship:liquidfuel+"|altitude="+ship:altitude.
     }
-    flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+deorbit_fields+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
+    flight_log_event("maneuver_sample","phase="+phase+"|eta="+maneuver:eta+"|dv="+maneuver:deltav:mag+"|alignment_deg="+vang(ship:facing:vector,maneuver:deltav)+"|throttle="+ship:control:mainthrottle+"|actual_thrust_kn="+ship:thrust+"|mass="+ship:mass+"|available_thrust="+ship:availablethrust+deorbit_fields+"|half_burn_s="+half_time+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
 }
 
 // Passive brake-release evidence. Low records state/reason transitions;

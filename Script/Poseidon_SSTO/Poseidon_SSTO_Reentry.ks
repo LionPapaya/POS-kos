@@ -96,7 +96,7 @@ function reentry_ground_complete {
     return contact = "LANDED" and ground_speed < 1.
 }
 
-parameter force_tgt is lex("force",true,"Location","Sandy-Island","Runway","22").
+parameter force_tgt is lex("force",false,"Location","","Runway","").
 global reentry_context is reentry_recovery_context(force_tgt).
 global reentry_preserve_propulsion is reentry_recovery_preserved(reentry_context).
 if not SHIP:BODY:atm:exists {

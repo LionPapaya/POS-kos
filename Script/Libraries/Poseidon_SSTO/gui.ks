@@ -1252,6 +1252,7 @@ function get_rendezvous_target {
     // Keep the primary action visibly unavailable until a real vessel is selected.
     if target_menu:value = "None" { set ok_button:text to "Select a vessel first". }
     set target_menu:onchange to {
+        parameter selected_vessel_name.
         if target_menu:value = "None" { set ok_button:text to "Select a vessel first". }
         else { set ok_button:text to "Plan and execute". }
     }.

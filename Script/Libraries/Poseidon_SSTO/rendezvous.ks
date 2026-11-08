@@ -7,6 +7,20 @@ RUNONCEPATH("0:/Libraries/rsvp/main.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 RUNONCEPATH("0:/Libraries/lib_vacstr.ks").
 
+// Earliest possible arrival at the live angular gate, using the maximum
+// orbital angular speed (at periapsis) plus the launch body's spin rate.
+// This is a conservative warp margin, not a predicted launch timestamp.
+function rendezvous_window_warp_rate {
+    parameter phase_error, gate_angle, maximum_rate, ground_hold.
+    if not ground_hold or maximum_rate <= 0 { return 1. }
+    local margin_seconds is max(0,phase_error-gate_angle)/maximum_rate.
+    if margin_seconds > 300 { return 100. }
+    if margin_seconds > 150 { return 50. }
+    if margin_seconds > 60 { return 10. }
+    if margin_seconds > 30 { return 5. }
+    return 1.
+}
+
 function rendezvous_same_body {
     parameter target_vessel, options is lex().
     local result is lex("success",false,"docking_ready",false,"reason","invalid_target").

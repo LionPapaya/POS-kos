@@ -49,6 +49,7 @@ set TargetPeriapsis to Target_orbit["Periapsis"].
 set TargetApoapsis to Target_orbit["Apoapsis"].
 set TargetInclination to Target_orbit["inclination"].
 local ascent_rendezvous_target is 0.
+local ascent_window_warp_rate is 1.
 local ascent_rendezvous_enabled is Target_orbit["RendezvousTarget"] <> "None".
 if ascent_rendezvous_enabled {
     set ascent_rendezvous_target to Vessel(Target_orbit["RendezvousTarget"]).
@@ -155,7 +156,8 @@ if running {
     // Elevated runways must start in the same intended air-breathing mode.
     nervsoff().
     togglerapiermode("AIR").
-    rapierson().
+    if ascent_rendezvous_enabled { rapiersoff(). }
+    else { rapierson(). }
 }
 until running = false{
     if step = "launch" or step = "rotate" or step = "ascent_alignment" or
@@ -181,12 +183,39 @@ until running = false{
         local launch_phase_error is vang(predicted_target_radius,launch_site_radius).
         brakes on.
         set dapthrottle to 0.
-        set Lastest_status to "Waiting for rendezvous launch window ("+round(launch_phase_error,1)+" deg)".
+        // Reevaluate the live gate while warping. Bound its angular motion
+        // by target periapsis speed plus body rotation and taper to 1x well
+        // before entry. Keep all engines shut down throughout the hold.
+        local target_eccentricity is ascent_rendezvous_target:orbit:eccentricity.
+        local target_peri_radius is ship:body:radius+ascent_rendezvous_target:orbit:periapsis.
+        local target_axis_length is ascent_rendezvous_target:orbit:semimajoraxis.
+        local maximum_phase_rate is sqrt(ship:body:mu*target_axis_length*
+            (1-target_eccentricity^2))/max(1,target_peri_radius)^2*constant:radtodeg
+            + ship:body:angularvel:mag*constant:radtodeg.
+        local ground_hold is (ship:status = "PRELAUNCH" or ship:status = "LANDED")
+            and ship:velocity:surface:mag < 0.5 and ship:control:mainthrottle < 0.01.
+        local requested_window_rate is rendezvous_window_warp_rate(
+            launch_phase_error,ascent["rendezvous_window_angle"],maximum_phase_rate,ground_hold).
+        if requested_window_rate <> ascent_window_warp_rate {
+            set kuniverse:timewarp:mode to "RAILS".
+            set kuniverse:timewarp:rate to requested_window_rate.
+            flight_log_event("ascent_window_warp","rate="+requested_window_rate+
+                "|phase_error_deg="+round(launch_phase_error,2)+"|ground_hold="+ground_hold).
+            set ascent_window_warp_rate to requested_window_rate.
+        }
+        set Lastest_status to "Warp to rendezvous window: "+ascent_window_warp_rate+
+            "x ("+round(launch_phase_error,1)+" deg)".
         flight_log_capture_rendezvous(ascent_rendezvous_target,"launch_window",0,false).
         if launch_phase_error <= ascent["rendezvous_window_angle"] {
+            set warp to 0.
+            // Setting warp requests a transition; never ignite until KSP
+            // confirms that the actual rate has returned to normal time.
+            if kuniverse:timewarp:rate <= 1.01 and kuniverse:timewarp:issettled and ground_hold {
+            rapierson().
             set step to "launch".
             set Lastest_status to "Rendezvous launch window open".
             flight_log_event("ascent_rendezvous_window","phase_error_deg="+round(launch_phase_error,2)+"|nominal_insertion_ut="+round(nominal_insertion_time,1)).
+            }
         }
     }
     if step = "launch"{ 

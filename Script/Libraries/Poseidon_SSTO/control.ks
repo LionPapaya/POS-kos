@@ -610,6 +610,37 @@ function envelope_upset_release {
 
 function envelope_refresh {
     local envelope is dap["envelope"].
+    // A rendezvous launch-window wait is a braked ground hold. Near-zero
+    // airspeed makes AoA meaningless; it must not trigger an airborne upset
+    // recovery and its full-throttle floor while the pilot waits to depart.
+    // Restrict this ownership to actual ground contact so an unexpected
+    // airborne vessel still receives normal protection.
+    if defined step and step = "rendezvous_window" and
+       (ship:status = "PRELAUNCH" or ship:status = "LANDED") {
+        if envelope["regime"] <> "rendezvous_hold" {
+            flight_log_event("rendezvous_hold_protection",
+                "from="+envelope["state"]+"|status="+ship:status+"|throttle_floor=0").
+        }
+        set envelope["restore_steering"] to envelope["restore_steering"] or
+            envelope["state"] = "terrain_pullup" or
+            envelope["state"] = "upset_zero_aoa" or envelope["state"] = "upset_pullup".
+        set envelope["state"] to "normal".
+        set envelope["regime"] to "rendezvous_hold".
+        set envelope["max_aoa"] to AVES["Envelope"]["max_aoa_normal"].
+        set envelope["max_bank"] to AVES["Envelope"]["max_bank_normal"].
+        set envelope["min_throttle"] to 0.
+        set envelope["rcs_assist"] to false.
+        set envelope["pitchdown_timer"] to 0.
+        set envelope["authority_timer"] to 0.
+        set envelope["upset_timer"] to 0.
+        set envelope["stable_timer"] to 0.
+        set envelope["last_aoa"] to calc_aoa().
+        set envelope["last_speed"] to ship:airspeed.
+        set envelope["last_pitch_error"] to dap["aerostr"]["targetPitch"]-pitch_for().
+        rcs off.
+        envelope_terrain_reset(envelope,"inhibited","rendezvous_hold",true).
+        return.
+    }
     // Once the terminal controller commits the aircraft to its flare, it is
     // the sole owner of thrust and steering through touchdown and any brief
     // KSP wheel-contact bounce.  Previously a bounce changed SHIP:STATUS

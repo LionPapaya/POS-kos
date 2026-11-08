@@ -10,6 +10,7 @@ RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 
 set CONFIG:IPU to 2000.
 RUNONCEPATH("0:/Libraries/lib_input_terminal.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/flight_log.ks").
 
 local docking_running is true.
 local docking_paused is false.
@@ -29,13 +30,76 @@ local docking_keepout_radius is 0.
 local docking_route_radius is 0.
 local docking_route_standoff is 0.
 local docking_status_detail is "nominal".
+local docking_minimum_rcs_input is 0.06.
+local docking_pulse_carry is v(0,0,0).
+local docking_translation_request is v(0,0,0).
+local docking_last_translation_time is time:seconds.
+local docking_log_state is lex("state","","next_sample",0).
+
+function docking_prepare_rcs {
+    // Pulse above each active thruster's actual deadband instead of relying
+    // on a private KSP field override to deliver very small steady inputs.
+    for thruster in ship:rcs {
+        if thruster:enabled and not thruster:flameout and thruster:availablethrust > 0 {
+            set docking_minimum_rcs_input to max(docking_minimum_rcs_input,
+                min(1,thruster:deadband+0.01)).
+            flight_log_event("docking_rcs_deadband","part="+thruster:name+
+                "|actual="+thruster:deadband+"|mode=pulsed_input").
+        }
+    }
+    flight_log_event("docking_rcs_pulse_mode","minimum_input="+docking_minimum_rcs_input).
+}
 
 function docking_limit {
     parameter value, limit.
     return max(-limit,min(limit,value)).
 }
 
+// Error diffusion preserves the requested control impulse for small inputs.
+// Each emitted pulse exceeds the thruster null zone. Independent signed
+// accumulators prevent drift on one axis from stealing another axis's pulse.
+function docking_pulse_command {
+    parameter requested_input, carry, sample_dt, minimum_input.
+    if sample_dt <= 0 { return list(0,carry). }
+    if abs(requested_input) < 0.0001 { return list(0,0). }
+    if abs(requested_input) >= minimum_input { return list(requested_input,0). }
+    if requested_input*carry < 0 { set carry to 0. }
+    set carry to carry+requested_input*sample_dt.
+    local pulse is 0.
+    if abs(carry)+0.000000000001 >= minimum_input*sample_dt {
+        set pulse to choose minimum_input if carry > 0 else -minimum_input.
+        set carry to carry-pulse*sample_dt.
+    }
+    return list(pulse,carry).
+}
+
+function docking_final_command {
+    parameter port_delta, target_axis, port_relative_velocity, alignment_error.
+    local axial_distance is -vdot(port_delta,target_axis).
+    local lateral_delta is port_delta+target_axis*axial_distance.
+    local axial_velocity is vdot(port_relative_velocity,target_axis).
+    local lateral_velocity is port_relative_velocity-target_axis*axial_velocity.
+    // Lateral correction must not shrink merely because the axial separation
+    // is large. The former shared vector speed cap did exactly that.
+    local desired_velocity is lateral_delta*0.12.
+    if desired_velocity:mag > 0.08 {
+        set desired_velocity to desired_velocity:normalized*0.08.
+    }
+    local closure_allowed is axial_distance > 0.15 and lateral_delta:mag < 0.15
+        and lateral_velocity:mag < 0.015 and alignment_error < 1.
+    if closure_allowed {
+        set desired_velocity to desired_velocity-target_axis*
+            min(0.10,max(0.03,axial_distance*0.025)).
+    }
+    // With closure inhibited the desired axial velocity is zero, so the
+    // velocity controller actively brakes existing closure rather than coasts.
+    return lex("velocity",desired_velocity,"closure_allowed",closure_allowed).
+}
+
 function docking_zero_translation {
+    set docking_pulse_carry to v(0,0,0).
+    set docking_translation_request to v(0,0,0).
+    set docking_last_translation_time to time:seconds.
     set ship:control:fore to 0.
     set ship:control:starboard to 0.
     set ship:control:top to 0.
@@ -43,15 +107,22 @@ function docking_zero_translation {
 
 function docking_apply_translation {
     parameter velocity_error, gain is 2.2, control_limit is 1.
-    set ship:control:fore to docking_limit(
-        vdot(velocity_error,ship:facing:forevector) * gain,control_limit
-    ).
-    set ship:control:starboard to docking_limit(
-        vdot(velocity_error,ship:facing:starvector) * gain,control_limit
-    ).
-    set ship:control:top to docking_limit(
-        vdot(velocity_error,ship:facing:topvector) * gain,control_limit
-    ).
+    local translation_dt is min(0.1,max(0,time:seconds-docking_last_translation_time)).
+    set docking_last_translation_time to time:seconds.
+    set docking_translation_request to v(
+        docking_limit(vdot(velocity_error,ship:facing:forevector)*gain,control_limit),
+        docking_limit(vdot(velocity_error,ship:facing:starvector)*gain,control_limit),
+        docking_limit(vdot(velocity_error,ship:facing:topvector)*gain,control_limit)).
+    local fore_pulse is docking_pulse_command(docking_translation_request:x,
+        docking_pulse_carry:x,translation_dt,docking_minimum_rcs_input).
+    local starboard_pulse is docking_pulse_command(docking_translation_request:y,
+        docking_pulse_carry:y,translation_dt,docking_minimum_rcs_input).
+    local top_pulse is docking_pulse_command(docking_translation_request:z,
+        docking_pulse_carry:z,translation_dt,docking_minimum_rcs_input).
+    set docking_pulse_carry to v(fore_pulse[1],starboard_pulse[1],top_pulse[1]).
+    set ship:control:fore to fore_pulse[0].
+    set ship:control:starboard to starboard_pulse[0].
+    set ship:control:top to top_pulse[0].
 }
 
 function docking_has_usable_rcs {
@@ -176,7 +247,7 @@ function docking_select_own_port {
     // while retaining selection support for related craft with several ports.
     local inline_matches is list().
     for port in ready_ports {
-        local description is (port:name + " " + port:title + " " + port:tag):lower.
+        local description is (port:name + " " + port:title + " " + port:tag):tolower.
         if description:contains("mk2") or description:contains("inline") {
             inline_matches:add(port).
         }
@@ -282,7 +353,7 @@ function docking_create_control_gui {
 
 function docking_read_keys {
     if terminal:input:haschar {
-        local key is terminal:input:getchar():tostring():upper.
+        local key is terminal:input:getchar():tostring():toupper.
         if key = "Q" {
             set docking_result to "aborted by operator".
             set docking_running to false.
@@ -294,6 +365,7 @@ function docking_read_keys {
 }
 
 clearScreen.
+flight_log_begin("docking").
 print "POS Docking".
 print "Select the target vessel in KSP before starting this program.".
 print "Start in space within 1 km and below 5 m/s relative speed.".
@@ -357,6 +429,7 @@ if docking_result = "running" {
     docking_own_port:controlfrom().
     set target to docking_target_port.
     SAS OFF.
+    docking_prepare_rcs().
     RCS ON.
     wait 0.
     if not docking_has_usable_rcs() {
@@ -426,6 +499,8 @@ if docking_result = "running" {
         set previous_sample_time to sample_time.
         local relative_speed is port_relative_velocity:mag.
         local closing_speed is -vdot(port_relative_velocity,target_axis).
+        local lateral_speed is
+            (port_relative_velocity+target_axis*closing_speed):mag.
 
         // Magnetic capture is a KSP-controlled transition. Fighting it with
         // translation inputs is a common cause of bounce-offs.
@@ -536,7 +611,8 @@ if docking_result = "running" {
             set position_gain to 0.12.
             set progress_error to (aim_point - own_position):mag.
             if lateral_error < 0.35 and abs(axial_distance - 7) < 0.8
-                and relative_speed < 0.25 and alignment_error < 1 {
+                and relative_speed < 0.08 and lateral_speed < 0.015 and alignment_error < 1
+                and lateral_error < 0.15 {
                 set docking_phase to "final".
             }
         } else {
@@ -547,10 +623,13 @@ if docking_result = "running" {
         }
 
         if docking_phase <> observed_phase {
+            if docking_phase = "final" {
+                set docking_status_detail to "tracking final approach".
+            }
             set observed_phase to docking_phase.
             set best_progress_error to 999999.
             set last_progress_time to time:seconds.
-        } else if progress_error < best_progress_error - 0.2 {
+        } else if progress_error < best_progress_error - 0.02 {
             set best_progress_error to progress_error.
             set last_progress_time to time:seconds.
         }
@@ -567,6 +646,13 @@ if docking_result = "running" {
             // Limit commanded speed independently of controller gain.
             if desired_port_velocity:mag > max_closure {
                 set desired_port_velocity to desired_port_velocity:normalized * max_closure.
+            }
+            if docking_phase = "final" {
+                local final_command is docking_final_command(
+                    port_delta,target_axis,port_relative_velocity,alignment_error).
+                set desired_port_velocity to final_command["velocity"].
+                set docking_status_detail to choose "tracking final approach"
+                    if final_command["closure_allowed"] else "holding closure; correcting lateral drift".
             }
             docking_apply_translation(desired_port_velocity - port_relative_velocity).
         }
@@ -595,9 +681,15 @@ if docking_result = "running" {
         print ("Axial / lateral: " + round(axial_distance,2) + " / " + round(lateral_error,2) + " m"):padright(52) at(0,9).
         print ("Relative speed: " + round(relative_speed,3) + " m/s"):padright(52) at(0,10).
         print ("Target clearance: " + round(center_distance - docking_keepout_radius,1) + " m"):padright(52) at(0,11).
-        print ("Port alignment error: " + round(alignment_error,2) + " deg"):padright(52) at(0,12).
+        print ("Port face angle: " + round(alignment_error,2) + " deg"):padright(52) at(0,12).
         print ("Status: " + docking_status_detail):padright(60) at(0,13).
         print "Use docking-control window | terminal P/Q also work" at(0,14).
+        // Keep the observer's established 13-argument interface compatible
+        // with a logger already cached by RUNONCEPATH on this processor.
+        set docking_log_state["requested_translation"] to docking_translation_request.
+        flight_log_docking_observe(docking_log_state,docking_phase,docking_paused,capture_active,
+            axial_distance,lateral_error,alignment_error,relative_speed,closing_speed,lateral_speed,
+            docking_own_port:state,docking_target_port:state,docking_status_detail).
 
         if port_delta:mag > 2000 {
             set docking_result to "target moved outside safe physics range".
@@ -608,4 +700,6 @@ if docking_result = "running" {
 }
 
 docking_release_controls().
+flight_log_event("docking_end","result="+docking_result+"|phase="+docking_phase+
+    "|rcs_configuration=unchanged").
 print ("Docking program ended: " + docking_result):padright(70) at(0,15).

@@ -39,7 +39,10 @@ function pos_execute_node {
         if not observing { return false. }
         if hasnode {
             if nextnode = maneuver {
-                if ship:control:mainthrottle > 0 { set evidence["burn_seen"] to true. }
+                // Cooked throttle locks can read as zero in this observer's
+                // scope while the executor is firing. Actual thrust proves
+                // propulsion independently of that scoped command value.
+                if ship:thrust > 0 { set evidence["burn_seen"] to true. }
                 set evidence["remaining_dv"] to maneuver:deltav:mag.
                 flight_log_maneuver_observe(maneuver,half_time,evidence).
             }
@@ -59,6 +62,6 @@ function pos_execute_node {
         if remaining_node = maneuver { set removed to false. }
     }
     local completed is removed and evidence["burn_seen"].
-    flight_log_event("maneuver_execution_returned","completed="+completed+"|node_removed="+removed+"|last_remaining_dv="+evidence["remaining_dv"]+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
+    flight_log_event("maneuver_execution_returned","completed="+completed+"|node_removed="+removed+"|burn_seen="+evidence["burn_seen"]+"|last_remaining_dv="+evidence["remaining_dv"]+"|apoapsis="+ship:apoapsis+"|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination).
     return completed.
 }
