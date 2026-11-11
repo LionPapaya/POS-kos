@@ -30,6 +30,9 @@ try {
 if (-not $rejected) { throw 'Compiler did not enforce builtin protection' }
 foreach ($relative in @('Libraries/lib_aerosim.ks',
     'Libraries/Poseidon_SSTO/control.ks',
+    'Libraries/Poseidon_SSTO/aerobrake.ks',
+    'Poseidon_SSTO/Poseidon_SSTO_Aerobrake.ks',
+    'POS.ks',
     'Libraries/Poseidon_SSTO/entry_charts.ks',
     'Libraries/Poseidon_SSTO/entry_chart_catalog.ks',
     'Libraries/Poseidon_SSTO/return_gui.ks',

@@ -71,7 +71,11 @@ until closed{
     }
     // OFF is a passive recorder: do not run protection/control updates that
     // could reclaim steering. CSS uses the existing assisted control behavior.
-    if not(manual_logging_active) or dap["dap_mode"] <> "off" { DAP:update(). }
+    if dap["dap_mode"] = "off" {
+        // OFF must stay passive after an assistant returns, including when
+        // terrain protection would otherwise reclaim steering in DAP:update().
+        if dap["dap_mode_set"]["dapmode"] <> "off" { dap:set_off(). }
+    } else { DAP:update(). }
     if manual_logging_active {
         set dapthrottle to ship:control:pilotmainthrottle.
         flight_log_tick("manual","manual_flight","").

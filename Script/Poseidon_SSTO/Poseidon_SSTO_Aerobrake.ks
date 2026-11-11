@@ -9,6 +9,8 @@ RUNONCEPATH("0:/Libraries/Poseidon_SSTO/control.ks").
 RUNONCEPATH("0:/Libraries/lib_navball.ks").
 RUNONCEPATH("0:/Libraries/lib_math.ks").
 RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
+RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/aerobrake.ks").
 
 if not SHIP:BODY:atm:exists {
     clearScreen.
@@ -23,6 +25,13 @@ if not SHIP:BODY:atm:exists {
     flight_log_event("aerobrake_armed","periapsis=" + round(SHIP:periapsis,1) +
         "|apoapsis=" + round(SHIP:apoapsis,1) + "|atmosphere_top=" + round(SHIP:BODY:atm:height,1)).
 
+    // AUTO has no pilot demand to restore. CSS and OFF remain pilot modes.
+    dap:setup().
+    local return_mode is dap["dap_mode"].
+    local return_steering is dap["str_mode"].
+    local cancelled is false.
+    local prediction_tracker is aerobrake_prediction_tracker().
+    local prediction is lex("status","waiting").
     local atmosphere_top is SHIP:BODY:atm:height.
     local aerobrake_running is true.
     local entered_atmosphere is SHIP:altitude < atmosphere_top.
@@ -49,19 +58,38 @@ if not SHIP:BODY:atm:exists {
     global aerobrake_bank_label is data_box:addlabel().
     global aerobrake_bank_slider is data_box:addhslider(0,-120,120).
     set aerobrake_bank_slider:style:width to 360.
+    local schedule_toggle is data_box:addcheckbox("Use AVES AoA schedule",true).
+    local fixed_aoa_label is data_box:addlabel("Fixed AoA (schedule off):").
+    local aoa_slider is data_box:addhslider(AVES["EGAOA"](SHIP:altitude),0,60).
+    set aoa_slider:style:width to 360.
+    local prediction_label is data_box:addlabel("Predicted final Ap: waiting").
+    local prediction_note is data_box:addlabel("10 s steps | 2 s solve budget | 20 s refresh").
+    local cancel_button is aerobrake_gui:addbutton("Cancel - return to POS").
+    set cancel_button:onclick to { set cancelled to true. }.
     aerobrake_gui:show().
 
     set dapthrottle to 0.
-    dap:setup().
-    set dap["dap_mode"] to "auto".
-    set dap["str_mode"] to "aoa".
+    // setup() attaches aerostr locks even if cached mode already says AoA.
+    // Explicitly attach our steering/throttle rather than relying on a change.
+    dap:set_aoa_auto().
     set dap["aoa"]["base_pitch"] to 0.
+    set dap["aoa"]["base_pitch_override"] to false.
     flight_log_event("aerobrake_control_ready","mode=auto|steering=aoa|bank=0").
     brakes off.
 
     until not aerobrake_running {
+        // Cancellation wins over both control updates and automatic POS3 entry.
+        if cancelled {
+            set prediction["status"] to "cancelled".
+            set aerobrake_phase to "cancelled".
+            flight_log_event("aerobrake_cancelled","return_mode="+return_mode).
+            break.
+        }
         local requested_bank is max(-120,min(120,aerobrake_bank_slider:value)).
-        local requested_aoa is AVES["EGAOA"](SHIP:altitude).
+        local fixed_aoa is aoa_slider:value.
+        local use_schedule is schedule_toggle:pressed.
+        local requested_aoa is fixed_aoa.
+        if use_schedule { set requested_aoa to AVES["EGAOA"](SHIP:altitude). }
         set dap["aoa"]["target_aoa"] to requested_aoa.
         set dap["aoa"]["target_bank"] to requested_bank.
         set dapthrottle to 0.
@@ -74,6 +102,7 @@ if not SHIP:BODY:atm:exists {
         set aerobrake_altitude_label:text to "Altitude / atmosphere: " + round(SHIP:altitude) + " / " + round(atmosphere_top) + " m".
         set aerobrake_apsis_label:text to "Ap / Pe: " + round(SHIP:apoapsis) + " / " + round(SHIP:periapsis) + " m".
         set aerobrake_aoa_label:text to "AoA target / actual: " + round(requested_aoa,1) + " / " + round(calc_aoa(),1) + " deg".
+        set fixed_aoa_label:text to "Fixed AoA (schedule off): " + round(fixed_aoa,1) + " deg".
         set aerobrake_bank_label:text to "Bank: " + round(requested_bank,1) + " deg  (-120 to +120)".
 
         if SHIP:apoapsis < atmosphere_top {
@@ -96,16 +125,51 @@ if not SHIP:BODY:atm:exists {
             }
         }
 
+        // Keep predictor work behind the real control loop, with one bounded
+        // integration step per tick. Input changes invalidate a running solve.
+        if aerobrake_running and not cancelled {
+            local prediction_due is aerobrake_prediction_due(prediction_tracker,
+                requested_bank,fixed_aoa,use_schedule,KUNIVERSE:REALTIME).
+            if prediction["status"] <> "waiting" and
+                not aerobrake_prediction_matches(prediction,requested_bank,fixed_aoa,use_schedule) {
+                set prediction["status"] to "inputs changed (stale)".
+            }
+            if prediction_due and prediction["status"] <> "running" {
+                set prediction to aerobrake_prediction_begin(prediction_tracker,
+                    requested_bank,fixed_aoa,use_schedule,KUNIVERSE:REALTIME).
+            }
+            aerobrake_prediction_step(prediction).
+            if prediction["status"] = "complete" {
+                set prediction_label:text to "Predicted final Ap: " + round(prediction["apoapsis"]) + " m".
+            } else {
+                set prediction_label:text to "Predicted final Ap: " + prediction["status"].
+            }
+        }
         flight_log_tick("aerobrake",aerobrake_phase,"bank_" + round(requested_bank,1)).
         wait 0.
     }
 
-    aerobrake_gui:hide().
-    brakes off.
-    if handoff_to_pos3 {
+    // Dispose callbacks as well as hiding the panel: no assistant work survives.
+    set prediction["status"] to "stopped".
+    aerobrake_gui:dispose().
+    aerobrake_release().
+    if handoff_to_pos3 and not cancelled {
+        // Release first, then explicitly give the new program AUTO/AoA.
+        // Its first DAP update must attach fresh locks (cached mode is OFF).
+        set dap["dap_mode"] to "auto".
+        set dap["str_mode"] to "aoa".
         runpath("0:/POS3.ks").
     } else {
-        // Release steering and return control to the POS launcher/menu.
-        dap:set_off().
+        set dap["str_mode"] to return_steering.
+        if return_mode = "css" { dap:set_css(). }
+        // Keep the launcher selector consistent; AUTO cannot retain our targets.
+        if defined main_dap_mode_menu {
+            if return_mode = "css" {
+                set main_dap_mode_menu:index to 1.
+            } else {
+                set main_dap_mode_menu:index to 2.
+            }
+        }
+        // Fall through to the caller; POS.ks resumes its menu and DAP service.
     }
 }

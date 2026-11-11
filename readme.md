@@ -46,6 +46,16 @@ The orbital maneuvering menu currently provides:
 - Manage energy, heading alignment, airbrakes, landing gear, and final approach.
 - Provide live trajectory, flight-data, and guidance readouts.
 
+### Aerobraking
+
+The Aerobrake program holds the AVES AoA schedule and a selected bank through
+one atmospheric pass. The GUI also offers fixed AoA control and a predicted
+final apoapsis using the same bank and AoA mode. Cancel returns to POS with CSS
+restored when previously selected, otherwise OFF. Atmospheric exit returns to
+the launcher; capture below the atmosphere retains the automatic POS3 handoff.
+See [aerobraking behavior and validation](AEROBRAKE.md) for prediction timing and
+in-game checks.
+
 ### Vacuum landing
 
 - Perform a NERV-only de-orbit and powered descent on a body without an atmosphere.
