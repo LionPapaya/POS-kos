@@ -1,704 +1,129 @@
 # Poseidon SSTO Operating System (POS-kOS)
 
-POS-kOS is a collection of [kOS](https://github.com/KSP-KOS/KOS) scripts for flying the Poseidon SSTO in Kerbal Space Program. It automates ascent, orbital operations, re-entry, terminal guidance, and landing support.
+POS-kOS is a [kOS](https://github.com/KSP-KOS/KOS) flight-control system for the Poseidon SSTO in Kerbal Space Program. It provides automated ascent, orbital maneuvers, rendezvous and docking, atmospheric return, runway landing, and powered flight on airless bodies, with an in-game graphical interface.
 
-> **Scope:** POS-kOS is currently built around the Poseidon SSTO. It depends on the craft's engines, mass, aerodynamic configuration, and control tuning, so it is not a general-purpose autopilot.
+The guidance is built around the Poseidon's engines, mass, aerodynamics, and control configuration. The included `Poseidon SSTO Block 2.craft` is the reference vehicle.
 
-## What it can do
+## Ascent and orbital insertion
 
-### Ascent and orbital insertion
+The launch program accepts target apoapsis, periapsis, and inclination. It identifies the departure runway, assesses the departure, holds the brakes while the RAPIER engines spool up, and manages the takeoff roll, rotation, and climb.
 
-- Take off from the active runway.
-- Rotate and climb using the Poseidon ascent profile.
-- Select a launch heading from the requested orbital inclination.
-- Manage RAPIER air-breathing and closed-cycle operation.
-- Activate the NERV engines when required for the upper-atmosphere climb.
-- Calculate and execute circularization to reach the selected target orbit.
-- Display live ascent data, guidance status, and control information in the POS GUI.
+Guidance switches the RAPIERs between air-breathing and closed-cycle operation and brings in the NERV engines for the upper-atmosphere ascent. It builds the requested apoapsis and executes a circularization maneuver. Inclinations from 0 to 180 degrees are accepted; when the launch latitude lies outside the requested orbital plane, guidance uses a bounded equatorward dogleg. Fuel, terrain, and steering authority determine the final achievable orbit.
 
-Atmospheric and vacuum ascent accept inclinations from 0 to 180 degrees even
-when the launch latitude lies outside the requested plane's latitude band.
-POS then aims equatorward with a dogleg capped at 45 degrees from east or west,
-tapers the turn near the reachable band, and retains that direction when it
-joins the direct launch heading. A 0-degree target near KSC therefore remains
-0 degrees instead of failing or being replaced by the runway latitude.
-This is best-effort ascent guidance: available flight time, fuel, terrain and
-steering authority limit convergence, and circularization does not perform an
-additional plane change. Validate the remaining inclination error in KSP and
-use Orbital Maneuvering if a further correction is needed.
+The ascent GUI follows the flight through takeoff, atmospheric climb, closed-cycle ascent, and circularization. It shows a takeoff speed bar with V1 and rotation markers, estimated stopping distance, altitude and airspeed, engine and guidance status, cutoff targets, and the insertion-burn countdown.
 
-### Orbital operations
+Selecting a vessel as the ascent rendezvous target adds a launch-window wait, insertion into the target orbit, and a subsequent orbital rendezvous.
 
-The orbital maneuvering menu currently provides:
+## Orbital maneuvers, rendezvous, and docking
 
-- RSVP transfers to another celestial body or vessel.
+The Orbital Maneuvering program offers:
+
+- Transfers to another celestial body or vessel using the RSVP library.
 - Execution of an existing maneuver node.
 - Apoapsis, periapsis, and inclination changes.
 - Circularization of the current orbit.
+- Same-body rendezvous with a selected vessel.
 
-### Re-entry and landing
+Same-body rendezvous plans and executes a two-burn intercept and matches the target's velocity. It retains the vessel as the KSP target and reports docking readiness within 1 km and below 5 m/s relative speed.
 
-- Calculate and execute a de-orbit maneuver.
-- Simulate possible entry trajectories before committing to a landing target.
-- Select a Kerbin location and runway, or automatically choose a reachable runway.
-- Guide the vehicle through atmospheric entry using angle-of-attack and bank control.
-- Transition from entry guidance to a terminal route around the selected runway.
-- Manage energy, heading alignment, airbrakes, landing gear, and final approach.
-- Provide live trajectory, flight-data, and guidance readouts.
+The Docking program handles the close-range approach. It selects compatible docking ports, approaches a stand-off point on the target port's axis, aligns the craft, and uses RCS translation for final closure. The docking window provides Pause/Resume and Abort controls.
 
-### Aerobraking
+## Atmospheric return and runway landing
 
-The Aerobrake program holds the AVES AoA schedule and a selected bank through
-one atmospheric pass. The GUI also offers fixed AoA control and a predicted
-final apoapsis using the same bank and AoA mode. Cancel returns to POS with CSS
-restored when previously selected, otherwise OFF. Atmospheric exit returns to
-the launcher; capture below the atmosphere retains the automatic POS3 handoff.
-See [aerobraking behavior and validation](AEROBRAKE.md) for prediction timing and
-in-game checks.
+The return program plans and executes a deorbit maneuver, predicts entry trajectories, and guides the Poseidon toward a selected Kerbin location and runway. It can also select a reachable runway automatically.
 
-### Vacuum landing
+Entry guidance controls angle of attack and bank to manage energy and range. It transitions into terminal-area energy management (TEAM), builds a route to the runway, aligns the approach, and manages airbrakes, landing gear, flare, and rollout. Terrain protection monitors the projected flight path and can command a recovery pull-up.
 
-- Perform a NERV-only de-orbit and powered descent on a body without an atmosphere.
-- Target a supplied latitude/longitude and translate to that surface point after braking.
-- Set the tail down at near-zero surface speed, then pitch down onto the landing gear.
+The return GUI combines flight data, guidance status, energy-versus-range charts, predicted trajectory markers, and terminal-area approach displays. The chart pages change with the entry and approach phase.
 
-### Vacuum ascent
+## Aerobraking
 
-- Select a circular target-orbit altitude and inclination from the POS dialog.
-- Use RCS to pitch the landed Poseidon onto its rear support before ignition.
-- Use a short full-throttle, closed-cycle RAPIER kick only to lift clear of the tail and gear; the vehicle then retracts the gear and continues on NERVs alone.
-- Build apoapsis on the selected heading, create a circularization node, execute it automatically, then return to the POS menu.
+The Aerobraking program controls one atmospheric pass with either the AVES angle-of-attack schedule or a fixed angle of attack, together with a pilot-selected bank. Its GUI predicts the final apoapsis for the selected settings and updates the prediction as the flight progresses.
 
-## Aborts
+Cancel returns to the POS launcher and restores CSS if it was previously selected; otherwise control returns to OFF. A completed atmospheric exit returns to the launcher. If apoapsis falls below the top of the atmosphere, the program hands control to the atmospheric return program.
 
-Abort modes are selected according to the vehicle's situation and are implemented as separate flight phases. The currently implemented runway-stop and return-to-launch-site modes are documented below.
+## Flight recovery
 
-### `runway_abort`
+POS selects recovery behavior according to flight phase, available propulsion, runway distance, and the vehicle's energy:
 
-#### Purpose
+- **Runway abort:** cuts thrust and brakes to a stop when sufficient runway remains.
+- **Return to launch site (RTLS):** continues to a safe airborne state, turns back, and hands the vehicle to landing guidance for the departure runway.
+- **Energy-managed diversion (AED):** seeks a runway recovery during later ascent.
+- **Abort to orbit (ATO):** supervises an orbit-recovery attempt with the remaining propulsion.
+- **Emergency deorbit/return (EDR):** manages a return when continued orbital ascent is unsuitable.
 
-`runway_abort` is intended for a takeoff launch failure where the safest response is to stop the vehicle on the runway instead of continuing the ascent.
+Contingency guidance carries engine-failure and fuel-reserve information between recovery phases. It can use remaining NERV propulsion for orbit recovery or atmospheric return and select water or land recovery corridors when a runway approach is unavailable.
 
-#### Behavior
+## Flight on airless bodies
 
-When this abort is active, POS-kOS:
+### Powered landing
 
-1. Sets throttle to zero.
-2. Turns off the RAPIER engines.
-3. Commands a slight nose-down pitch to keep the vehicle on the runway.
-4. Applies the brakes.
-5. Continues braking until the vehicle's airspeed is below 1 m/s.
-6. Marks the abort complete and ends the current flight program.
+Vacuum landing uses NERV propulsion for deorbit and powered descent, keeping the RAPIERs disabled. It brakes toward the surface target, translates to that location, settles onto the rear support, and pitches down onto the landing gear.
 
-### `rtls` (return to launch site)
+**Vacuum Landing (Suborbital)** accepts a latitude and longitude. **Vacuum Landing (Convenient)** derives a nearby site from the planned deorbit path. Required inclination and deorbit nodes are shown for review, with execute, replan, and cancel controls.
 
-#### Purpose
+Begin from a stable orbit with sufficient NERV thrust and fuel. The program requires a thrust-to-weight ratio above 1.10 for its braking reserve. The coordinate target does not include steep-slope screening.
 
-`rtls` returns the vehicle to the departure runway after an ascent engine-loss abort when stopping on the runway is no longer feasible. POS also selects it for an engine-loss abort after rotation.
+### Ascent
 
-#### Behavior
+Vacuum ascent accepts a circular-orbit altitude and inclination. RCS pitches the landed craft onto its rear support. A short closed-cycle RAPIER boost lifts it clear of the tail and landing gear, after which it retracts the gear and climbs on NERV propulsion. Guidance builds apoapsis and executes circularization before returning to the POS menu.
 
-When this abort is active, POS-kOS:
+## Installation and operation
 
-1. Continues the takeoff until the vehicle is safely airborne when the abort begins before liftoff.
-2. Configures the remaining propulsion and, for the applicable multi-RAPIER-loss cases, dumps fuel to the configured recovery mass.
-3. Climbs and makes a controlled turn toward the reciprocal runway heading after reaching the minimum turn speed.
-4. Stabilizes on the reciprocal heading at the required altitude, then hands the vehicle to the normal re-entry and landing program for the departure runway. The recovery landing permits a go-around.
+The scripts are intended for Kerbal Space Program 1.12.5 with kOS, Giulio Dondi's Ferram fork, and the kOS Ferram integration that exposes the aerodynamic-force queries used by guidance.
 
-The abort-mode dispatcher is kept separate from the main flight phases so additional abort modes can be added later without restructuring the mission flow. Additional modes should be documented only after implementation and flight testing.
-
-#### Flight-test status
-
-The maintainer reports successful in-game testing of both `runway_abort` and `rtls`; these modes are considered working on the Poseidon craft. The supplied `flight_145` log set contains one useful abort decision trace (`flight_24/events.csv`): the launch-phase runway-stop check rejected the stop because 472 m remained against 617 m required, then selected `rtls`. This supports the runway-stop feasibility rejection and RTLS selection path, but it does not capture a completed runway stop or the subsequent RTLS return and landing. Treat the maintainer's successful testing as the evidence for those outcomes; the supplied logs do not independently demonstrate them.
-
-## Mission flow
-
-The top-level `POS.ks` script loads shared libraries and chooses a flight program based on the vessel's state:
-
-```text
-POS.ks
-├── POS1 / Poseidon_SSTO_Orbit_Main.ks   ascent and circularization
-├── POS3 / Poseidon_SSTO_Reentry.ks      de-orbit, entry, and landing
-├── POS4 / Poseidon_SSTO_Vacuum_Landing.ks  targeted NERV-only landing on an airless body
-├── POS5 / Poseidon_SSTO_Vacuum_Landing.ks  convenient-site NERV-only landing
-├── POS6 / Poseidon_SSTO_Vacuum_Ascent.ks   NERV ascent from an airless-body landing
-├── OM1 / Poseidon_SSTO_OM1.ks            orbital maneuvering
-└── POS2 / Poseidon_SSTO_Docking.ks       docking workflow
-```
-
-Shared libraries contain the vehicle definition, control loops, GUI, navigation helpers, aerodynamic simulation, entry guidance, runway constants, and terminal-area routing.
-
-## Repository layout
-
-The GitHub distribution contains the flight scripts, GUI image assets, example craft, and this README. Tests, calibration scripts, Python tools, logs, and development documents are kept locally.
-
-| Path | Purpose |
-| --- | --- |
-| `Script/POS.ks` | Main launcher and flight-mode selector |
-| `Script/POS1.ks` | Shortcut for the ascent program |
-| `Script/POS3.ks` | Shortcut for the re-entry program |
-| `Script/POS4.ks` | Shortcut for the targeted vacuum-landing program |
-| `Script/POS5.ks` | Shortcut for a vacuum landing at the predicted convenient site |
-| `Script/POS6.ks` | Shortcut for an airless-body NERV ascent |
-| `Script/Poseidon_SSTO/` | Main Poseidon mission scripts |
-| `Script/Libraries/Poseidon_SSTO/` | Poseidon-specific vehicle, GUI, control, guidance, and routing code |
-| `Script/Libraries/rsvp/` | Orbital transfer and maneuver calculations |
-| `Script/Libraries/` | Shared navigation, aerodynamics, math, and input helpers |
-| `Poseidon SSTO Block 2.craft` | Example Poseidon craft file |
-
-## Requirements
-
-- Kerbal Space Program 1.12.5
-- kOS
-- The kOS Ferram Aerospace Research integration/add-on used by the scripts
-- Giulio Dondi's Ferram fork
-- The Poseidon SSTO craft, or a suitably modified vehicle matching the script assumptions
-
-The scripts use aerodynamic data from the Ferram integration, so re-entry and terminal guidance will not work correctly without the required add-on.
-
-## Installation
-
-1. Install the required KSP version and mods.
-2. Copy the contents of this repository's `Script` directory into the kOS script directory used by your KSP installation.
-3. Place `Poseidon SSTO Block 2.craft` in the appropriate `Ships/SPH` folder.
-4. Load the Poseidon SSTO in KSP and run `0:/POS.ks` from a kOS terminal.
-
-The script paths use kOS's `0:/` volume. If your kOS volume is configured differently, update the paths consistently before running the scripts.
-
-## Basic use
-
-Run `POS.ks` while controlling the Poseidon. POS-kOS inspects the vessel's altitude and atmospheric state, then opens the appropriate operating screen. From there you can:
-
-- start an ascent and choose target apoapsis, periapsis, and inclination;
-- open the orbital maneuvering selector;
-- start re-entry and select a landing location and runway; or
-- choose **Vacuum Landing** for a coordinate target, or **Vacuum Landing (Convenient)** to select a nearby planned site with minimal cross-range correction; or
-- use the docking workflow when applicable.
-
-During flight, the GUI shows the active phase, guidance mode, vehicle data, and trajectory information.
-
-Before the takeoff roll, POS holds the brakes until each RAPIER reaches at least
-90% of its locally available thrust in air-breathing mode, with full throttle,
-unrestricted engine thrust limiters, and no shutdown or flameout. The brakes
-release on the first qualifying check; there is no extra stability wait, and
-thrust can keep climbing during the roll. Readiness reads the cooked throttle
-lock used by DAP, since the raw control channel can remain zero while the lock
-commands full power. This replaces the fixed 300 kN brake-release threshold,
-which could never be reached at elevated fields such as Harvester. The
-rendezvous launch window passes through the same readiness check.
-After 30 seconds without readiness, POS holds the brakes, commands idle, and
-ends the launch attempt with a reason. Settings live in `Takeoff/Spool` in the
-craft configuration. Engine readiness does not establish sufficient runway or
-departure terrain clearance; the existing preflight assessment still applies.
-The initial settings require KSP/FAR validation. `takeoff_spool_state` events
-record readiness transitions and per-engine thrust/health at low logging;
-medium adds one-second samples and high adds samples every 0.2 seconds.
-
-Runway preflight and the displayed V1 estimate share an empirical ground-roll
-model fitted across KSC, Nye Island, Desert, Area-15, and Harvester flights. Its
-altitude curve and mass scaling cover recorded rolls from about 72 to 3,956 m
-and 38.3 to 72.3 tonnes, with separate flights held out for checking. The new
-altitude and mass terms apply to every runway; no Harvester exception is used.
-The previously measured Area-15 runway correction remains in place. Above the
-fitted altitude range the estimate continues with a nonnegative endpoint slope
-and is labelled outside the fit bounds. Preflight retains the original
-conservative low-field floor, and the stopping model remains separate.
-`takeoff_prediction` events record the roll coefficient, model, evidence version,
-and whether the inputs lie inside the fitted bounds. Those bounds describe the
-ground-roll data, not a validated lift, climb, or obstacle-clearance envelope.
-The two Harvester antenna strikes contribute only their undamaged ground rolls;
-the successful light departure does not establish orbit capability.
-
-The ascent manager starts with a **Takeoff** surface-speed bar and V1/VR ticks.
-It remains visible through rotation and changes to the altitude/airspeed chart
-only after the rotate phase ends. The V1 marker estimates the accelerate-stop
-limit from runway remaining, current surface speed and mass, using logged
-takeoff acceleration and the supplied takeoff-weight braking measurements.
-When the live runway-feasibility check actually calls V1, the marker latches that
-measured surface speed. VR comes from the configured rotation
-airspeed, translated to the current surface-speed frame for its tick. Coincident
-thresholds share one tick. The displayed V1 tick is always capped at VR in the
-bar's surface-speed frame, including after a callout. The numeric callout and log
-retain the true measured speed even when the tick is capped. Numeric labels
-distinguish estimated/called V1 and VR.
-
-The takeoff stopping-distance reference reuses the existing conservative fit
-`0.055 * max(1, mass / 69.5) * surface_speed^2 + 30` metres over its
-calibrated 13-113.6 m/s interval.
-It covers all 12 supplied stopping measurements and is unavailable outside that
-interval. Both the speed marker and this readout are passive display references;
-the actual runway-stop and rotation decisions continue to use their live inputs.
-
-After takeoff the manager automatically uses two guidance pages: **Ascent 1** covers
-alignment through NERV assist with a fixed altitude/airspeed chart, and **Ascent 2**
-covers closed-cycle climb and apoapsis build with the cutoff target and orbit
-readouts. Its large apoapsis/cutoff panel includes remaining altitude and a
-progress bar; closed-cycle climb shows the RAPIER cutoff before switching to
-the NERV ascent cutoff. Circularization has a separate page with a large
-estimated countdown to the insertion burn window, remaining delta-v, alignment,
-burn-duration estimate, and actual/requested orbit. The countdown uses the live
-controller's timing gate; ignition still requires its altitude and alignment
-conditions. Missing or stale insertion estimates display as unavailable rather
-than counting down old data. The climb chart's
-cross is a planning aimpoint, not a predicted flight path; reaching the altitude
-trigger starts NERV assist even if the speed aimpoint has not been reached.
-
-The status line distinguishes tracking, insufficient observed progress, manual
-control, protection activity, and recovery. Tracking means steering is within a
-5-degree display threshold and progress has been observed over a two-second
-window; it is advisory and does not change the flight law or abort criteria.
-The display refreshes at 2 Hz and shows its sample UT so a frozen readout is
-recognizable. Final insertion readouts remain available until the window is
-closed. `ascent_display_state` events record page/phase/status changes at low
-logging level; medium adds 1 Hz display samples and high records each fresh
-display snapshot. Normal flight telemetry retains its existing rates.
-
-`ascent_inclination_state` records dogleg/direct and northbound/southbound
-changes at low logging level. Medium adds 1 Hz `ascent_inclination_sample`
-events and high adds 5 Hz samples, including the requested and actual
-inclination, remaining latitude excess, and commanded heading. Atmospheric
-ascent records `ascent_inclination_result` on exit; vacuum ascent includes the
-target and residual error in `vacuum_ascent_complete`.
-
-The chart uses one background PNG and two small marker images. Placement is
-based on kOS layout offsets and still needs in-game KSP/Unity verification;
-the experimental offline GUI workbench cannot establish final image alignment.
-
-### Targeted vacuum landing
-
-Use the **Vacuum Landing** item from the main menu, or run `0:/POS4.ks`. It operates only on bodies without an atmosphere. It keeps the R.A.P.I.E.R.s disabled and uses the LV-N engines for both the de-orbit node and powered descent.
-
-POS4 opens a latitude/longitude dialog when coordinates are omitted. Pass the first two parameters to skip that dialog; leave the altitude override negative to use terrain height at the selected point:
+1. Copy the contents of `Script/` into your KSP installation's kOS script archive, preserving the directory structure and GUI images.
+2. Place `Poseidon SSTO Block 2.craft` in the save's `Ships/SPH/` directory.
+3. Load the craft and run the launcher from its kOS terminal:
 
 ```ks
-runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", 8.421, -74.230).
+runpath("0:/POS.ks").
 ```
 
-For the no-coordinate option, choose **Vacuum Landing (Convenient)** or run `0:/POS5.ks`. It derives a nearby landing site from the planned de-orbit path, so it does not spend fuel steering across the body to a user-selected point. Both modes place every required inclination and de-orbit node on the map, then wait for an explicit **Execute this node** click. The review window also offers replan and cancel actions.
+The launcher chooses its initial program from the vessel's altitude and atmospheric state. Its program selector provides access to Launch, Landing, Aerobraking, Orbital Maneuvering, Docking, vacuum landing, vacuum ascent, and manual flight recording. The control selector offers automatic guidance, control-stick steering (CSS), and OFF.
 
-The fourth optional parameter is the preferred heading used while the craft pitches from its tail contact down onto the gear; pass `"convenient"` as the fifth parameter to select the convenient-site mode from a terminal. Start from a stable orbit with sufficient LV-N thrust-to-weight ratio; the program refuses to begin if the enabled NERVs cannot provide the braking reserve.
+The scripts use the `0:/` archive path. Keep the libraries and images at the corresponding paths when copying the files.
 
-### Flight logging
+### Direct launchers
 
-File logging is disabled by default. Before launching POS, set the logging mode in the kOS terminal:
+| Script | Program |
+| --- | --- |
+| `Script/POS.ks` | Main launcher and program selector |
+| `Script/POS1.ks` | Ascent and orbital insertion |
+| `Script/POS3.ks` | Atmospheric return and runway landing |
+| `Script/POS4.ks` | Vacuum landing at supplied coordinates |
+| `Script/POS5.ks` | Vacuum landing at a convenient site |
+| `Script/POS6.ks` | Vacuum ascent |
+| `Script/POS7.ks` | Aerobraking |
+
+Orbital Maneuvering and Docking are available through the main launcher.
+
+## Flight recording
+
+File logging is off by default. To enable it before starting POS:
 
 ```ks
 global POS_LOGGING_MODE is "medium".
 runpath("0:/POS.ks").
 ```
 
-The available modes are:
+The modes are `none`, `low` for events and state changes, `medium` for events plus one flight-data sample per second, and `high` for events plus samples on every real control tick. Each session writes `flight.csv` and `events.csv` into a new directory under `0:/POS_logs/`.
 
-| Mode | Records | Cost |
-| --- | --- | --- |
-| `none` | Nothing: no folder and no files are created. | One early return in the real-flight hook. |
-| `low` | Flight start, phase/subphase and DAP-mode transitions, runway/target choices, solver outcomes, aborts, terminal-phase changes, and status/validation events. | State-string comparisons only. |
-| `medium` | Everything in `low`, plus one complete vehicle/control/guidance sample per second. | The detailed vehicle values are read only once per second. |
-| `high` | Everything in `medium`, sampled on every real control tick. | Intended for diagnosing a specific failure, not routine flights. |
+Manual Flight Logging records a pilot-flown session from the main menu, with OFF for manual control or CSS for assisted steering. Stopping the recording returns to the program selector.
 
-Each run creates the next unused directory under `0:/POS_logs/`, for example:
+## Code and assets
 
-```text
-0:/POS_logs/flight_1/flight.csv
-0:/POS_logs/flight_1/events.csv
-```
-
-The files are never appended to or reused. `flight.csv` contains the replayable position, velocity, acceleration, attitude, DAP command, control-envelope, GPWS terrain-protection readouts, target/runway, terminal-guidance values, and the craft's current celestial body. Entry samples also record the planned and commanded predictive bank, active authority, both candidate banks, their signed range residuals and TEAM-box miss distances, the measured sensitivity, validity, calculation time, and next update time. Vacuum-landing samples additionally record the target coordinates, target distance, lowest-bounds clearance, speed, requested vertical speed, NERV throttle, braking distance, available acceleration, tail-contact state, pitch-down target, PDI solution error, predicted clearance, thrust saturation, node approval, and pitch-over readiness. Same-body rendezvous samples record target distance, relative speed, plane error, phase, and whether the docking handoff gate is satisfied. GPWS samples include its state, worst predicted clearance, required clearance, clearance margin, recovery timer, next scan time, and whether its pull-up control is active. Schema 39 also records the terrain takeover reason, recovery-authority validity, predicted recovery clearance margin, remaining tested safe delay, assumed net upward acceleration, and limiting recovery terrain. Long-range GPWS checks delayed recovery paths against the complete sampled terrain corridor, including ridges beyond the first projected impact. Fresh FAR-supported recovery authority permits later intervention during nearly wings-level descents; unsupported or changed conditions retain conservative protection. The performance margins require KSP/FAR validation. `events.csv` records the decisions that explain state changes, including the flight's starting body, SOI/body transitions, vacuum target, node review and decision, de-orbit plan, braking start, translation start, engine-cutoff pitch-over, gear touchdown, GPWS state transitions, entry display-page transitions, and rendezvous planning/burn/handoff transitions. The entry-trajectory solver and the simulation routines it calls do not perform any logging, so their calculations have no logging branches.
-
-If you find an issue, please report it in the [GitHub issue tracker](https://github.com/LionPapaya/POS-kos/issues) and include the matching `flight.csv` and `events.csv` logs. Together, the flight samples and state-transition events make the problem reproducible and diagnosable.
-
-For compatibility, setting the old `POS_LOGGING_ENABLED` flag to `true` before launch selects the new `high` mode. Use `POS_LOGGING_MODE` for new launches.
-
-For a same-body orbital rendezvous, choose **Rendezvous** in Orbital Maneuvering and select the other vessel. The routine plans and executes a two-burn Lambert intercept, matches the target velocity, and retains that vessel as the KSP target. It reports success only inside the docking gate (within 1 km and below 5 m/s), at which point start Docking to select ports and perform the close-range approach. In Ascent, selecting a vessel in the **RENDEZVOUS** menu first waits for its predicted launch corridor, inserts into that vessel's orbit, then runs the same final rendezvous routine. The docking-control window provides Pause/Resume and Abort buttons.
-
-Reentry started below 72 km automatically chooses an initial runway from the Trajectories impact prediction, or from the current position if no impact prediction is available. If the entry solver fails, basic guidance continues updating while other runway candidates are tried. Coarse predictions rank actual TEAM targets without rejecting candidates; failed alternatives do not displace the best available approach unless their entry plan converges. If none converges, the craft continues toward that approach until the normal TEAM handoff gates allow terminal guidance. The TEAM lateral offset has a **100 km maximum**.
-
-Recovery telemetry records candidate searches and rejections, solver durations, retry times, and the age of the last basic guidance update. Live DAP steering and protection continue during lengthy calculations; trajectory predictors remain independent of the logger.
-
-## Takeoff performance estimate
-
-To attempt takeoff even when the preflight departure check refuses it, change
-`"override_preflight_refusals",false,` to `"override_preflight_refusals",true,`
-under `Poseidon_SSTO:add("Takeoff",lex(` in
-`Script/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks`, then restart the kOS
-program with the updated file loaded (reboot the CPU if the craft library was
-already loaded). The default is `false`. All checks still run and retain their
-actual results. An overridden refusal prints a warning and attempts departure
-using the orbital course when no checked terrain route is available. Engine
-failure aborts and in-flight terrain protection remain active. The runway-length
-estimate is already advisory and does not itself refuse takeoff.
-
-The flight logger records `takeoff_preflight_policy` and, for a failed check,
-either `departure_takeoff_held` or `departure_takeoff_overridden`, together with
-the existing runway prediction and terrain-plan diagnostics. These events use
-the existing low/medium/high logging modes; no trajectory prediction logs.
-
-Ascent prints an advisory runway assessment before launch and records it again at brake release. It uses the selected departure direction and the craft's position along the runway, rejecting off-runway or misaligned positions. `required_runway_m` and `runway_margin_m` now refer only to liftoff with the 15% distance allowance. `required_departure_m` separately estimates distance to 35 m height; the aircraft may climb beyond the pavement end, so `screen_fits` is diagnostic and does not veto a takeoff.
-
-`departure_status` distinguishes `estimated_feasible`, `demonstrated_departure`, and `unknown`. A negative generic runway margin means the conservative estimate does not confirm pavement margin; it does not prove the takeoff impossible. For Nye-Island runway 15, flights 20/22 plus the maintainer's confirmation support `demonstrated_departure` at 68.72565–68.82 tonnes, with the normal profile and a start within 5 m of the threshold. That evidence permits `sufficient` even when the conservative distance model does not fit the mapped pavement. It adds no invented pavement or terrain clearance and does not extend the demonstrated mass limit to heavier loads or the reciprocal direction. Other runways, including Sandy-Island, Hazard-Shallows and Island, receive no such evidence override. Lighter loads may be estimated feasible while remaining unvalidated extrapolations.
-
-The pure Poseidon model and assessment are in `Script/Libraries/Poseidon_SSTO/craft_Poseidon_SSTO.ks`; generic runway projection is in `Script/Libraries/lib_navigation.ks`. Tune the craft-specific values under `AVES["Takeoff"]`:
-
-```kerboscript
-local estimate is takeoff_performance(ship:mass,2500,AVES["Speed"]["Rotate"],AVES["Ascent"]["rotate_pitch"]).
-```
-
-It returns rotation and liftoff distances, liftoff speed, initial climb distance, required distance, runway margin, and validity/result flags. The current profile rotates at **110 m/s** and commands 20 degrees. The model includes acceleration between rotation and actual liftoff, a minimum pitch-response time, and the measured slow initial climb. The live wrapper `assess_takeoff_runway(selected_runway)` calculates remaining runway from the current position.
-
-Calibration uses 26 confirmed liftoffs and 24 completed initial climbs in the supplied `flight_145` collection. Supported initial mass is 68.72565–70.04567 tonnes, with nominal Poseidon propulsion, the current rotation profile, and Kerbin launch altitudes of 70–325 m. Weight, density, and thrust scaling outside that envelope is explicitly heuristic: numeric estimates are returned, but `model_valid` and `sufficient` remain false. Changes to wing geometry, payload balance, engines, FAR settings, runway slope, or obstacles require new flight validation even inside the mass range. The 15% allowance is an engineering margin, not a statistical confidence interval.
-
-At 69.5 tonnes the conservative estimate is about 1,893 m to liftoff, 2,177 m with the runway margin, and 3,591 m to reach 35 m including the departure margin. This is deliberately above the recorded distances. The 12 supplied stopping runs were confirmed at takeoff weight and bound the braking curve used by the GUI V1 estimate. Their exact mass was not recorded; 69.5 tonnes is the logged takeoff reference, and mass scaling remains an assumption. The GUI estimate does not replace the existing live V1/abort model. The assessment does not block takeoff or change the ascent commands.
-
-`events.csv` records takeoff predictions, brake release, rotation, confirmed liftoff, and reaching the screen height. Low logging records transitions; medium adds 1 Hz takeoff samples; high samples each physics tick. Predictions remain independent of logging.
-
-Calibration tools and generated reports are maintained locally and are not included in this flight distribution. KSP/FAR remains the final validation of takeoff and climb behavior.
-
-## Known limitations
-
-- Tuning is specific to the Poseidon SSTO and may fail on other craft.
-- Interplanetary or very high-altitude re-entry is not yet reliable.
-- Vacuum landing begins from a stable orbit and needs LV-N thrust-to-weight greater than 1.10; terrain with a steep slope at the requested coordinates is not screened.
-- Runway and trajectory selection depends on the data in `lib_location_constants.ks`.
-- `runway_abort` and `rtls` have been successfully exercised in maintainer flight testing on Poseidon. The supplied `flight_145` logs capture a runway-stop rejection and RTLS selection, but do not provide complete flight traces for a successful runway stop, RTLS turnback, runway handoff, or go-around. Keep those broader failure-condition claims limited to separately recorded flight evidence.
-- The Ferram integration must be available for the aerodynamic calculations used by guidance.
-
-## Development notes
-
-When adding an abort mode, keep its behavior behind the abort-mode dispatcher and give it a dedicated flight-phase state. Add user-facing documentation only after the mode is implemented and tested with the Poseidon craft. For flight-guidance or control changes, review the flight logger in the same change and retain representative `flight.csv` and `events.csv` traces for each claimed behavior. This keeps the abort section easy to extend and its test claims traceable.
-
-`TRAJ 1 V/SIT` through `TRAJ 5 V/SIT` are successively zoomed views of one fixed energy-height/range reference corridor generated from successful `reentry_low` flight logs. Their energy bands are 260–290, 210–260, 170–210, 140–170, and 100–140 km. Their corresponding RNG windows are 600–1,100, 450–800, 150–600, 50–300, and 0–180 km. The median remaining range at each energy height remains the centreline. A smoothstep width taper runs from about ±120 km at the far-range end to ±30 km near the target. These bands are visual references and do not define aerodynamic or reachability limits.
-
-During predictive entry, the V/SIT dotted path is interpolated from the existing lower-bank and upper-bank guidance predictions. The traces are matched at shared energy heights, and their remaining ranges are blended using the selected commanded-bank fraction. Sixteen reusable dots stay anchored to the prediction's source state until the next normal guidance update; basic, frozen, invalid, and reset states hide the path. This display adds no trajectory searches. Regenerate the KerboScript profile and backgrounds together using the locally maintained development tools and a representative set of flight logs.
-
-The active page follows energy height and clamps only beyond the complete 100–290 km display span. TEAM then uses the wide `L/SIT 1` and the close-in `L/SIT 2`. Recheck the live shuttle, path placement, axes, and offsets in KSP. Validate regenerated displays and page transitions in KSP; the offline GUI workbench approximates kOS layout but is not a Unity renderer.
+| Path | Contents |
+| --- | --- |
+| `Script/Boot/` | kOS boot launcher |
+| `Script/Poseidon_SSTO/` | Main mission programs and flight-data HUD |
+| `Script/Libraries/Poseidon_SSTO/` | Vehicle configuration, control, guidance, recovery, and GUI code |
+| `Script/Libraries/rsvp/` | Orbital transfer and maneuver calculations |
+| `Script/Libraries/gui_images/` | GUI backgrounds, charts, markers, and controls |
+| `Script/Libraries/lib_*.ks` | Shared navigation, aerodynamics, math, and input helpers |
+| `Poseidon SSTO Block 2.craft` | Poseidon reference craft |
 
 ## Credits
 
 - The kOS community libraries and frameworks used for input, navball, and location constants.
 - Giulio Dondi for the Ferram add-on and aerodynamic-force helpers.
-
-Four-RAPIER-loss contingency recovery now attempts a monitored NERV orbit insertion when the NERVs were already active. If insertion is infeasible, it retains healthy NERVs for runway entry and recovery, then selects ocean corridors or sampled flat land when needed. On Kerbin, failed searches, unsafe finals, and timeouts continue into automatic emergency recovery, using reserve fuel when needed. Contingency finishes after stopped ground contact, splashdown, or preservation of a stable orbit. This behavior still requires in-game flight validation.
-
-Water recovery captures a wings-level approach at 400 m hull clearance, or earlier for a fast descent, preserving the existing GPWS lift command. It arrests sink before braking away excess speed, then holds about 3 m hull clearance unpowered until lift runs out and the aircraft settles. Crossing the normal approach-speed boundary no longer lowers the water AoA command. A land-target emergency crossing the coast uses the same early water gate. Low aborts that are still climbing retain terrain protection; sink-rate trend feedback restores lift before a fading climb becomes a steep descent and releases airbrakes when sink is worsening. Atmospheric contingency recovery enables fuel dumping to a fixed 10% LF floor; that remaining LF is available to healthy NERVs. Orbit rescue keeps dumping disabled. Contact events preserve the last airborne speed, sink and mass before water drag or part loss can hide a hard impact. These approach, stall and drain margins require KSP/FAR validation.
-
-### Late-ascent aborts: AED, ATO and EDR
-
-ATI has been replaced by AED (energy-managed runway diversion), ATO (supervised orbit recovery), and EDR (emergency deorbit/return). Their guidance remains in Orbit Main until the reentry/TEAM handoff. Engine failures, deliberate isolation, per-engine survivor limits, original fuel reserves and rejected-attempt history persist across transfers. These modes have source/offline validation and still require KSP/FAR flight calibration.
-
-### Takeoff GUI V1 estimate
-
-The takeoff speed bar estimates V1 from the runway available at brake release,
-less the distance already rolled, current surface speed and vessel mass. It solves
-`remaining = k * (V1² - current_speed²) + b * V1² + 30 m`, with
-`k = 0.107 * mass / 69.5` from logged takeoff acceleration and
-`b = 0.055 * max(1, mass / 69.5)` from the twelve supplied takeoff-weight abort
-stops. The 30 m allowance and braking coefficient cover all supplied stops.
-Linear mass scaling assumes fixed braking force; lighter craft receive no
-braking-distance credit. Masses outside the logged 68.73–70.05 t range are marked
-as extrapolations. Landing logs near 35.7 t are not treated as takeoff-weight
-braking calibration.
-
-`V1 >=` means the runway permits stopping at the displayed limit (VR or the
-highest measured abort speed, 113.6 m/s); it does not claim an exact V1 beyond
-that limit. An unknown or misaligned runway hides the estimate. The actual V1
-callout continues to use the executive's runway-abort feasibility decision and
-retains its measured surface speed. Display telemetry records the runway budget,
-mass, coefficients, validity and limiting status at the existing low/medium/high
-cadence. This remains a passive display estimate: it does not change runway-stop,
-RTLS, or contingency dispatch. Validate stopping and GUI behavior in KSP; the
-offline GUI is experimental.
-
-### KerboScript performance guidance
-
-For literal ASCII space removal from a string, consider `text:replace(" ", "")`
-instead of a character-by-character KerboScript loop. In KSP with kOS 1.4.0.0
-and 2,000 IPU, three batches of 5,000 calls over eight short strings took
-9.24 seconds per batch with the loop and 1.44–1.46 seconds with `:replace`.
-The results matched for the sampled strings, including empty, repeated-space,
-and mixed-case inputs. A separate KSP run generated 5,000 distinct strings
-of 5–37 characters with varying space density; the original and replacement
-outputs also matched in a case-sensitive comparison of the recorded results.
-This measures in-game elapsed time including loop and
-call overhead, not CPU wall time. Check the expected input types and semantics:
-this removes literal spaces, not other whitespace.
-
-Compare real functions against candidate implementations using representative
-and boundary inputs. Time multiple batches with setup and logging outside the
-timed interval, and check outputs as well as timings. Scheduler ticks quantize
-short measurements, and harness overhead contributes to the reported time.
-
-Removing an unused local assignment from a loop can also reduce scheduled work.
-For `find_closest_entry`, removing the unused `closest_time` variable and its
-updates reduced three 1,000-call numeric-key batches from 1.72–1.74 seconds to
-1.66 seconds in the same KSP setup. Empty lexicons, numeric and string keys,
-and tied targets matched in 27 sampled cases. The checkout had no call sites
-for this helper, so this measurement does not imply a current flight speedup.
-
-Do not assume that replacing exponentiation with explicit multiplication is
-faster in kOS: in the same setup, a `pdi_gravity` candidate that cached the
-radius magnitude and multiplied it three times took 1.76 seconds per 5,000
-calls, versus 1.54 seconds for the existing `radius:mag^3` expression, across
-three batches. The 28 sampled results matched, but this does not establish
-numerical equivalence for every input. Measure the complete expression before
-using this transformation, especially in flight guidance.
-
-Entry trajectory helpers can read live KSP state while a calculation spans
-physics ticks. For example, `vec2pos` reads the body's rotating frame. In a
-36-case side-by-side state-update experiment, otherwise identical sequential
-calculations differed in longitude by up to 0.000334 degrees as the body moved.
-Compare such results with their timestamps and assess downstream trajectory
-effects; do not treat sequential live-state results as an exact equality test
-or cache live inputs across ticks without checking the intended semantics.
-
-The default Rodrigues branch now uses a guarded quaternion rotation. In KSP it
-took 1.44 seconds per 3,000 calls, versus 1.92 seconds for the prior general
-helper in the same direct-call harness. Across 4,000 generated comparisons,
-including zero axes and the alternate cross-product branch, the maximum vector
-difference was 0.000643 and the maximum difference relative to input magnitude
-was 5.03e-7; the sampled alternate-branch results matched. Zero axes retain
-the original cosine-scaled result. The quaternion's precision difference can
-affect downstream predictions; the user accepted it, and a full entry flight
-remains to be checked. An isolated KSP logger check confirmed that the entry
-solver event records implementation identifiers for later flight comparison.
-
-For `vec2pos`, reusing the body reference within one call reduced 3,000-call
-batches from 2.76 seconds to 2.58–2.60 seconds in KSP. The actual updated
-function matched the previous implementation in 911 same-tick comparisons.
-The current logger's synthetic KSP check also recorded the quaternion and
-local-geoframe identifiers. Full entry-flight validation remains outstanding.
-
-Returning `gravitacc`'s computed vector directly avoided an otherwise unused
-temporary. In a post-change KSP comparison the actual function took 1.44
-seconds per 5,000 calls versus 1.46 seconds for the previous body; 2,000
-generated inputs matched. The small timing difference includes harness and
-physics-tick scheduling overhead and does not establish a whole-solver gain.
-
-For whole-predictor measurements, account for physics-tick time resolution and
-live vessel or body state. In ten synthetic 66-step entry predictions, removing
-an immediately overwritten zero-vector initialization produced a 0.312-second
-mean versus 0.316 seconds before, with individual timings quantized to 0.02
-seconds. This is not enough evidence of a speedup; the candidate was reverted.
-In powered descent, `lambda` and `lambda_dot` are constant over a prediction,
-but their combination depends on the integration step's midpoint time. Do not
-hoist normalization of that time-varying thrust direction out of the loop.
-
-In `sim_aeroaccel_load`, inlining the existing guarded quaternion operations
-and reusing the final angle-axis rotation for two vectors reduced three KSP
-batches from 2.76-2.78 to 2.16 seconds per 1,000 calls. The sampler retains
-its list-based interface, live vessel frame, axis normalization and zero-axis
-handling. The updated function matched the earlier sampler in 910 same-tick
-comparisons over varied altitudes, angles and velocities, including vertical
-velocity cases. A separate ten-run synthetic entry prediction averaged 0.274
-seconds versus 0.316 seconds in an earlier run; live conditions differed, so
-this is indicative rather than a controlled whole-solver comparison. The
-entry-solver event records `aerosampler=shared_quaternion` for flight analysis.
-
-The heading trajectory loops consume only aerodynamic load, so using the
-load-only sampler avoids calculating unused lift and drag. In KSP, 1,000 load
-samples took 2.16 seconds instead of 3.46 seconds, and 898 same-tick samples
-matched. Forty two-step tests of each updated heading predictor completed;
-sequential output comparisons are affected by live KSP state and are not a
-full flight validation. Do not cache heading across ticks without accounting
-for the live rotating body frame and threshold decisions.
-
-For `lin_interpol`, returning the existing expression directly instead of
-assigning a temporary reduced three KSP batches from 2.06 to 1.94 seconds per
-5,000 calls. The updated function matched the prior expression on 5,000
-generated finite cases with nonzero interpolation ranges. This is a helper
-benchmark and does not establish a measurable whole-flight speedup.
-
-A branch-based clamp in `interpolate_entry_reference_energy` matched the
-existing max/min clamp in 5,000 generated finite cases, including reversed and
-nearly equal distance ranges. Both variants took 2.80 seconds per 5,000 calls
-in each of three KSP batches using an interior blend. The candidate was not
-adopted; clamp performance may depend on the input distribution.
-
-Returning `find_zero_input`'s existing slope expression directly avoided a
-local assignment. In three KSP batches, 5,000 calls took 2.10 seconds instead
-of 2.20 seconds. The updated function matched the previous expression on 5,000
-generated finite cases, including zero-width intervals; flat nonzero-width
-intervals were not covered by that numerical comparison.
-
-For `calc_circle_distance`, a double-modulo angle wrap took 0.86 seconds per
-2,000 calls versus 2.48 seconds for the existing loop at 1085.25 degrees.
-Across 5,000 generated angles it differed in 216 fractional-angle cases,
-with a maximum distance difference of 1.46e-11 for the tested radii; all 2,500
-integer-angle cases matched. The candidate was not adopted because the sampled
-rounding difference is not established as behavior-preserving for all callers.
-
-The `CROSS` helper's Y/Z permutation before and after `VCRS` reverses the
-cross product's handedness. Replacing those three permutations with
-`VCRS(v2,v1)` reduced three KSP batches from 3.64 to 1.16 seconds per 5,000
-calls. The updated helper matched the prior implementation on 5,000 generated
-finite vector pairs. This is a direct helper measurement; it does not by
-itself establish a whole-flight speedup.
-
-
-### Additional function optimization pass — 2026-11-06
-
-Eighteen candidates were measured with kOS 1.4.0.0 in KSP at 2,000 IPU. Seven
-function bodies changed; `calculate_distance_from_alt` also benefits through
-its call to the optimized altitude helper. The final run executes the actual
-edited libraries against snapshots of their original bodies, with varied
-synthetic inputs prepared outside timing. Three rounds alternate execution
-order. The table reports median simulated seconds per complete batch, including
-identical harness/call overhead; it does not measure CPU wall time or a flight.
-
-| Function | Calls / batch | Original (s) | Updated (s) | Less elapsed time |
-| --- | ---: | ---: | ---: | ---: |
-| `positive_difference` | 2000 | 0.86 | 0.82 | 4.7% |
-| `vecYZ` | 2000 | 0.84 | 0.80 | 4.8% |
-| `avg` | 2000 | 3.48 | 3.00 | 13.8% |
-| `calculate_glideslope_profile` | 1000 | 1.42 | 1.34 | 5.6% |
-| `calculate_glideslope_alt` | 1000 | 1.60 | 1.10 | 31.3% |
-| `calculate_distance_from_alt` | 100 | 2.80 | 1.86 | 33.6% |
-| `calc_vvdot` | 2000 | 1.36 | 1.32 | 2.9% |
-| `compass_and_pitch_for` | 1000 | 1.38 | 1.30 | 5.8% |
-
-The full verification's 558 input cases reported no candidate or production
-output mismatches. A further 67 cases rechecked the final average change. In
-two additional 4,000-element average tests, a timed callback appended an element
-during execution: original and updated functions both retained the original
-sample denominator and returned 1. This covers finite synthetic inputs, not every possible
-argument or a complete flight. The full profile compares altitude, gradient,
-and region; vector/list results compare components. Glide cases include exact
-boundaries, the Hermite interior, steep/shallow regions, and varied profiles.
-
-Keep altitude-only queries scalar when a full profile record is unused. The
-scalar helper deliberately retains the full profile's formula order and branch
-boundaries; maintain both together and compare their altitude outputs after
-future edits. Reusing `t^2` and `t^3` helps the full profile without reassociating
-its expressions. Hoisting the weight-mode branch out of `avg` avoids repeated
-dispatch; its existing exclusive RANGE endpoint and resulting sample set are
-preserved. Its unweighted denominator captures the iteration bound before the
-loop, preserving the count even if another callback appends while it yields;
-that final adjustment also received a focused KSP verification and remeasurement.
-Single-return temporaries in `positive_difference`, `vecYZ`, and
-`calc_vvdot` were removable. The smallest gains remain close to tick resolution.
-
-`compass_and_pitch_for` captures north/up once per invocation and computes east
-directly, avoiding a helper call and duplicate suffix reads. Never cache this
-frame across calls or physics ticks. Captured synthetic frames establish math
-agreement, not dynamic flight equivalence at scheduler boundaries.
-
-The other measured candidates were left unchanged: `time_to_alt`,
-`get_geoposition_along_heading`, `heading_between`, `compass_for`,
-`compass_for_prograde`, `pitch_for`, `pitch_for_prograde`, `calc_turn_radius`,
-and alternate-branch `rodrigues` offered little or inconsistent improvement.
-The `time_to_pos` early return saved work for zero speed but changes evaluation
-order and leaves moving-case performance unestablished, so it was not adopted.
-
-Flight logger review: the existing flight-start event identifies
-`glideslope_alt=scalar_profile`, `glideslope_powers=cached`, and
-`navball_frame=local_axes`. Existing terminal telemetry already records profile
-commands and transitions. CSV schema, low/medium/high cadence, and trajectory
-simulation logging remain unchanged; no logger call was added to a math helper.
-The modified logger loads in KSP as part of final verification; its event payload
-was source-reviewed, not exercised in a new full flight.
-
-At the end of this pass, `POS.ks` routed to `POS_FUNCTION_BENCH.ks` before flight imports
-and idles after completion. Remove the temporary call and idle loop together
-and reboot to restore normal startup. The benchmark requires a fresh idle CPU.
-The normal guidance was stopped before its deorbit burn; no quicksave was loaded.
-Changed libraries and launcher are also present in the running KSP archive.
-
-Local evidence: `tools/pos_sim/results/function_perf_20261106/benchmark.log`
-and `summary.json` (generated, not committed). The required offline audit,
-full suite, and portable binding gate remain unavailable because this checkout
-lacks `tools/test-pos`, the runtime, and `tools/check-kos-bindings`. Real kOS
-loaded and ran the final imported sources; that does not replace those gates.
-The existing GUI harness's old startup assertion is obsolete for the requested
-benchmark route, and another test relies on pre-extraction HEAD function bodies.
-
-
-### DAP command-math optimization pass — 2026-11-06
-
-This pass changes six DAP math helpers (`changeRate`, `checksrt_inputs`,
-`aerostr`, `aoa_bank_management`, and both envelope-apply helpers), plus the
-nominal entry-range lookup. It preserves the previous optimization pass.
-
-The benchmark runs real current `.ks` function bodies in kOS 1.4.0.0 in KSP,
-at 2,000 IPU. Synthetic lexicons and deterministic pose getters isolate command
-math from the live vehicle. Original snapshots redirect helper dependencies to
-their original snapshots, so the reference does not inherit the candidate gain.
-Three alternating-order rounds time 1,000–4,000 calls per batch. Setup, field
-comparison, and logging are outside timing. Values below are median simulated
-seconds per batch, including the same wrapper and fixture-provider overhead.
-
-| Function or composed command segment | Calls / batch | Original (s) | Updated (s) | Less elapsed time |
-| --- | ---: | ---: | ---: | ---: |
-| `changeRate` | 4000 | 2.50 | 2.36 | 5.6% |
-| `checksrt_inputs` | 2000 | 4.66 | 4.60 | 1.3% |
-| `aerostr` | 2000 | 6.54 | 5.94 | 9.2% |
-| `aoa_bank_management` | 3000 | 3.82 | 3.76 | 1.6% |
-| `envelope_apply_aoa_limits` | 4000 | 3.40 | 2.72 | 20.0% |
-| `envelope_apply_aerostr_limits` | 4000 | 3.96 | 2.84 | 28.3% |
-| `entry_nominal_range_at_energy` | 2000 | 7.20 | 4.38 | 39.2% |
-| DAP auto/aerostr command segment (composed) | 1000 | 4.46 | 3.88 | 13.0% |
-| DAP auto/AoA command segment (composed) | 1000 | 3.80 | 3.54 | 6.8% |
-
-All 1166 final fixture cases matched the original outputs. Comparisons cover
-every command field written by these helpers, smoothing/base-pitch state, and
-pose-getter call counts. Exact clamps, heading wrap, zero/equal targets,
-negative/zero timestep, overshoot, both CSS/AoA output maps, and varied commands
-are represented. A further 200-step AoA sequence changes targets, bank limits,
-timestep, altitude regime, and base-pitch consumption; it also matched exactly.
-The lookup matched another 178 cases around every production knot and on
-one/two-element and duplicate-knot sorted tables.
-
-The composed segments are source-extracted command blocks from `dap:update`,
-executed against the actual helpers. The AoA fixture rebinds its live altitude
-read to a synthetic scalar. These are **not full DAP-loop timings**: they exclude
-live pose collection, protection/terrain scans, recovery/mode ownership,
-actuators, steering-manager work, flight logging and vehicle physics. Synthetic
-pose-provider costs differ from the real providers, so the percentages must
-not be extrapolated to complete DAP updates or flights. Timing repeatedly uses
-an initialized workload; the wider correctness matrix runs separately. Short
-differences remain quantized by the 0.02-second scheduler clock.
-
-Per-call command-map aliases reduce repeated nested lexicon indexing without
-retaining maps across invocations. Pose getter calls remain at their original
-sites and in their original order; the changing-getter fixture checks this.
-Direct slew returns avoid local reassignment with identical branch and clamp
-expressions. The envelope helpers inline the exact existing
-`max(lower,min(value,upper))` expression, with a per-call bank bound. Alias-only
-clamps were measured first; eliminating their pure wrapper calls performed
-better. Future changes must keep the inlined clamp and `envelope_clamp` aligned.
-No rates, limits, timers, mode transitions, recovery gates, or explicit yields
-were removed or retuned.
-
-The nominal lookup uses a lower-bound binary search over ascending generated
-energies, retaining the first matching upper knot and the same interpolation
-order. No production call site was found for this helper, so its isolated gain
-does not establish a current flight improvement.
-
-Logger review: existing medium/high samples already include `dap_dt`, target
-and smoothed AoA/bank, base pitch, aerostr/AoA/CSS outputs, envelope limits and
-recovery timers; existing low-level events record DAP/steering transitions.
-The flight-start event now adds `dap_commands=local_maps`,
-`dap_clamp=inline_bounds`, `slew=direct_return`, and
-`nominal_lookup=lower_bound`. Cadence/schema and trajectory simulation logging
-are unchanged. The updated logger loads in the final KSP check; event emission
-and full vehicle behavior remain to be validated in a flight.
-
-During this benchmark pass, `POS.ks` routed to `POS_DAP_BENCH.ks` and idled after completion. It must
-start on a fresh idle CPU. It never invokes DAP setup/update, engine helpers,
-actuator commands, or protection scans. Remove the temporary call and following
-idle loop together, then reboot, to restore normal POS startup. The same edited
-files are present in the game archive. No quicksave was loaded.
-
-Raw logs, source snapshots and `summary.json` are local generated artifacts in
-`tools/pos_sim/results/dap_perf_20261106/`; they are not committed. The offline
-audit, full suite and portable binding gate are still unavailable because
-`tools/test-pos`, the offline runtime and `tools/check-kos-bindings` are missing.
-Real kOS compilation and execution do not replace those gates. kOS rejected a
-reserved name in the initial test harness; it was renamed before the first
-completed benchmark, with built-in clobber protection left enabled.
-
-
-PR preparation: the optimization branch was rebased onto the newer landing-recovery
-fixes in main (a92059a) after these KSP measurements. No additional flight run or
-game-archive deployment was performed during PR preparation.
-
-Normal POS guidance startup was restored after merging PR #5. The benchmark
-scripts remain available for explicit runs on a fresh idle CPU.

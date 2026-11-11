@@ -869,7 +869,6 @@ function create_main_gui{
     Programm_popup:addoption("Vacuum Ascent").
     Programm_popup:addoption("Orbital Maneuvering").
     Programm_popup:addoption("Docking").
-    Programm_popup:addoption("Test").
     set Programm_popup:onchange to changeProgramm@.
 
     function changeProgramm{
@@ -899,9 +898,6 @@ function create_main_gui{
         }
         if Programm_popup:value = "Docking"{
             set main_step to "POS2".
-        }
-        if Programm_popup:value = "Test"{
-            set main_step to "Test".
         }
     }
     global manual_log_status is poseidon_gui_main:addlabel("Manual flight: select Manual Flight Logging").

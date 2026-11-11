@@ -109,7 +109,6 @@ until closed{
     }  
     if main_step = "POS3"{
         poseidon_gui_main:hide().
-        //runpath("0:/Poseidon_SSTO/Aeroturn.ks").
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Reentry.ks").
         set main_step to "ask_Step".
     }
@@ -141,11 +140,6 @@ until closed{
     if main_step = "POS2"{
         poseidon_gui_main:hide().
         runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Docking.ks").
-        set main_step to "ask_Step".
-    }
-    if main_step = "Test"{
-        poseidon_gui_main:hide().
-        runpath("0:/gui_test.ks").
         set main_step to "ask_Step".
     }
     wait 0.
