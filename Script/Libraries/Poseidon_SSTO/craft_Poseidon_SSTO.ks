@@ -492,7 +492,8 @@ function takeoff_roll_calibration {
         set fit_model to "runway_fit_v3".
     }
     local fitted_k is altitude_k*runway_factor*(1+model_config["v1_roll_margin_fraction"]).
-    // Preserve the conservative low-field takeoff envelope used before this fit.
+    // Preserve a conservative low-field floor, recalibrated against repeated
+    // KSC and Dununda screen-height rolls (flights 504/537 and 437/439/441).
     if fit_kind = "rotation" { set fitted_k to max(model_config["roll_coefficient"],fitted_k). }
     local result is lex("coefficient",fitted_k,"mass_scale",(craft_mass/model_config["reference_mass_t"])^mass_exponent,
         "model",fit_model,"within_fit_bounds",false,"evidence","none","runway_factor",runway_factor).
@@ -784,7 +785,7 @@ Poseidon_SSTO:add("Takeoff",lex(
     "override_preflight_refusals",false,
     "body","Kerbin",
     "reference_mass_t",69.5,"minimum_mass_t",68.72565,"maximum_mass_t",70.04567,
-    "roll_coefficient",0.107,"lift_speed_mps",133,"rotation_response",3.6,
+    "roll_coefficient",0.085,"lift_speed_mps",133,"rotation_response",3.6,
     // Shared log-quadratic altitude / power-law mass roll fit. Fit flights
     // 369/373/374/375/433/434; check flights 376/380/381/435 independently.
     // The last two failed heavy Harvester departures inform ground roll only.
@@ -796,9 +797,11 @@ Poseidon_SSTO:add("Takeoff",lex(
     "roll_fit_minimum_mass_t",38.21,"roll_fit_maximum_mass_t",72.30,
     "roll_fit_minimum_speed_mps",20,"roll_fit_maximum_speed_mps",110.75,
     "roll_fit_evidence","takeoff_global_20261024",
-    // Flight 380 roll fit; checked against 381. Only the tested direction.
-    // Correct local performance without treating altitude as its sole cause.
-    "v1_roll_runway_factors",lex("Area-15/31",0.8437635112),
+    // Runway adjustments use repeated screen-height observations. Area-15/31
+    // was checked against flight 381; KSC/09 against 504/537; Dununda/21
+    // against 437/439/441. Keep the 2% acceleration reserve above these fits.
+    "v1_roll_runway_factors",lex("Area-15/31",0.8437635112,
+        "KSC/09",0.86,"Dununda/21",0.83),
     "climb_distance_m",1230,"climb_mass_exponent",2,
     "distance_margin_fraction",0.15,"screen_height_m",35,
     "validated_rotation_speed_mps",110,"rotation_speed_tolerance_mps",0.01,
