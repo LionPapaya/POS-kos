@@ -17,6 +17,11 @@ if not hud_escape_orbit {
     set hud_eta_periapsis to round(ship:obt:eta:periapsis).
     set hud_period to round(ship:orbit:period).
 }
+// Kerbin's atmosphere is 70000 m, so this stays the old boundary there.
+local hud_atm is 70000.
+if defined ship {
+    if ship:body:atm:exists { set hud_atm to ship:body:atm:height. }
+}
 
 if not (defined old_latest_status){
     set old_latest_status to "".
@@ -43,7 +48,7 @@ if defined ship{
 }
 Print ("|") at(79,5).
 Print("|                                                                              |") at(0,6).
-if defined ship and defined step and ship:altitude < 70000 and not (step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int") and not ( step = "TEAM"){
+if defined ship and defined step and ship:altitude < hud_atm and not (step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int") and not ( step = "TEAM"){
     Print("|==============================================================================|") at(0,7).
     Print("|                                 VEHICLE DATA                                 |") at(0,8).
     Print("|                                                                              |") at(0,9).
@@ -97,7 +102,7 @@ if defined ship and defined step and ship:altitude < 70000 and not (step = "reen
     Print ("|") at(79,13). 
     Print("|                                                                              |") at(0,14).
 }
-if defined ship and defined step and ship:altitude < 70000 and (step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int"){
+if defined ship and defined step and ship:altitude < hud_atm and (step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int"){
     Print("|==============================================================================|") at(0,7).
     Print("|                                 VEHICLE DATA                                 |") at(0,8).
     Print("|                                                                              |") at(0,9).
@@ -123,7 +128,7 @@ if defined ship and defined step and ship:altitude < 70000 and (step = "reentry_
     Print ("|") at(79,13). 
     Print("|                                                                              |") at(0,14).
 }  
-if defined ship and defined step and ship:altitude < 70000 and step = "TEAM"{
+if defined ship and defined step and ship:altitude < hud_atm and step = "TEAM"{
     Print("|==============================================================================|") at(0,7).
     Print("|                                 VEHICLE DATA                                 |") at(0,8).
     Print("|                                                                              |") at(0,9).
@@ -147,7 +152,7 @@ if defined ship and defined step and ship:altitude < 70000 and step = "TEAM"{
     Print ("|") at(79,13). 
     Print("|                                                                              |") at(0,14).
 }  
-if defined ship and ship:altitude > 70000{
+if defined ship and ship:altitude > hud_atm{
     Print("|==============================================================================|") at(0,7).
     Print("|                                 VEHICLE DATA                                 |") at(0,8).
     Print("|                                                                              |") at(0,9).

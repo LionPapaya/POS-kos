@@ -1,3 +1,5 @@
+RUNONCEPATH("0:/Libraries/lib_body_env.ks").
+
 function reset_sys{
     if defined abort_state and abort_state:haskey("managed") and abort_state["managed"] {
         set dapthrottle to 0.
@@ -10,10 +12,14 @@ function reset_sys{
         gear on.
         brakes on.
     }   
-    if ship:altitude < 50000 {
+    local reset_air_altitude is 50000.
+    if defined body_environment_loaded { set reset_air_altitude to body_entry_gate("reset_air"). }
+    if ship:altitude < reset_air_altitude {
         rapierson().
         nervsoff().
-        togglerapiermode("AIR").
+        local reset_rapier is "AIR".
+        if defined body_environment_loaded { set reset_rapier to body_landing_rapier_command("AIR"). }
+        togglerapiermode(reset_rapier).
     }  
     else{
     brakes off.
@@ -38,7 +44,9 @@ function reset_sys{
     } else {
         lock throttle to dapthrottle.
     }
-    if ship:periapsis > 70000 or ship:altitude > 300000{
+    local reset_space_altitude is 70000.
+    if defined body_environment_loaded { set reset_space_altitude to body_entry_gate("space"). }
+    if ship:periapsis > reset_space_altitude or ship:altitude > 300000{
         //ag5 on.
         nervson().
         rapiersoff().
@@ -1221,6 +1229,11 @@ Poseidon_SSTO:add("EntryHandoff",lex(
 )).
 Poseidon_SSTO:add("EGAOA",{
 parameter alt_ is ship:altitude.
+    // The polynomial is a Kerbin pressure schedule. Other bodies pass the
+    // Kerbin altitude that has the same static pressure.
+    if defined body_environment_loaded {
+        set alt_ to body_kerbin_equivalent_altitude(alt_).
+    }
     if alt_ <= 20000 {
         return 10.
     }

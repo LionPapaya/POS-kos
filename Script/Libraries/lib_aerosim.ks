@@ -91,7 +91,7 @@ function simulate_trajectory {
     parameter bank_angle.
     parameter bank_side.
     parameter alt_.
-    parameter max_alt is 70000.
+    parameter max_alt is -1.
     parameter aoa_temp is "EGAOA".
     parameter timestep is AVES["simulation"]["timestep"].
     parameter sim_context_mu is BODY:mu.
@@ -103,6 +103,12 @@ function simulate_trajectory {
     parameter sim_context_vessel_right is VCRS(SHIP:FACING:TOPVECTOR:NORMALIZED,SHIP:FACING:FOREVECTOR:NORMALIZED):NORMALIZED.
     //if EGAOA it has to check every timestep to get the new aoa for that alt using AVES["EGAOA"](simstate["altitude"])
 
+    // Omitted ceiling follows the body. Kerbin stays at 70 km. Callers that
+    // pass an explicit ceiling, including the skip-out probe, are unchanged.
+    if max_alt < 0 {
+        set max_alt to 70000.
+        if defined body_environment_loaded { set max_alt to body_sim_ceiling(). }
+    }
 
     local temp_simstate is simstate.
     // Preserve the established constant-bank probe convention exactly:

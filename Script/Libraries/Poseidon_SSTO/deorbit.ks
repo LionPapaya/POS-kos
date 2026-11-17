@@ -9,13 +9,36 @@ function deorbit_config {
     // incomplete flights: a useful planning corridor, not a certified envelope.
     // High-energy range scaling is deliberately a heuristic; live entry
     // guidance owns bank control and verifies the actual post-burn state.
-    return lex("interface_altitude",60000,
-        "min_range",650000,"max_range",1600000,
-        "preferred_range",850000,"max_crossrange",120000,"max_dv",900,
+    local interface_altitude is 60000.
+    local min_range is 650000.
+    local max_range is 1600000.
+    local preferred_range is 850000.
+    local preferred_floor is 750000.
+    local preferred_ceiling is 1400000.
+    local max_crossrange is 120000.
+    local min_entry_angle is -18.
+    // Kerbin keeps the literals above. Other atmospheres scale the corridor
+    // with pressure, atmosphere height and body radius.
+    if defined body_environment_loaded and ship:body:name <> "Kerbin" and ship:body:atm:exists {
+        local range_scale is body_aero_range_scale().
+        local cross_scale is max(0.25, body_radius_scale()).
+        set interface_altitude to ship:body:atm:height * 60000 / 70000.
+        set min_range to 650000 * range_scale.
+        set max_range to 1600000 * range_scale.
+        set preferred_range to 850000 * range_scale.
+        set preferred_floor to 750000 * range_scale.
+        set preferred_ceiling to 1400000 * range_scale.
+        set max_crossrange to 120000 * cross_scale.
+        set min_entry_angle to -30.
+    }
+    return lex("interface_altitude",interface_altitude,
+        "min_range",min_range,"max_range",max_range,
+        "preferred_range",preferred_range,"preferred_floor",preferred_floor,
+        "preferred_ceiling",preferred_ceiling,"max_crossrange",max_crossrange,"max_dv",900,
         "lf_reserve_units",200,
         "available_dv",900,"lead_time",120,"orbits",6,"max_wait",86400,
         "samples_per_orbit",180,"max_entry_time",18000,
-        "min_entry_angle",-18,"max_entry_angle",-0.1).
+        "min_entry_angle",min_entry_angle,"max_entry_angle",-0.1).
 }
 function deorbit_usable_dv {
     parameter craft_mass, lf_units, engine_isp, cfg.
@@ -34,8 +57,20 @@ function deorbit_empty {
 // raise periapsis with departure height to avoid a steep high-energy entry.
 function deorbit_periapsis_for_height {
     parameter height_m.
-    if height_m < 200000 { return -10000+20000*max(0,(height_m-80000)/120000). }
-    return min(30000,10000+20000*(height_m-200000)/800000).
+    if ship:body:name = "Kerbin" or not ship:body:atm:exists {
+        if height_m < 200000 { return -10000+20000*max(0,(height_m-80000)/120000). }
+        return min(30000,10000+20000*(height_m-200000)/800000).
+    }
+    // Same shape as the Kerbin heuristic, in fractions of that atmosphere.
+    local scale is ship:body:atm:height / 70000.
+    local low_orbit is 80000 * scale.
+    local mid is 200000 * scale.
+    local span is 120000 * scale.
+    local high_span is 800000 * scale.
+    if height_m < mid {
+        return scale * (-10000 + 20000 * max(0, (height_m - low_orbit) / max(1, span))).
+    }
+    return min(30000 * scale, scale * (10000 + 20000 * (height_m - mid) / max(1, high_span))).
 }
 // Pure math; vectors share an inertial frame, times are seconds, angles degrees.
 function deorbit_arc {
@@ -152,7 +187,11 @@ function deorbit_step {
         else { set scan_state["feasible_count"] to scan_state["feasible_count"]+1. }
         // Account for rotating air and increased energy without an aero solve.
         local surface_entry_v is arc["entry_v"]-vcrs(ship:body:angularvel,arc["entry_r"]).
-        local preferred is min(1400000,max(750000,cfg["preferred_range"]*(surface_entry_v:mag/2100)^2)).
+        local preferred_floor is 750000.
+        local preferred_ceiling is 1400000.
+        if cfg:haskey("preferred_floor") { set preferred_floor to cfg["preferred_floor"]. }
+        if cfg:haskey("preferred_ceiling") { set preferred_ceiling to cfg["preferred_ceiling"]. }
+        local preferred is min(preferred_ceiling,max(preferred_floor,cfg["preferred_range"]*(surface_entry_v:mag/2100)^2)).
         local candidate_cost is abs(arc["range_m"]-preferred)+abs(arc["crossrange_m"])*2+arc["delta_v"]*100+(burn_ut-scan_state["epoch"])*5.
         if arc["valid"] and candidate_cost < scan_state["best_cost"] {
             set scan_state["best_cost"] to candidate_cost.

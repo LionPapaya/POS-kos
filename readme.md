@@ -30,11 +30,13 @@ The Docking program handles the close-range approach. It selects compatible dock
 
 ## Atmospheric return and runway landing
 
-The return program plans and executes a deorbit maneuver, predicts entry trajectories, and guides the Poseidon toward a selected Kerbin location and runway. It can also select a reachable runway automatically.
+The return program plans and executes a deorbit maneuver and guides the Poseidon to a landing on the atmosphere-bearing body it is currently orbiting. Airless bodies stay on the vacuum landing program.
 
-Entry guidance controls angle of attack and bank to manage energy and range. It transitions into terminal-area energy management (TEAM), builds a route to the runway, aligns the approach, and manages airbrakes, landing gear, flare, and rollout. Terrain protection monitors the projected flight path and can command a recovery pull-up.
+On Kerbin the runway database is unchanged. The program can use a selected runway or pick a reachable one. Entry guidance controls angle of attack and bank to manage energy and range. It transitions into terminal-area energy management (TEAM), builds a route to the runway, aligns the approach, and manages airbrakes, landing gear, flare, and rollout.
 
-The return GUI combines flight data, guidance status, energy-versus-range charts, predicted trajectory markers, and terminal-area approach displays. The chart pages change with the entry and approach phase.
+On any other atmosphere the return GUI offers surveyed strips for that body, and it accepts a latitude, longitude, and approach heading. The program measures slope, roughness, and water before committing to the deorbit. Where the air and the terrain can support an aircraft approach, as on Laythe, it uses the same wheeled TEAM, flare, and rollout path. Where the air is too thin for that, as on Duna, it bleeds energy in the atmosphere and finishes with a wings-level powered landing onto the gear. It does not use the vacuum tail-sit. Admission estimates stopping room from the touchdown aim point, speed, local gravity and surveyed slope. The powered option also checks projected vertical thrust and reserves liquid fuel and oxidizer for descent and final arrest. The friction and engine burn-time assumptions are planning estimates awaiting flight validation.
+
+Terrain protection monitors the projected flight path and can command a recovery pull-up. The return GUI combines flight data, guidance status, energy-versus-range charts, predicted trajectory markers, and terminal-area approach displays. The chart pages change with the entry and approach phase.
 
 ## Aerobraking
 

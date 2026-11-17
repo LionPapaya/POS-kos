@@ -209,7 +209,8 @@ function entry_initial_runway {
     local best is lex("selected",false,"distance",9999999999,"heading_error",180).
     local nearest_distance is 9999999999.
     local candidates is list().
-    local runway_table is Location_constants["kerbin"].
+    local runway_table is landing_runway_table().
+    local runway_altitudes is landing_altitude_table().
     for key in runway_table:keys {
         if key:endswith("_start") {
             local parts is key:split("_").
@@ -217,7 +218,7 @@ function entry_initial_runway {
                 local site_name is parts[0].
                 local runway_id is parts[2].
                 local end_key is site_name+"_runway_"+runway_id+"_end".
-                if runway_table:haskey(end_key) and KerbinRunwayalt:haskey(site_name+"_runway") {
+                if runway_table:haskey(end_key) and runway_altitudes:haskey(site_name+"_runway") {
                     local site_distance is calcdistance(reference_position,runway_table[key]).
                     local site_heading is heading_between(runway_table[key],runway_table[end_key]).
                     set nearest_distance to min(nearest_distance,site_distance).
@@ -280,27 +281,22 @@ function setup_reentry_script{
     local a is Location+"_runway".
     local b is Location+"_runway_"+runway_nr+"_start".
     local c is Location+"_runway_"+runway_nr+"_end".
-    set runway_altitude to KerbinRunwayalt[a].
-
-    
-    // Check if the "kerbin" lexicon contains the runway data
-    if Location_constants:HASKEY("kerbin") {
-        local kerbin_runways is Location_constants["kerbin"].
-
-        // Check if the keys exist in the nested lexicon "kerbin"
-        if kerbin_runways:HASKEY(b) {
-            set runway_start to kerbin_runways[b].
-        } else {
-            flight_log_event("runway_lookup_failed","key=" + b).
-        }
-
-        if kerbin_runways:HASKEY(c) {
-            set runway_end to kerbin_runways[c].
-        } else {
-            flight_log_event("runway_lookup_failed","key=" + c).
-        }
+    local site_altitudes is landing_altitude_table().
+    local site_runways is landing_runway_table().
+    if site_altitudes:HASKEY(a) {
+        set runway_altitude to site_altitudes[a].
     } else {
-        flight_log_event("runway_lookup_failed","key=kerbin").
+        flight_log_event("runway_lookup_failed","key=" + a).
+    }
+    if site_runways:HASKEY(b) {
+        set runway_start to site_runways[b].
+    } else {
+        flight_log_event("runway_lookup_failed","key=" + b).
+    }
+    if site_runways:HASKEY(c) {
+        set runway_end to site_runways[c].
+    } else {
+        flight_log_event("runway_lookup_failed","key=" + c).
     }
 }
 set runway_heading to heading_between(runway_start, runway_end).
@@ -357,6 +353,7 @@ function create_reentry_display {
         }
         runpath("0:/Libraries/lib_location_constants.ks").
     }
+    landing_prepare_body().
 
     // A forced re-entry target does not enter the confirmation loop below.  Copy
     // it into the selections before building the display so setup_reentry_script
@@ -371,7 +368,7 @@ function create_reentry_display {
     
     
 
-    local kerbin_runways is Location_constants["kerbin"].
+    local kerbin_runways is landing_runway_table().
     for key in kerbin_runways:keys {
         
 
@@ -530,7 +527,9 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     }
     // kOS popup menus can begin without a selected value. Select a valid
     // entry before the runway callback indexes the location table.
-    if location_to_runways:keys:length > 0 {
+    if defined landing_preferred_site and location_to_runways:haskey(landing_preferred_site) {
+        set location_popup:value to landing_preferred_site.
+    } else if location_to_runways:keys:length > 0 {
         set location_popup:index to 0.
     }
     location_box:show().
@@ -543,6 +542,11 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
     SET runway_popup:STYLE:HEIGHT TO 25.
     set runway_popup:style:width to 70.
     runway_box:show().
+
+    // Declared before the nested updater so it can fill them after the widgets exist.
+    local lat_field is 0.
+    local lng_field is 0.
+    local hdg_field is 0.
 
     // Function to update runways based on location selection
     function update_runway_options {
@@ -559,6 +563,32 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
             runway_popup:addoption(runway).
         }
         if available_runways:length > 0 { set runway_popup:index to 0. }
+        if not body_is_kerbin() and defined landing_catalog and landing_catalog:haskey(selected_location) {
+            local record is landing_catalog[selected_location].
+            set lat_field:text to "" + round(record["lat"], 4).
+            set lng_field:text to "" + round(record["lng"], 4).
+            set hdg_field:text to "" + round(record["heading"], 1).
+        }
+    }
+
+    if not body_is_kerbin() {
+        local coordinate_row is reentry_gui:addhlayout().
+        set coordinate_row:style:width to 640.
+        local lat_label is coordinate_row:addlabel("Lat").
+        ascent_display_label_style(lat_label, 12).
+        set lat_field to coordinate_row:addtextfield("0").
+        set lat_field:style:width to 90.
+        local lng_label is coordinate_row:addlabel("Lng").
+        ascent_display_label_style(lng_label, 12).
+        set lng_field to coordinate_row:addtextfield("0").
+        set lng_field:style:width to 90.
+        local hdg_label is coordinate_row:addlabel("Hdg").
+        ascent_display_label_style(hdg_label, 12).
+        set hdg_field to coordinate_row:addtextfield("90").
+        set hdg_field:style:width to 70.
+        local coordinate_help is reentry_gui:addlabel("Edit lat/lng/heading and press OK to survey that spot. Presets are already surveyed.").
+        set coordinate_help:style:wordwrap to true.
+        set coordinate_help:style:width to 640.
     }
 
     // Trigger runway update when the location is changed
@@ -579,6 +609,36 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         if not location_to_runways:haskey(location_popup:value) or runway_popup:value = "" { return. }
         set Location to location_popup:value.
         set runway_nr to runway_popup:value.
+        if not body_is_kerbin() {
+            local lat_ is lat_field:text:toscalar(-999).
+            local lng_ is lng_field:text:toscalar(-999).
+            local hdg_ is hdg_field:text:toscalar(90).
+            local use_surveyed is false.
+            if landing_catalog:haskey(location_popup:value) {
+                local record is landing_catalog[location_popup:value].
+                local lng_gap is lng_ - record["lng"].
+                until lng_gap >= -180 and lng_gap <= 180 {
+                    if lng_gap > 180 { set lng_gap to lng_gap - 360. }
+                    if lng_gap < -180 { set lng_gap to lng_gap + 360. }
+                }
+                if abs(lat_ - record["lat"]) < 0.02 and abs(lng_gap) < 0.02 and abs(hdg_ - record["heading"]) < 8 {
+                    set use_surveyed to true.
+                }
+            }
+            if not use_surveyed {
+                local committed is landing_commit_coordinates(lat_, lng_, hdg_).
+                if not committed["ok"] {
+                    set Lastest_status to "Landing site rejected: " + committed["reason"].
+                    return.
+                }
+                set Location to committed["location"].
+                set runway_nr to committed["runway"].
+                location_popup:addoption("Custom").
+                if not location_to_runways:haskey("Custom") {
+                    location_to_runways:add("Custom", list(committed["runway"])).
+                }
+            }
+        }
         set Reentry_mode to Reentry_mode_menu:value.
         set confirm_in to true.
     }
@@ -594,7 +654,9 @@ GLOBAL Reentry_mode_box IS toggels_box:ADDHLAYOUT().
         update_reentry_gui().
         
         // A late start must enter the control loop even while TR has no impact.
-        if ship:altitude < 72000 {
+        local auto_target_altitude is 72000.
+        if defined body_environment_loaded { set auto_target_altitude to body_entry_gate("auto_target"). }
+        if ship:altitude < auto_target_altitude {
             local initial_reference is ship:geoposition.
             local initial_reason is "position_without_impact".
             if ADDONS:TR:available and ADDONS:TR:hasimpact {
