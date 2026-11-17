@@ -744,6 +744,15 @@ function calc_entry_traj {
     parameter wait_mode is "alt".
     parameter wait_value is  AVES["simulation"]["entry_ref_alt"].
 
+    // Kerbin coasts the bank search down to the 60 km reference. Other
+    // atmospheres use the same fraction of their own atmosphere height.
+    // Time-mode retries pass an explicit wait and stay on that wait.
+    if wait_mode = "ALT" and defined body_environment_loaded {
+        if not body_is_kerbin() and defined body_environment_loaded {
+            set wait_value to body_entry_gate("entry_ref").
+        }
+    }
+
     // Capture the live values once so every candidate within this solve uses
     // the same body, mass, and vessel-frame reference.
     local sim_context_mu is BODY:mu.
@@ -962,7 +971,7 @@ function entry_select_runway {
     if not prediction_valid { usable_endpoints:add(input_state). }
     local best_any is lex("selected",false,"score",999999999,"endpoint_miss",999999999,"heading_error",180).
     local best_allowed is best_any.
-    local table is Location_constants["kerbin"].
+    local table is landing_runway_table().
     for key in table:keys {
         if key:endswith("_start") {
             local parts is key:split("_").
@@ -971,9 +980,10 @@ function entry_select_runway {
                 local runway_id is parts[2].
                 local end_key is site_name+"_runway_"+runway_id+"_end".
                 local height_key is site_name+"_runway".
-                if table:haskey(end_key) and KerbinRunwayalt:haskey(height_key) {
+                local site_altitudes is landing_altitude_table().
+                if table:haskey(end_key) and site_altitudes:haskey(height_key) {
                     local candidate_heading is heading_between(table[key],table[end_key]).
-                    local candidate_interface is define_TEAM_interface(table[key],candidate_heading,KerbinRunwayalt[height_key]).
+                    local candidate_interface is define_TEAM_interface(table[key],candidate_heading,site_altitudes[height_key]).
                     local candidate_score is entry_envelope_miss(candidate_interface["target_latlng"],usable_endpoints).
                     local endpoint_miss is 999999999.
                     for endpoint in usable_endpoints {
@@ -983,7 +993,7 @@ function entry_select_runway {
                     local heading_miss is abs(normalized_heading_error(candidate_heading,compass_for_prograde())).
                     local candidate is lex("selected",true,"location",site_name,"runway",runway_id,
                         "runway_start",table[key],"runway_end",table[end_key],
-                        "runway_heading",candidate_heading,"runway_altitude",KerbinRunwayalt[height_key],
+                        "runway_heading",candidate_heading,"runway_altitude",site_altitudes[height_key],
                         "team_interface",candidate_interface,"score",candidate_score,
                         "endpoint_miss",endpoint_miss,"heading_error",heading_miss,
                         "inside_envelope",prediction_valid and candidate_score <= 0,
@@ -1131,7 +1141,11 @@ function reentry_recovery_update {
     if time:seconds < entry_solver_next_retry_time { return. }
     // Once at/below the interface, retain entry control while the existing
     // handoff speed gate is pending. There is no descending entry plan to solve.
-    if ship:altitude <= AVES["TEAMAltitude"] {
+    local solver_floor is AVES["TEAMAltitude"].
+    if ship:body:name <> "Kerbin" and defined body_environment_loaded and defined runway_altitude {
+        set solver_floor to runway_altitude + body_team_agl().
+    }
+    if ship:altitude <= solver_floor {
         set entry_solver_next_retry_time to time:seconds+10.
         return.
     }

@@ -318,7 +318,9 @@ function define_TEAM_interface {
     // TEAMAltitude is an altitude above the selected runway, not an
     // atmosphere-relative cap.  Keep the interface at that full height for
     // every runway, including low-elevation runways.
-    set target_altitude to rnw_altitude + AVES["TEAMAltitude"].
+    local team_agl is AVES["TEAMAltitude"].
+    if defined body_environment_loaded { set team_agl to body_team_agl(). }
+    set target_altitude to rnw_altitude + team_agl.
 
     // Keep the glideslope station fixed. Use the bearing from the current
     // vessel position to this unshifted point to place the box laterally on

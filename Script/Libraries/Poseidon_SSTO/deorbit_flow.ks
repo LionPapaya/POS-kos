@@ -34,29 +34,62 @@ function reentry_deorbit_node_reason {
     if maneuver:orbit:hasnextpatch { return "node_has_encounter". }
     return "".
 }
+// One feasibility check per run. Kerbin accepts the wheeled runway immediately.
+// Other bodies refuse the burn when the surveyed site cannot be landed.
+function reentry_deorbit_admit {
+    if defined landing_admission_done and landing_admission_done { return true. }
+    if not (defined landing_sites_loaded) {
+        if defined landing_admission_done { set landing_admission_done to true. }
+        else { global landing_admission_done is true. }
+        return true.
+    }
+    local landing_admission is landing_admit_site().
+    flight_log_event("landing_admission","valid="+landing_admission["valid"]+
+        "|method="+landing_admission["method"]+"|reason="+landing_admission["reason"]+
+        "|body="+ship:body:name).
+    if not landing_admission["valid"] {
+        reentry_deorbit_reject(landing_admission["reason"]).
+        return false.
+    }
+    if defined landing_admission_done { set landing_admission_done to true. }
+    else { global landing_admission_done is true. }
+    set Lastest_status to "Landing method: " + landing_admission["method"].
+    return true.
+}
 function reentry_deorbit_update {
     set console_mode to "DATA".
     // setup_reentry_script waits for the GUI OK before this function is called.
     // A vehicle already on entry does not need a maneuver or Trajectories.
+    // Kerbin keeps that immediate handoff. Other bodies still have to pass
+    // the landing gate, including a suborbital start.
     if ship:periapsis < ship:body:atm:height {
+        if defined body_environment_loaded and not body_is_kerbin() {
+            if not reentry_deorbit_admit() { return. }
+            set reentry_selected_site_locked to true.
+        }
         set step to reentry_deorbit_phase(ship:apoapsis).
         set substep to "".
         return.
     }
     if Reentry_mode = "Man" {
+        if not reentry_deorbit_admit() { return. }
         set Lastest_status to "Pilot deorbit: waiting for atmospheric periapsis".
+        if defined body_environment_loaded and not body_is_kerbin() and defined landing_method and landing_method <> "" {
+            set Lastest_status to Lastest_status + " | " + landing_method.
+        }
         return.
     }
     if abort_flag or dap["dap_mode"] <> "auto" {
         reentry_deorbit_reject("pilot_cancelled"). return.
     }
-    if ship:body:name <> "Kerbin" {
-        reentry_deorbit_reject("entry_envelope_requires_kerbin"). return.
-    }
+    if not reentry_deorbit_admit() { return. }
     if ship:orbit:eccentricity >= 1 or ship:orbit:hasnextpatch {
         reentry_deorbit_reject("requires_stable_closed_orbit"). return.
     }
     local cfg is deorbit_config().
+    if defined landing_method and landing_method = "powered" {
+        set cfg["lf_reserve_units"] to max(cfg["lf_reserve_units"], landing_powered_lf).
+    }
     // No plane change: even the best longitude cannot overcome this latitude gap.
     local latitude_limit is min(ship:orbit:inclination,180-ship:orbit:inclination).
     local latitude_gap is max(0,abs(runway_start:lat)-latitude_limit)*constant:degtorad*ship:body:radius.

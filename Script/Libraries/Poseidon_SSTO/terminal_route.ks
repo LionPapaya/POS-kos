@@ -145,7 +145,7 @@ function terminal_route_available_runways {
     parameter location_name.
     local available is list().
     local runway_prefix is location_name + "_runway_".
-    local runways is Location_constants["kerbin"].
+    local runways is landing_runway_table().
     for key in runways:keys {
         if key:contains(runway_prefix) and key:endswith("_start") {
             local parts is key:split("_").
@@ -176,7 +176,7 @@ function terminal_route_runway_change_allowed {
 
 function terminal_route_change_runway {
     parameter runway_number.
-    if not(defined Location) or not Location_constants:haskey("kerbin") {
+    if not(defined Location) or landing_runway_table():keys:length = 0 {
         return lex("success",false,"message","Runway change unavailable: landing location is not set").
     }
     if runway_number = runway_nr {
@@ -186,15 +186,16 @@ function terminal_route_change_runway {
     local start_key is Location + "_runway_" + runway_number + "_start".
     local end_key is Location + "_runway_" + runway_number + "_end".
     local altitude_key is Location + "_runway".
-    local runways is Location_constants["kerbin"].
-    if not runways:haskey(start_key) or not runways:haskey(end_key) or not KerbinRunwayalt:haskey(altitude_key) {
+    local runways is landing_runway_table().
+    local site_altitudes is landing_altitude_table().
+    if not runways:haskey(start_key) or not runways:haskey(end_key) or not site_altitudes:haskey(altitude_key) {
         return lex("success",false,"message","Runway " + runway_number + " is not available at " + Location).
     }
 
     set runway_nr to runway_number.
     set runway_start to runways[start_key].
     set runway_end to runways[end_key].
-    set runway_altitude to KerbinRunwayalt[altitude_key].
+    set runway_altitude to site_altitudes[altitude_key].
     set runway_heading to heading_between(runway_start,runway_end).
     set reentry_target to runway_start.
     if ADDONS:TR:available {
@@ -223,7 +224,11 @@ function terminal_speed_control_active {
 // validation, including the runway stopping distance.
 function terminal_mass_speed_scale {
     parameter measured_mass, config_TR.
-    return sqrt(max(1,measured_mass/max(1,config_TR["max_landing_mass"]))).
+    local scale is sqrt(max(1,measured_mass/max(1,config_TR["max_landing_mass"]))).
+    // Kerbin leaves this at 1. Other bodies raise the reference when the
+    // same wing needs more speed to carry the local weight at local density.
+    if defined landing_speed_scale { set scale to scale * landing_speed_scale. }
+    return scale.
 }
 
 // Estimate how much runway-distance and height are needed to unwind sink
@@ -2918,11 +2923,12 @@ function terminal_route_fly {
         togglerapiermode("closed").
     } else if dapthrottle > 0 {
         rapierson().
-        togglerapiermode("air").
+        togglerapiermode(body_landing_rapier_command("AIR")).
     } else if defined rapier_mode and rapier_mode = "ClosedCycle" {
         // Return to air mode after the requested descent assist ends; do not
         // keep the vessel in rocket mode while the route is coasting.
-        togglerapiermode("air").
+        // Bodies without oxygen stay in closed cycle instead of flaming out.
+        togglerapiermode(body_landing_rapier_command("AIR")).
     }
     if dapthrottle > 0 {
         if defined abort_state and abort_state:haskey("policy") and abort_state["policy"]["use_nervs"] { nervson(). }

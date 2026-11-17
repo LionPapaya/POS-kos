@@ -21,6 +21,8 @@ RUNONCEPATH("0:/Libraries/lib_aerostr.ks").
 RUNONCEPATH("0:/Libraries/lib_location_constants.ks").
 RUNONCEPATH("0:/Libraries/lib_aerosim.ks").
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/terminal_route.ks").
+RUNONCEPATH("0:/Libraries/lib_landing_sites.ks").
+RUNONCEPATH("0:/Libraries/Poseidon_SSTO/atm_powered_landing.ks").
 
 // The orbit executive transfers one recovery context; setup cannot reset its
 // per-engine commands, authority restrictions, reserves or attempt history.
@@ -96,6 +98,27 @@ function reentry_ground_complete {
     return contact = "LANDED" and ground_speed < 1.
 }
 
+// Wheeled arrivals keep the TEAM blend. A powered site starts the wings-level
+// descent instead of handing the vacuum tail-sit an atmospheric flight.
+function reentry_begin_terminal_phase {
+    if defined landing_method and landing_method = "powered" {
+        reset_sys().
+        clearVecDraws().
+        atm_powered_init().
+        set step to "ATM_LAND".
+        set Lastest_status to "ATM_LAND".
+        return.
+    }
+    reset_sys().
+    set step to "TEAM".
+    set Lastest_status to "TEAM".
+    rcs on.
+    clearVecDraws().
+    set dap["aoa"]["target_aoa"] to team_handoff_start_aoa.
+    set dap["aoa"]["target_bank"] to team_handoff_start_bank.
+    set dap["str_mode"] to "aoa".
+}
+
 parameter force_tgt is lex("force",false,"Location","","Runway","").
 global reentry_context is reentry_recovery_context(force_tgt).
 global reentry_preserve_propulsion is reentry_recovery_preserved(reentry_context).
@@ -138,6 +161,10 @@ global entry_attitude_initialized is false.
 global entry_rejected_runways is lexicon().
 global deorbit_scan_active is false.
 global reentry_selected_site_locked is false.
+// Kerbin may still search for a better runway until the deorbit burn locks
+// the site. Other bodies keep the site selected in the return GUI.
+if not body_is_kerbin() { set reentry_selected_site_locked to true. }
+global landing_admission_done is false.
 global deorbit_scan is lexicon().
 set landing_flare_started to false.
 global landing_preflare_active is false.
@@ -202,6 +229,15 @@ until running = false{
                     "reason",abort_state["result"]["reason"]).
                 set step to "end".
             }
+        }
+    }
+    // Non-Kerbin flights admit once, including a handoff that skipped Deorbit.
+    // Kerbin keeps its own deorbit-time check and is not judged here.
+    if not body_is_kerbin() and not landing_admission_done and step <> "end" and step <> "contingency_abort" {
+        if reentry_deorbit_admit() and defined landing_method and landing_method = "powered" and (step = "TEAM" or step = "landing") {
+            atm_powered_init().
+            set step to "ATM_LAND".
+            set Lastest_status to "ATM_LAND".
         }
     }
     // A failed escape can still touch down on the landing run. Reclaim
@@ -272,8 +308,24 @@ until running = false{
         reentry_deorbit_update().
     }
     if step = "reentry_low" or step ="reentry_mid" or step = "reentry_high" or step ="reentry_int"{
+        // Kerbin returns the historical literals. Other atmospheres straddle
+        // the local atmosphere height so the solver actually runs.
+        local gate_high is 75000.
+        local gate_status is 74000.
+        local gate_low is 65000.
+        local gate_display is 70000.
+        local gate_ref is AVES["simulation"]["entry_ref_alt"].
+        local gate_rcs is 55000.
+        if defined body_environment_loaded {
+            set gate_high to body_entry_gate("solver_high").
+            set gate_status to body_entry_gate("solver_status").
+            set gate_low to body_entry_gate("solver_low").
+            set gate_display to body_entry_gate("display").
+            set gate_ref to body_entry_gate("entry_ref").
+            set gate_rcs to body_entry_gate("rcs_aoa").
+        }
        
-        if not entry_attitude_initialized and ship:altitude <= 75000 {
+        if not entry_attitude_initialized and ship:altitude <= gate_high {
             reset_sys().
             if not reentry_preserve_propulsion {
                 nervsoff().
@@ -286,16 +338,16 @@ until running = false{
             set entry_control_next_update to -1.
             reentry_live_control_update().
         }
-        if ship:altitude > 75000{
+        if ship:altitude > gate_high{
             // Deorbit targeting already uses a two-body interface projection.
             // Do not run the old full atmospheric reachability square in orbit.
             set Lastest_status to "coasting".
         }
-        if ship:altitude < 75000 and ship:altitude > 74000{
+        if ship:altitude < gate_high and ship:altitude > gate_status{
             set Lastest_status to "reentry guidance".
             clearVecDraws().
         }
-        if ship:altitude < 75000 and ship:altitude > 65000{
+        if ship:altitude < gate_high and ship:altitude > gate_low{
             
             update_readouts().
             if not(defined entry_traj){
@@ -357,7 +409,7 @@ until running = false{
         // initial usable prediction. No chart search/rescaling on this path.
         if step = "reentry_low" or step = "reentry_mid" or
            step = "reentry_high" or step = "reentry_int" {
-            if ship:altitude < 70000 {
+            if ship:altitude < gate_display {
                 local entry_display_energy_height is entry_nominal_energy_height(
                     ship:altitude, ship:airspeed
                 ).
@@ -374,8 +426,8 @@ until running = false{
                 }
             }
         }
-        if ship:altitude < AVES["simulation"]["entry_ref_alt"] or basice_reentry_guidance or
-           (not(defined entry_traj) and ship:altitude < 75000) {
+        if ship:altitude < gate_ref or basice_reentry_guidance or
+           (not(defined entry_traj) and ship:altitude < gate_high) {
             set Lastest_status to "reentering".
             set dap["str_mode"] to "aoa".   
             if not (defined basice_reentry_guidance) {
@@ -585,7 +637,7 @@ until running = false{
           
            
         }
-        if calc_aoa() > dap["aoa"]["smooth_target_aoa"]+1 and ship:altitude < 55000{
+        if calc_aoa() > dap["aoa"]["smooth_target_aoa"]+1 and ship:altitude < gate_rcs{
             rcs on.
         }else{
             rcs off.
@@ -626,16 +678,9 @@ until running = false{
                     "|airspeed="+round(ship:airspeed,1)+"|vertical_speed="+round(ship:verticalspeed,2)+
                     "|start_aoa="+round(team_handoff_start_aoa,2)+"|start_bank="+round(team_handoff_start_bank,2)).
                 set entry_display_prediction_path to entry_display_empty_path("team_handoff").
-                reset_sys().
-                set step to "TEAM".
-                set Lastest_status to "TEAM".
-                rcs on.
-                clearVecDraws().
-                set dap["aoa"]["target_aoa"] to team_handoff_start_aoa.
-                set dap["aoa"]["target_bank"] to team_handoff_start_bank.
-                set dap["str_mode"] to "aoa".
+                reentry_begin_terminal_phase().
             }
-        } else if ship:altitude < runway_altitude + AVES["TEAMAltitude"] - 1000 {
+        } else if ship:altitude < runway_altitude + body_team_agl() - 1000 {
             set team_handoff_start_aoa to dap["aoa"]["smooth_target_aoa"].
             set team_handoff_start_bank to dap["aoa"]["smooth_target_bank"].
             set team_handoff_transition_start to time:seconds.
@@ -644,14 +689,7 @@ until running = false{
                 "|altitude="+round(ship:altitude,1)+"|runway_altitude="+round(runway_altitude,1)+
                 "|start_aoa="+round(team_handoff_start_aoa,2)+"|start_bank="+round(team_handoff_start_bank,2)).
             set entry_display_prediction_path to entry_display_empty_path("team_handoff").
-            reset_sys().
-            set step to "TEAM".
-            set Lastest_status to "TEAM".
-            rcs on.
-            clearVecDraws().
-            set dap["aoa"]["target_aoa"] to team_handoff_start_aoa.
-            set dap["aoa"]["target_bank"] to team_handoff_start_bank.
-            set dap["str_mode"] to "aoa".
+            reentry_begin_terminal_phase().
         }
         if entry_turnside <> entry_last_turnside_log {
             local entry_turn_mode is "predictive".
@@ -690,6 +728,21 @@ until running = false{
             }
         }
         set terminal_route to terminal_route_update(terminal_route).
+        // Thin air can fail the wheeled assumption after the deorbit. Divert
+        // while there is still height, and do not fly the runway route after.
+        if not body_is_kerbin() and defined landing_sites_loaded {
+            local divert_phase is terminal_route["phase"].
+            if divert_phase <> "final" and divert_phase <> "go_around" {
+                local divert_agl is alt:radar.
+                if divert_agl > 1800 and ship:airspeed < 320 and not landing_can_fly_now() and landing_can_thrust_now() {
+                    set landing_method to "powered".
+                    flight_log_event("landing_method_divert","from=wheeled|to=powered|agl="+round(divert_agl,1)+
+                        "|airspeed="+round(ship:airspeed,1)).
+                    set step to "ATM_LAND".
+                    atm_powered_init().
+                }
+            }
+        }
         if reentry_preserve_propulsion {
             if terminal_route["phase"] = "base" or terminal_route["phase"] = "final" {
                 set abort_state["committed"] to true.
@@ -733,7 +786,9 @@ until running = false{
         }
         update_team_dap_gui().
         update_terminal_route_gui().
-        if ship:altitude > 22000{
+        local team_rcs_altitude is 22000.
+        if defined body_environment_loaded { set team_rcs_altitude to body_entry_gate("team_rcs"). }
+        if ship:altitude > team_rcs_altitude{
             rcs on.
         }
         if terminal_route["gear"]{
@@ -983,7 +1038,7 @@ until running = false{
         set dapthrottle to speed_assist["command"].
         if dapthrottle > 0 {
             rapierson().
-            togglerapiermode("air").
+            togglerapiermode(body_landing_rapier_command("AIR")).
         }
         set terminal_route_debug["throttle"] to dapthrottle.
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
@@ -1051,6 +1106,11 @@ until running = false{
             else { log_status("Runway landing failed: stopped outside runway"). }
         }
         } // end landing owner guard
+    }
+    if step = "ATM_LAND" {
+        if atm_powered_update() {
+            set step to "end".
+        }
     }
     if step = "end" {
         if not recovery_result["complete"] {
