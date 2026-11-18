@@ -1,5 +1,12 @@
 // Caller loads lib_vacstr, selects NERV, and grants exclusive control ownership.
 // No staging or engine selection. Bounded coast warp only after alignment. Failed nodes remain available for review.
+function deorbit_execute_mode {
+    if not (defined Reentry_mode) { return "unknown". }
+    if Reentry_mode = "auto" { return "auto". }
+    if Reentry_mode = "ex" { return "Ex". }
+    if Reentry_mode = "man" { return "Man". }
+    return "unknown".
+}
 function deorbit_execute_guard {
     parameter sample.
     if sample["cancelled"] { return "cancelled". }
@@ -23,8 +30,8 @@ function deorbit_execute {
     local owned is false.
     if hasnode { set owned to nextnode = maneuver. }
     if not owned {
-        flight_log_event("deorbit_execute_return","success=false|reason=node_lost|remaining_dv=-1").
-        return lex("success",false,"reason",reason,"remaining_dv",remaining_dv).
+        flight_log_event("deorbit_execute_return","success=false|reason=node_lost|remaining_dv=-1|burn_seen=false|mode="+deorbit_execute_mode()).
+        return lex("success",false,"reason",reason,"remaining_dv",remaining_dv,"burn_seen",false).
     }
     set remaining_dv to maneuver:deltav:mag.
     local node_ut is maneuver:time.
@@ -43,12 +50,15 @@ function deorbit_execute {
         // half_burn_time uses maxThrust; correct for selected/thrust-limited engines.
         set half_time to half_burn_time(maneuver)*ship:maxthrust/ship:availablethrust.
         set duration to calculate_burn_time(remaining_dv,ship_isp(),ship:availablethrust).
-        if duration <= 0 or duration > 600 { set reason to "invalid_duration". }
-        if maneuver:eta > 86400 { set reason to "excessive_coast". }
-        if maneuver:eta < half_time+10 { set reason to "insufficient_lead_time". }
+        // First failed admission sticks. A later fuel check must not hide it.
+        if reason = "" and (duration <= 0 or duration > 600) { set reason to "invalid_duration". }
+        if reason = "" and maneuver:eta > 86400 { set reason to "excessive_coast". }
+        if reason = "" and maneuver:eta < half_time+10 { set reason to "insufficient_lead_time". }
         // NERV consumes LF only; resource mass is 0.005 tonnes per unit.
-        local required_fuel is ship:availablethrust/(ship_isp()*constant:g0)*duration/0.005.
-        if ship:liquidfuel < required_fuel*1.02 { set reason to "insufficient_fuel". }
+        if reason = "" {
+            local required_fuel is ship:availablethrust/(ship_isp()*constant:g0)*duration/0.005.
+            if ship:liquidfuel < required_fuel*1.02 { set reason to "insufficient_fuel". }
+        }
     }
     local evidence is lex("phase","aligning","next_sample",0,"remaining_dv",remaining_dv,"burn_seen",false).
     local next_ui_ut is 0.
@@ -59,7 +69,7 @@ function deorbit_execute {
     local powered_ut is time:seconds.
     local burn_command is 0.
     local deadline is maneuver:eta+duration*2+30.
-    flight_log_event("deorbit_execute_start","dv="+remaining_dv+"|half_burn_s="+half_time+"|duration_s="+duration).
+    flight_log_event("deorbit_execute_start","dv="+remaining_dv+"|half_burn_s="+half_time+"|duration_s="+duration+"|mode="+deorbit_execute_mode()).
     if reason = "" {
         sas off.
         lock steering to steering_vector.
@@ -135,7 +145,10 @@ function deorbit_execute {
     set ship:control:pilotmainthrottle to 0.
     unlock steering.
     local success is reason = "complete".
-    if success { remove maneuver. }
-    flight_log_event("deorbit_execute_return","success="+success+"|reason="+reason+"|remaining_dv="+remaining_dv).
-    return lex("success",success,"reason",reason,"remaining_dv",remaining_dv).
+    // Remove only the node this burn still owns. A swapped plan stays for review.
+    if success and hasnode {
+        if nextnode = maneuver { remove maneuver. }
+    }
+    flight_log_event("deorbit_execute_return","success="+success+"|reason="+reason+"|remaining_dv="+remaining_dv+"|burn_seen="+evidence["burn_seen"]+"|mode="+deorbit_execute_mode()).
+    return lex("success",success,"reason",reason,"remaining_dv",remaining_dv,"burn_seen",evidence["burn_seen"]).
 }

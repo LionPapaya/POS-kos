@@ -6,6 +6,29 @@ function reentry_deorbit_phase {
     if apoapsis_m < 10000000 { return "reentry_high". }
     return "reentry_int".
 }
+// GUI stores AUTO, Auto, Ex or Man. events.csv scores auto/Ex/Man.
+function reentry_deorbit_mode {
+    if not (defined Reentry_mode) { return "unknown". }
+    if Reentry_mode = "auto" { return "auto". }
+    if Reentry_mode = "ex" { return "Ex". }
+    if Reentry_mode = "man" { return "Man". }
+    return "unknown".
+}
+// "none" is the only stamp a search may keep. Add, delete and edit all differ.
+function reentry_deorbit_node_stamp {
+    if not hasnode { return "none". }
+    local maneuver is nextnode.
+    return allnodes:length+"|"+maneuver:time+"|"+maneuver:prograde+"|"+maneuver:normal+"|"+maneuver:radialout.
+}
+// A node that appears and later vanishes still poisons positionat samples.
+function reentry_deorbit_nodes_changed {
+    parameter scan_state.
+    local stamp is reentry_deorbit_node_stamp().
+    if not scan_state:haskey("node_stamp") { set scan_state["node_stamp"] to "none". }
+    if stamp <> scan_state["node_stamp"] { set scan_state["node_changed"] to true. }
+    if scan_state:haskey("node_changed") and scan_state["node_changed"] { return true. }
+    return false.
+}
 function reentry_deorbit_reject {
     parameter why.
     set Lastest_status to "Deorbit unavailable: "+why.
@@ -16,7 +39,7 @@ function reentry_deorbit_reject {
         set Lastest_status to "No reachable entry pass in six orbits; no burn".
     }
     print Lastest_status.
-    flight_log_event("deorbit_rejected","reason="+why+"|mode="+Reentry_mode).
+    flight_log_event("deorbit_rejected","reason="+why+"|mode="+reentry_deorbit_mode()).
     set recovery_result to lex("complete",true,"success",false,"reason",why).
     set step to "end".
 }
@@ -58,6 +81,14 @@ function reentry_deorbit_admit {
 }
 function reentry_deorbit_update {
     set console_mode to "DATA".
+    local mode is reentry_deorbit_mode().
+    local have_planned_node is false.
+    local planned_node is 0.
+    if not (defined deorbit_mode_announced) { global deorbit_mode_announced is false. }
+    if not deorbit_mode_announced {
+        set deorbit_mode_announced to true.
+        flight_log_event("deorbit_mode_start","mode="+mode).
+    }
     // setup_reentry_script waits for the GUI OK before this function is called.
     // A vehicle already on entry does not need a maneuver or Trajectories.
     // Kerbin keeps that immediate handoff. Other bodies still have to pass
@@ -71,7 +102,12 @@ function reentry_deorbit_update {
         set substep to "".
         return.
     }
-    if Reentry_mode = "Man" {
+    // An unrecognized mode must not be reported as a site or pilot failure.
+    if mode <> "auto" and mode <> "Ex" and mode <> "Man" {
+        reentry_deorbit_reject("unknown_deorbit_mode").
+        return.
+    }
+    if mode = "Man" {
         if not reentry_deorbit_admit() { return. }
         set Lastest_status to "Pilot deorbit: waiting for atmospheric periapsis".
         if defined body_environment_loaded and not body_is_kerbin() and defined landing_method and landing_method <> "" {
@@ -96,7 +132,7 @@ function reentry_deorbit_update {
     if latitude_gap > cfg["max_crossrange"] {
         reentry_deorbit_reject("site_not_reachable_from_orbital_plane"). return.
     }
-    if not deorbit_scan_active and Reentry_mode = "auto" {
+    if not deorbit_scan_active and mode = "auto" {
         if hasnode { reentry_deorbit_reject("resolve_existing_nodes_first"). return. }
         nervson(). rapiersoff().
         if ship:availablethrust <= 0 or ship_isp() <= 0 {
@@ -108,6 +144,8 @@ function reentry_deorbit_update {
         if cfg["available_dv"] <= 0 { reentry_deorbit_reject("insufficient_fuel_after_terminal_reserve"). return. }
         set cfg["lead_time"] to max(600,calculate_burn_time(min(cfg["max_dv"],cfg["available_dv"]),ship_isp(),ship:availablethrust)+90).
         set deorbit_scan to deorbit_begin(runway_start,cfg).
+        set deorbit_scan["node_stamp"] to reentry_deorbit_node_stamp().
+        set deorbit_scan["node_changed"] to false.
         set deorbit_scan_active to true.
         set substep to "planning".
         flight_log_event("deorbit_plan_started","target="+Location+"_"+runway_nr+
@@ -115,29 +153,49 @@ function reentry_deorbit_update {
             "|periapsis="+ship:periapsis+"|inclination="+ship:orbit:inclination+
             "|available_dv="+cfg["available_dv"]+"|horizon_s="+(deorbit_scan["end_ut"]-time:seconds)).
     }
-    if Reentry_mode = "auto" {
+    if mode = "auto" {
+        // Reject before another sample so a transient node cannot become the plan.
+        if reentry_deorbit_nodes_changed(deorbit_scan) {
+            reentry_deorbit_reject("nodes_changed_during_search"). return.
+        }
         set deorbit_scan to deorbit_step(deorbit_scan).
+        if reentry_deorbit_nodes_changed(deorbit_scan) {
+            reentry_deorbit_reject("nodes_changed_during_search"). return.
+        }
         set Lastest_status to "Searching entry passes: "+round(100*(deorbit_scan["next_ut"]-deorbit_scan["epoch"])/max(1,deorbit_scan["end_ut"]-deorbit_scan["epoch"]),0)+"%".
         if not deorbit_scan["done"] { return. }
         local plan is deorbit_scan["result"].
         flight_log_event("deorbit_search_finished","samples="+deorbit_scan["sample_count"]+
             "|feasible="+deorbit_scan["feasible_count"]+"|last_rejection="+deorbit_scan["last_rejection"]).
+        if reentry_deorbit_nodes_changed(deorbit_scan) {
+            reentry_deorbit_reject("nodes_changed_during_search"). return.
+        }
         if not plan["valid"] { reentry_deorbit_reject(plan["reason"]). return. }
         if hasnode { reentry_deorbit_reject("nodes_changed_during_search"). return. }
         local node_result is deorbit_node(plan).
         if not node_result["valid"] {
             reentry_deorbit_reject(node_result["reason"]). return.
         }
-        local planned_node is node_result["node"].
+        set planned_node to node_result["node"].
+        set have_planned_node to true.
         flight_log_event("deorbit_plan_ready","node_ut="+plan["node_ut"]+"|dv="+plan["delta_v"]+
             "|entry_ut="+plan["entry_ut"]+"|entry_speed="+plan["entry_speed"]+
             "|entry_angle="+plan["entry_angle"]+"|range_m="+plan["range_m"]+
             "|crossrange_m="+plan["crossrange_m"]+"|predicted_pe="+planned_node:orbit:periapsis).
-    } else if Reentry_mode <> "Ex" {
+    } else if mode <> "Ex" {
         reentry_deorbit_reject("unknown_deorbit_mode"). return.
     }
-    if not hasnode { reentry_deorbit_reject("executor_requires_map_node"). return. }
-    local maneuver is nextnode.
+    local maneuver is 0.
+    if have_planned_node {
+        // Execute the node this search added, never an earlier one that appeared later.
+        if not deorbit_node_next(planned_node) {
+            reentry_deorbit_reject("node_changed"). return.
+        }
+        set maneuver to planned_node.
+    } else {
+        if not hasnode { reentry_deorbit_reject("executor_requires_map_node"). return. }
+        set maneuver to nextnode.
+    }
     local rejection is reentry_deorbit_node_reason(maneuver,cfg["max_dv"]).
     if rejection <> "" { reentry_deorbit_reject(rejection). return. }
     nervson(). rapiersoff().
@@ -151,20 +209,25 @@ function reentry_deorbit_update {
     // phase-gated and does not run in Deorbit; this call yields internally.
     local outcome is deorbit_execute(maneuver).
     set dapthrottle to 0.
-    dap:setup().
+    local burn_seen is false.
+    if outcome:haskey("burn_seen") { set burn_seen to outcome["burn_seen"]. }
     flight_log_event("deorbit_execution_result","success="+outcome["success"]+
-        "|reason="+outcome["reason"]+"|remaining_dv="+outcome["remaining_dv"]+
-        "|achieved_pe="+ship:periapsis+"|achieved_ap="+ship:apoapsis).
+        "|reason="+outcome["reason"]+"|mode="+mode+"|remaining_dv="+outcome["remaining_dv"]+
+        "|burn_seen="+burn_seen+"|achieved_pe="+ship:periapsis+"|achieved_ap="+ship:apoapsis).
     if not outcome["success"] {
         // Once a partial burn commits us to atmosphere, retain entry control.
         // A pilot cancellation explicitly hands control back instead.
         if outcome["reason"] <> "cancelled" and dap["dap_mode"] = "auto" and
            ship:periapsis < ship:body:atm:height and not ship:orbit:hasnextpatch {
+            // The burn already changed the orbit. Drop only our leftover node
+            // so entry and Trajectories follow that orbit, then take controls.
+            deorbit_remove_owned_node(maneuver).
+            dap:setup().
             set step to reentry_deorbit_phase(ship:apoapsis).
             set substep to "partial_deorbit".
             set Lastest_status to "Partial deorbit: recovering on actual entry state".
             flight_log_event("deorbit_partial_entry","reason="+outcome["reason"]+
-                "|periapsis="+ship:periapsis+"|remaining_dv="+outcome["remaining_dv"]).
+                "|mode="+mode+"|periapsis="+ship:periapsis+"|remaining_dv="+outcome["remaining_dv"]).
             return.
         }
         reentry_deorbit_reject(outcome["reason"]). return.
@@ -172,6 +235,7 @@ function reentry_deorbit_update {
     if ship:periapsis >= ship:body:atm:height or ship:orbit:hasnextpatch {
         reentry_deorbit_reject("burn_did_not_establish_entry"). return.
     }
+    dap:setup().
     set step to reentry_deorbit_phase(ship:apoapsis).
     set substep to "".
     set Lastest_status to "Deorbit complete; coasting to entry guidance".
@@ -224,7 +288,10 @@ function deorbit_node {
     local b is vdot(axis_prograde,axis_radial).
     local c is vdot(axis_radial,axis_radial).
     local det is a*c-b*b.
-    if det < 0.0001 { remove maneuver. return lex("valid",false,"reason","node_axes_unavailable"). }
+    if det < 0.0001 {
+        deorbit_remove_owned_node(maneuver).
+        return lex("valid",false,"reason","node_axes_unavailable").
+    }
     local planned_velocity is velocityat(ship,plan["node_ut"]):orbit.
     local impulse is -planned_velocity:normalized*plan["delta_v"].
     local want_prograde is vdot(impulse,axis_prograde).
@@ -241,6 +308,9 @@ function deorbit_node {
         return lex("valid",false,"reason","node_changed").
     }
     local vector_error is (maneuver:deltav-impulse):mag.
-    if vector_error > 0.1 { remove maneuver. return lex("valid",false,"reason","node_vector_mismatch"). }
+    if vector_error > 0.1 {
+        deorbit_remove_owned_node(maneuver).
+        return lex("valid",false,"reason","node_vector_mismatch").
+    }
     return lex("valid",true,"node",maneuver,"vector_error",vector_error).
 }
