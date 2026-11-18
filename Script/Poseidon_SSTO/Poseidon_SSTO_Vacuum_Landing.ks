@@ -2,6 +2,8 @@ RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 // NERV-only PDI landing. Omitted coordinates open the target GUI. POS4 passes
 // "suborbital" to wait for impact, then selects the current trajectory's site.
 // Every inclination/deorbit node requires an explicit in-game Execute click.
+// The landing pad is sampled for water, slope, and roughness before a deorbit
+// burn or a landing commit. Braking, translation, and pitch-over are unchanged.
 // runpath("0:/Poseidon_SSTO/Poseidon_SSTO_Vacuum_Landing.ks", 8.421, -74.230).
 parameter target_latitude is "ASK".
 parameter target_longitude is "ASK".
@@ -107,6 +109,12 @@ function pdi_run {
         ship:mass <= mission["vehicle"]["reserve_mass"] {
         vacuum_stop(mission,false,"insufficient_nerv_thrust_or_fuel_reserve"). return.
     }
+    // Coordinate and suborbital sites are already known. Convenient mode still
+    // holds the vessel's current coordinates until the deorbit plan picks a site.
+    if landing_target_mode <> "convenient" {
+        local early_pad is vacuum_screen_pad(mission).
+        if not early_pad["valid"] { vacuum_stop(mission,false,early_pad["reason"]). return. }
+    }
     if landing_target_mode = "suborbital" {
         vacuum_phase(mission,"vacuum_suborbital_plan","solving immediate powered descent from current trajectory").
         // Begin the attitude slew before the first bounded UPFG solve.  The
@@ -177,6 +185,10 @@ function pdi_run {
             flight_log_event("pdi_plan_ready","ignition_ut="+data["ignition_ut"]+"|arrival_ut="+plan["pdi"]["arrival_ut"]+
                 "|clearance="+data["predicted_clearance"]+"|position_error="+plan["pdi"]["position_error"]+"|velocity_error="+plan["pdi"]["velocity_error"]+
                 "|selected_score="+plan["pdi"]["score"]+"|ignition_attempts="+plan["pdi"]["attempts"]+"|candidate_limit="+pdi_config["ignition_candidates"]).
+            // Convenient mode only now has its landing site. Coordinate mode
+            // hits the sample taken before the plane change.
+            local deorbit_pad is vacuum_screen_pad(mission).
+            if not deorbit_pad["valid"] { remove plan["node"]. vacuum_stop(mission,false,deorbit_pad["reason"]). return. }
             local decision is vacuum_approve_node(mission,plan["node"],"deorbit","Execute this node, then automatically fly PDI and land at the displayed target.").
             if decision = "execute" {
                 if not vacuum_execute_node(mission,plan["node"],"deorbit") { vacuum_stop(mission,false,"deorbit_burn_incomplete_manual_control"). return. }

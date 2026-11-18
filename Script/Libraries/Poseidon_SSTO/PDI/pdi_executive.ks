@@ -30,6 +30,54 @@ function vacuum_phase {
     flight_log_event("pdi_phase","phase="+phase+"|reason="+reason).
 }
 
+function vacuum_pad_detail {
+    parameter pad, pad_config.
+    if pad["reason"] = "vacuum_pad_water" { return "water on the landing pad". }
+    if pad["reason"] = "vacuum_pad_slope" {
+        return "slope "+round(pad["slope"],1)+" deg exceeds "+pad_config["pad_max_slope"]+" deg".
+    }
+    if pad["reason"] = "vacuum_pad_roughness" {
+        return "roughness "+round(pad["roughness"],1)+" m exceeds "+pad_config["pad_max_roughness"]+" m".
+    }
+    return "no terrain sample; site rejected".
+}
+
+// Sample the pad under the current site. A repeated call for the same site
+// reuses the accepted result. announce puts a rejection on the vacuum GUI.
+function vacuum_screen_pad {
+    parameter mission.
+    parameter announce is true.
+    // kOS evaluates both sides of AND. Do not read the cache keys until they exist.
+    if mission:haskey("pad_clear") {
+        if mission["pad_clear"] and mission["pad_lat"] = mission["site"]:lat and
+            mission["pad_lng"] = mission["site"]:lng and mission["pad_heading"] = mission["heading"] {
+            return lex("valid",true,"reason","vacuum_pad_clear","slope",mission["pad_slope"],"roughness",mission["pad_roughness"],
+                "wet",mission["pad_wet"],"samples",mission["pad_samples"]).
+        }
+    }
+    if announce { pdi_planning_status("pad","sampling slope, roughness, and water"). }
+    local pad is pdi_measure_pad(mission["site"],mission["heading"],mission["config"]).
+    flight_log_event("vacuum_pad_screen","valid="+pad["valid"]+"|reason="+pad["reason"]+
+        "|slope="+round(pad["slope"],2)+"|roughness="+round(pad["roughness"],2)+
+        "|wet="+pad["wet"]+"|samples="+pad["samples"]+"|lat="+mission["site"]:lat+"|lng="+mission["site"]:lng).
+    if pad["valid"] {
+        set mission["pad_clear"] to true.
+        set mission["pad_lat"] to mission["site"]:lat.
+        set mission["pad_lng"] to mission["site"]:lng.
+        set mission["pad_heading"] to mission["heading"].
+        set mission["pad_slope"] to pad["slope"].
+        set mission["pad_roughness"] to pad["roughness"].
+        set mission["pad_wet"] to pad["wet"].
+        set mission["pad_samples"] to pad["samples"].
+    } else if announce {
+        local detail is vacuum_pad_detail(pad,mission["config"]).
+        pdi_planning_status("pad",detail).
+        set mission["display"]:text to "PDI pad: "+detail.
+        set mission["reason"] to pad["reason"].
+    }
+    return pad.
+}
+
 function vacuum_command {
     parameter mission, thrust_direction, throttle_set.
     if thrust_direction:mag < 0.0001 { set thrust_direction to ship:up:vector. }
@@ -410,17 +458,30 @@ function vacuum_descent {
                     "|lng="+alternate["site"]:lng+"|altitude="+alternate["altitude"]).
                 if alternate_solution["valid"] and alternate_validated and
                     (alternate_solution["converged"] or alternate_within_live_limits) {
+                    local previous_site is mission["site"].
+                    local previous_altitude is mission["altitude"].
                     set mission["site"] to alternate["site"].
                     set mission["altitude"] to alternate["altitude"].
-                    set landing_target to alternate_target.
-                    set solution to alternate_solution.
-                    set post_node_position_error to alternate_position_error.
-                    set post_node_velocity_error to alternate_velocity_error.
-                    set post_node_within_live_limits to alternate_within_live_limits.
-                    flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
-                    flight_log_event("pdi_convenient_post_node_retarget","reason=provisional_site_unreachable|lat="+
-                        mission["site"]:lat+"|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+
-                        "|position_error="+post_node_position_error+"|velocity_error="+post_node_velocity_error).
+                    // Keep the screened provisional site when the new pad is
+                    // water, too steep, too rough, or unsampled.
+                    local alternate_pad is vacuum_screen_pad(mission,false).
+                    if not alternate_pad["valid"] {
+                        set mission["site"] to previous_site.
+                        set mission["altitude"] to previous_altitude.
+                        flight_log_event("pdi_convenient_post_node_retarget_rejected","reason="+alternate_pad["reason"]+
+                            "|slope="+round(alternate_pad["slope"],2)+"|roughness="+round(alternate_pad["roughness"],2)+
+                            "|wet="+alternate_pad["wet"]).
+                    } else {
+                        set landing_target to alternate_target.
+                        set solution to alternate_solution.
+                        set post_node_position_error to alternate_position_error.
+                        set post_node_velocity_error to alternate_velocity_error.
+                        set post_node_within_live_limits to alternate_within_live_limits.
+                        flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
+                        flight_log_event("pdi_convenient_post_node_retarget","reason=provisional_site_unreachable|lat="+
+                            mission["site"]:lat+"|lng="+mission["site"]:lng+"|altitude="+mission["altitude"]+
+                            "|position_error="+post_node_position_error+"|velocity_error="+post_node_velocity_error).
+                    }
                 }
             }else{
                 flight_log_event("pdi_convenient_post_node_retarget_unavailable","reason="+alternate["reason"]).
@@ -440,6 +501,11 @@ function vacuum_descent {
             set solution to planned_solution.
         }
     }
+    // Landing commit: the site about to be flown, including a suborbital
+    // impact site that never had a deorbit burn. A repeated clear sample
+    // for the site accepted before deorbit is reused.
+    local commit_pad is vacuum_screen_pad(mission).
+    if not commit_pad["valid"] { vacuum_stop(mission,false,commit_pad["reason"]). return. }
     vacuum_solver_telemetry(mission,solution).
     if solution["valid"] and (solution["converged"] or post_node_within_live_limits) and
         (plan:haskey("immediate") or time:seconds < ignition_ut-10) {
@@ -668,6 +734,8 @@ function vacuum_descent {
             if horizontal_speed < 20 and abs(vertical_speed) < 10 {
                 set mission["site"] to latlng(ship:geoposition:lat,ship:geoposition:lng).
                 set mission["altitude"] to mission["site"]:terrainheight.
+                local emergency_pad is vacuum_screen_pad(mission).
+                if not emergency_pad["valid"] { vacuum_stop(mission,false,emergency_pad["reason"]). return. }
                 flight_log_set_vacuum_target(mission["site"],mission["altitude"],mission["heading"]).
                 flight_log_event("pdi_emergency_site","reason="+mission["reason"]+"|lat="+mission["site"]:lat+"|lng="+mission["site"]:lng).
                 vacuum_phase(mission,"vacuum_translate","emergency landing at current site").

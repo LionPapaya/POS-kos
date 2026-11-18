@@ -487,3 +487,67 @@ function pdi_node_duration {
     if vehicle["thrust"] <= 0 { return 1e9. }
     return ship:mass*vehicle["ve"]/vehicle["thrust"]*(1-constant:e^(-maneuver:deltav:mag/vehicle["ve"])).
 }
+
+// Same spherical step as get_geoposition_along_heading, kept here so a direct
+// vacuum-landing run does not depend on the runway navigation library.
+function pdi_pad_offset {
+    parameter origin, heading_deg, distance_m.
+    local angular_deg is distance_m/ship:body:radius*constant:radtodeg.
+    local start_lat is origin:lat.
+    local new_lat is arcsin(max(-1,min(1,
+        sin(start_lat)*cos(angular_deg)+cos(start_lat)*sin(angular_deg)*cos(heading_deg)))).
+    local longitude_offset is arctan2(
+        sin(heading_deg)*sin(angular_deg)*cos(start_lat),
+        cos(angular_deg)-sin(start_lat)*sin(new_lat)).
+    local new_lng is origin:lng+longitude_offset.
+    until new_lng >= -180 and new_lng <= 180 {
+        if new_lng > 180 { set new_lng to new_lng-360. }
+        if new_lng < -180 { set new_lng to new_lng+360. }
+    }
+    return latlng(new_lat,new_lng).
+}
+
+// Short pad along the landing heading. Centerline slope, chord roughness, and
+// water follow landing_measure_strip. A few stations cover the pitch-over.
+function pdi_measure_pad {
+    parameter origin, heading_deg, pdi_config.
+    local length_m is pdi_config["pad_length"].
+    local half_width is pdi_config["pad_half_width"].
+    local readings is list().
+    local wet is false.
+    if not ship:body:hassolidsurface or length_m <= 0 or ship:body:radius < 1 {
+        return pdi_pad_verdict(length_m,readings,false,pdi_config["pad_max_slope"],pdi_config["pad_max_roughness"]).
+    }
+    local far is pdi_pad_offset(origin,heading_deg,length_m).
+    local lng_gap is far:lng-origin:lng.
+    until lng_gap >= -180 and lng_gap <= 180 {
+        if lng_gap > 180 { set lng_gap to lng_gap-360. }
+        if lng_gap < -180 { set lng_gap to lng_gap+360. }
+    }
+    // A collapsed baseline has no measurable slope, so the site is rejected.
+    if abs(far:lat-origin:lat) < 0.0000001 and abs(lng_gap) < 0.0000001 {
+        return pdi_pad_verdict(length_m,readings,false,pdi_config["pad_max_slope"],pdi_config["pad_max_roughness"]).
+    }
+    local stations is 4.
+    local station is 0.
+    local along is 0.
+    local centre is origin.
+    local point is origin.
+    local height is 0.
+    until station > stations {
+        set along to length_m.
+        if station < stations { set along to length_m*station/stations. }
+        set centre to origin.
+        if along > 0 { set centre to pdi_pad_offset(origin,heading_deg,along). }
+        for offset_heading in list(-90,0,90) {
+            set point to centre.
+            if offset_heading <> 0 { set point to pdi_pad_offset(centre,heading_deg+offset_heading,half_width). }
+            set height to point:terrainheight.
+            // Same water test as landing_measure_strip.
+            if ship:body:hasocean and height < 1 { set wet to true. }
+            readings:add(lex("along",along,"height",height,"centerline",offset_heading = 0)).
+        }
+        set station to station+1.
+    }
+    return pdi_pad_verdict(length_m,readings,wet,pdi_config["pad_max_slope"],pdi_config["pad_max_roughness"]).
+}
