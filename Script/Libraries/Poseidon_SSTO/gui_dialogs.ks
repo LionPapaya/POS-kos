@@ -1,6 +1,8 @@
 // Passive inputs only: no node creation, logging or control calls.
+// pos_om_catalog and pos_om_inputs are defined only here. orbital_maneuver.ks loads this file.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/gui_style.ks").
 
+// Fields are [label, default, minimum, maximum], in the planner's input order.
 function pos_om_catalog {
     local commands is list().
     commands:add(lex("label","Circularize","key","circularize","modes",list("at apoapsis","at periapsis","after fixed time","at altitude","at equatorial AN","at equatorial DN"),"fields",list(list("Mode value: delay (s) or altitude (m)",240,0,1000000000000.0)),"target",false,"note","")).
