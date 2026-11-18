@@ -64,7 +64,7 @@ Vacuum landing uses NERV propulsion for deorbit and powered descent, keeping the
 
 **Vacuum Landing (Suborbital)** accepts a latitude and longitude. **Vacuum Landing (Convenient)** derives a nearby site from the planned deorbit path. Required inclination and deorbit nodes are shown for review, with execute, replan, and cancel controls.
 
-Begin from a stable orbit with sufficient NERV thrust and fuel. The program requires a thrust-to-weight ratio above 1.10 for its braking reserve. The coordinate target does not include steep-slope screening.
+Begin from a stable orbit with sufficient NERV thrust and fuel. The program requires a thrust-to-weight ratio above 1.10 for its braking reserve. The coordinate target samples a short landing pad and rejects water, slope above 6 degrees, or roughness above 8 metres before the deorbit burn or the landing commit.
 
 ### Ascent
 

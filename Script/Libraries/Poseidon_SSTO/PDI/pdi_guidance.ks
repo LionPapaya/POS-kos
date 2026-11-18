@@ -55,8 +55,67 @@ function pdi_defaults {
         "capture_distance",5,"capture_speed",0.4,"capture_height",30,
         "flip_clearance",0.4,"flip_vertical_speed",0.3,"flip_horizontal_speed",0.3,
         "flip_upright_error",4,"flip_stable_time",1,"flip_pitch_rate",10,
-        "gear_pitch",5,"landed_pitch_tolerance",5,"landed_dwell",2
+        "gear_pitch",5,"landed_pitch_tolerance",5,"landed_dwell",2,
+        // Short tail-sit pad, not a runway. landing_admit_site already rejects
+        // a powered gear site steeper than 6 degrees. That survey allows 12 m
+        // of roughness on a long wheeled strip; this pad is only the pitch-over
+        // (craft length is about 25 m, sampled out to 50 m, with the survey's
+        // 30 m cross-offset). Roughness above 8 m is not a gear site: 8 m is
+        // the craft height and the relief contingency_config already refuses
+        // as maximum_relief. A pad with no terrain sample is rejected.
+        "pad_length",50,"pad_half_width",30,"pad_max_slope",6,"pad_max_roughness",8
     ).
+}
+
+// Pure pad verdict. Readings are lexicon records of along (metres from the
+// near end), height, and centerline. Slope is the absolute centerline grade.
+// Roughness is the largest deviation from the straight line between the
+// centerline ends. Empty or incomplete samples reject the site.
+function pdi_pad_verdict {
+    parameter length_m, readings, wet, max_slope, max_roughness.
+    local count is readings:length.
+    local result is lex("valid",false,"reason","vacuum_pad_no_sample","slope",0,"roughness",0,"wet",wet,"samples",count).
+    if count = 0 or length_m <= 0 { return result. }
+    local have_start is false.
+    local have_end is false.
+    local start_h is 0.
+    local end_h is 0.
+    local worst is 0.
+    for reading in readings {
+        if reading["centerline"] and reading["along"] <= 0.05 {
+            set start_h to reading["height"].
+            set have_start to true.
+        }
+        if reading["centerline"] and reading["along"] > 0.05 and abs(reading["along"]-length_m) <= 0.05 {
+            set end_h to reading["height"].
+            set have_end to true.
+        }
+    }
+    if not have_start or not have_end { return result. }
+    local slope is arctan(abs(end_h-start_h)/length_m).
+    local expected is 0.
+    for sample in readings {
+        set expected to start_h+(end_h-start_h)*(sample["along"]/length_m).
+        set worst to max(worst,abs(sample["height"]-expected)).
+    }
+    set result["slope"] to slope.
+    set result["roughness"] to worst.
+    set result["samples"] to count.
+    if wet {
+        set result["reason"] to "vacuum_pad_water".
+        return result.
+    }
+    if slope > max_slope {
+        set result["reason"] to "vacuum_pad_slope".
+        return result.
+    }
+    if worst > max_roughness {
+        set result["reason"] to "vacuum_pad_roughness".
+        return result.
+    }
+    set result["valid"] to true.
+    set result["reason"] to "vacuum_pad_clear".
+    return result.
 }
 
 function pdi_clamp {
