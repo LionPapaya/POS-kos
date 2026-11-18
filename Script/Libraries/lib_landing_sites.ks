@@ -223,12 +223,18 @@ function landing_rocket_budget {
     return lex("nerv", nerv, "rocket", rocket, "nerv_flow", nerv_flow, "rocket_flow", rocket_flow).
 }
 
-// Positive lift, or -1 when FAR cannot answer. A zero sample is treated as
+// Upward aerodynamic force, or -1 when FAR cannot answer. A weak sample is
 // unknown so a vacuum query cannot veto an otherwise plausible runway.
 function landing_lift_sample {
     parameter altitude_asl, speed, aoa_, geo.
+    local min_speed is 40.
+    local min_lift is 1.
+    if defined landing_model_estimates {
+        if landing_model_estimates:haskey("sample_min_speed_mps") { set min_speed to landing_model_estimates["sample_min_speed_mps"]. }
+        if landing_model_estimates:haskey("sample_min_lift_kn") { set min_lift to landing_model_estimates["sample_min_lift_kn"]. }
+    }
     if not addons:far:available { return -1. }
-    if speed < 40 { return -1. }
+    if speed < min_speed { return -1. }
     local site_from_body is geo:altitudeposition(altitude_asl) - ship:body:position.
     if site_from_body:mag < ship:body:radius * 0.5 { return -1. }
     local local_up is site_from_body:normalized.
@@ -236,28 +242,42 @@ function landing_lift_sample {
     local local_north is vxcl(local_up, pole).
     if local_north:mag < 0.01 { return -1. }
     set local_north to local_north:normalized.
-    local east is vcrs(local_north, local_up):normalized.
+    // up × north is east. north × up points west and samples the reciprocal heading.
+    local east is vcrs(local_up, local_north):normalized.
     local heading_deg is 90.
     if defined runway_heading { set heading_deg to runway_heading. }
     local horizontal is (local_north * cos(heading_deg) + east * sin(heading_deg)):normalized * speed.
     local force is aeroforce_ld(site_from_body, horizontal, list(aoa_, 0)).
-    if force["lift"] < 1 { return -1. }
-    return force["lift"].
+    // aeroforce_ld["lift"] follows the ship roof now. Use the predicted-axis
+    // load along site up. Below min_lift the sample stays unknown.
+    local upward is vdot(force["load"], local_up).
+    if upward < min_lift { return -1. }
+    return upward.
 }
 
 function landing_lowest_support_speed {
     parameter weight, thrust, pressure, geo, altitude_asl.
+    local attitude is 12.
+    local margin is 1.08.
+    local reference_speed is 125.
+    local reference_gravity is 9.80665.
+    if defined landing_model_estimates {
+        if landing_model_estimates:haskey("thrust_attitude_deg") { set attitude to landing_model_estimates["thrust_attitude_deg"]. }
+        if landing_model_estimates:haskey("support_weight_margin") { set margin to landing_model_estimates["support_weight_margin"]. }
+        if landing_model_estimates:haskey("kerbin_approach_mps") { set reference_speed to landing_model_estimates["kerbin_approach_mps"]. }
+        if landing_model_estimates:haskey("kerbin_gravity") { set reference_gravity to landing_model_estimates["kerbin_gravity"]. }
+    }
     local speeds is list(70, 100, 130, 160, 200, 250, 320).
     for speed in speeds {
         local lift is 0.
-        local sampled is landing_lift_sample(altitude_asl, speed, 12, geo).
+        local sampled is landing_lift_sample(altitude_asl, speed, attitude, geo).
         if sampled > 0 {
             set lift to sampled.
         } else {
             // Kerbin sea-level flight near the approach speed is the lift reference.
-            set lift to ship:mass * 9.80665 * (speed / 125) ^ 2 * pressure.
+            set lift to ship:mass * reference_gravity * (speed / reference_speed) ^ 2 * pressure.
         }
-        if lift + thrust >= weight * 1.08 { return speed. }
+        if lift + thrust >= weight * margin { return speed. }
     }
     return 999.
 }
@@ -278,6 +298,51 @@ function landing_admit_site {
         set site to landing_catalog[Location].
     }
     if not site:haskey("length") { return lex("valid", false, "method", "", "reason", "unsurveyed_landing_site"). }
+    // Fallbacks match landing_model_estimates. A flight replaces that lexicon.
+    local est is lex(
+        "thrust_attitude_deg", 12,
+        "brake_mu", 0.4,
+        "rollout_margin", 1.2,
+        "propellant_margin", 1.2,
+        "no_lift_seconds", 30,
+        "lf_mixture_fraction", 0.45,
+        "ox_mixture_fraction", 0.55,
+        "lift_support_fraction", 0.75,
+        "hover_thrust_fraction", 1.05,
+        "hover_touchdown_mps", 70,
+        "wheeled_max_slope_deg", 2.5,
+        "powered_max_slope_deg", 6,
+        "wheeled_max_roughness_m", 12,
+        "powered_max_roughness_m", 30,
+        "wheeled_max_approach_mps", 165,
+        "powered_max_touchdown_mps", 155,
+        "kerbin_approach_mps", 125,
+        "speed_scale_cap", 1.35,
+        "wet_terrain_m", 1,
+        "sample_min_lift_kn", 1,
+        "high_descent_agl_m", 8000,
+        "mid_descent_agl_m", 3000,
+        "low_descent_agl_m", 800,
+        "final_descent_agl_m", 200,
+        "mid_descent_vs", -18,
+        "low_descent_vs", -7,
+        "final_descent_vs", -6,
+        "flare_descent_vs", -3,
+        "rapier_align_agl_m", 1600
+    ).
+    if defined landing_model_estimates {
+        for estimate_key in est:keys {
+            if landing_model_estimates:haskey(estimate_key) { set est[estimate_key] to landing_model_estimates[estimate_key]. }
+        }
+    }
+    local site_is_wet is false.
+    if site:haskey("wet") and site["wet"] { set site_is_wet to true. }
+    // Survey marks water when any sample is below 1 m on an ocean body.
+    // Re-read the runway ends so a stale dry flag cannot admit the sea.
+    if ship:body:hasocean {
+        if runway_start:terrainheight < est["wet_terrain_m"] { set site_is_wet to true. }
+        if defined runway_end and runway_end:terrainheight < est["wet_terrain_m"] { set site_is_wet to true. }
+    }
     local altitude_asl is runway_altitude + 400.
     local pressure is max(0.000001, ship:body:atm:altitudepressure(altitude_asl)).
     local weight is ship:mass * body_local_gravity(altitude_asl).
@@ -285,64 +350,107 @@ function landing_admit_site {
     local engines is landing_rocket_budget(pressure).
     // Gear approach attitude, with both propulsion groups along the fuselage.
     global landing_powered_axial is engines["nerv"] + engines["rocket"].
-    local thrust is landing_powered_axial * sin(12).
+    local attitude is est["thrust_attitude_deg"].
+    local thrust is landing_powered_axial * sin(attitude).
     local gravity is body_local_gravity(runway_altitude).
-    local brake_accel is gravity * (0.4 - sin(site["slope"])).
+    // Specific brake is mu - sin(slope). Non-positive brake does not stop the craft.
+    local brake_specific is est["brake_mu"] - sin(site["slope"]).
+    local brake_accel is 0.
     local aim is min(AVES["Landing"]["runway_touchdown_distance"], site["length"] * 0.3).
-    local wheeled is not site["wet"] and site["slope"] <= 2.5 and site["roughness"] <= 12 and approach <= 165.
-    if aim + approach^2 / (2 * max(0.01, brake_accel)) * 1.2 > site["length"] { set wheeled to false. }
-    local lift_at_approach is landing_lift_sample(altitude_asl, min(165, approach), 12, runway_start).
-    if wheeled and lift_at_approach > 1 and lift_at_approach < weight * 0.75 {
+    local wheeled_roll_fits is false.
+    if brake_specific > 0 {
+        set brake_accel to gravity * brake_specific.
+        set wheeled_roll_fits to aim + approach^2 / (2 * brake_accel) * est["rollout_margin"] <= site["length"].
+    }
+    local wheeled is not site_is_wet and site["slope"] <= est["wheeled_max_slope_deg"] and site["roughness"] <= est["wheeled_max_roughness_m"] and approach <= est["wheeled_max_approach_mps"].
+    if not wheeled_roll_fits { set wheeled to false. }
+    local lift_at_approach is landing_lift_sample(altitude_asl, min(est["wheeled_max_approach_mps"], approach), attitude, runway_start).
+    if wheeled and lift_at_approach > est["sample_min_lift_kn"] and lift_at_approach < weight * est["lift_support_fraction"] {
         set wheeled to false.
     }
     local support_speed is landing_lowest_support_speed(weight, thrust, pressure, runway_start, altitude_asl).
     local touchdown is support_speed.
-    if thrust >= weight * 1.05 { set touchdown to 70. }
-    local powered is landing_powered_axial > 0 and not site["wet"] and site["slope"] <= 6 and site["roughness"] <= 30 and touchdown <= 155.
+    if thrust >= weight * est["hover_thrust_fraction"] { set touchdown to est["hover_touchdown_mps"]. }
+    local powered is landing_powered_axial > 0 and not site_is_wet and site["slope"] <= est["powered_max_slope_deg"] and site["roughness"] <= est["powered_max_roughness_m"] and touchdown <= est["powered_max_touchdown_mps"].
 
-    // Budget the controller's descent bands at the planned support speed.
-    // Give the arrest phase a no-lift interval and allow for alignment delays.
-    local lift is landing_lift_sample(altitude_asl, touchdown, 12, runway_start).
-    local axial_demand is max(0, weight - max(0,lift)) / sin(12).
+    // One clock per altitude band. 1600 m to 800 m used to sit in both the
+    // 2200 m / 7 m/s term and the terminal clock, so NERV liquid fuel paid
+    // it twice. Oxidizer uses only the terminal window, once.
+    local align_agl is est["rapier_align_agl_m"].
+    local nerv_only_seconds is (est["high_descent_agl_m"] - est["mid_descent_agl_m"]) / abs(est["mid_descent_vs"]) + (est["mid_descent_agl_m"] - align_agl) / abs(est["low_descent_vs"]).
+    local terminal_seconds is (align_agl - est["low_descent_agl_m"]) / abs(est["low_descent_vs"]) + (est["low_descent_agl_m"] - est["final_descent_agl_m"]) / abs(est["final_descent_vs"]) + est["final_descent_agl_m"] / abs(est["flare_descent_vs"]).
+    local descent_seconds is nerv_only_seconds + terminal_seconds.
+    local lift is landing_lift_sample(altitude_asl, touchdown, attitude, runway_start).
+    local axial_demand is max(0, weight - max(0,lift)) / sin(attitude).
     local nerv_fraction is min(1, axial_demand / max(1, engines["nerv"])).
     local rocket_fraction is min(1, max(0, axial_demand - engines["nerv"]) / max(1, engines["rocket"])).
-    local terminal_seconds is 800/7 + 600/6 + 200/3.
-    local descent_seconds is 5000/18 + 2200/7 + terminal_seconds.
-    local rocket_units is engines["rocket_flow"] * (30 + terminal_seconds * rocket_fraction) * 1.2.
-    local lf_budget is engines["nerv_flow"] * (30 + descent_seconds * nerv_fraction) * 1.2 + rocket_units * 0.45.
-    local ox_budget is rocket_units * 0.55.
-    local powered_roll_fits is aim + touchdown^2 / (2 * max(0.01, brake_accel)) * 1.2 <= site["length"].
+    local rocket_units is engines["rocket_flow"] * (est["no_lift_seconds"] + terminal_seconds * rocket_fraction) * est["propellant_margin"].
+    local lf_budget is engines["nerv_flow"] * (est["no_lift_seconds"] + descent_seconds * nerv_fraction) * est["propellant_margin"] + rocket_units * est["lf_mixture_fraction"].
+    local ox_budget is rocket_units * est["ox_mixture_fraction"].
+    local powered_roll_fits is false.
+    if brake_specific > 0 {
+        set powered_roll_fits to aim + touchdown^2 / (2 * brake_accel) * est["rollout_margin"] <= site["length"].
+    }
     global landing_powered_lf is lf_budget.
     global landing_powered_ox is ox_budget.
     if not powered_roll_fits or ship:liquidfuel < lf_budget or ship:oxidizer < ox_budget { set powered to false. }
     global landing_powered_available is powered.
     global landing_touchdown_speed is touchdown.
     global landing_speed_scale is 1.
+    local result is lex("valid", false, "method", "", "reason", "site_not_landable").
     if wheeled {
         global landing_method is "wheeled".
-        set landing_speed_scale to max(1, min(1.35, approach / 125)).
-        return lex("valid", true, "method", "wheeled", "reason", "wheeled",
+        set landing_speed_scale to max(1, min(est["speed_scale_cap"], approach / est["kerbin_approach_mps"])).
+        set result to lex("valid", true, "method", "wheeled", "reason", "wheeled",
             "approach", approach, "touchdown", touchdown, "thrust", thrust, "weight", weight).
-    }
-    if powered {
+    } else if powered {
         global landing_method is "powered".
-        return lex("valid", true, "method", "powered", "reason", "powered",
+        set result to lex("valid", true, "method", "powered", "reason", "powered",
             "approach", approach, "touchdown", touchdown, "thrust", thrust, "weight", weight).
+    } else {
+        local why is "site_not_landable".
+        if site_is_wet { set why to "landing_site_is_water". }
+        else if site["slope"] > est["powered_max_slope_deg"] or site["roughness"] > est["powered_max_roughness_m"] { set why to "landing_terrain_too_rough". }
+        else if ship:oxidizer < ox_budget or ship:liquidfuel < lf_budget {
+            set why to "insufficient_powered_landing_propellant".
+        } else if touchdown <= est["powered_max_touchdown_mps"] and not powered_roll_fits {
+            set why to "insufficient_surveyed_rollout_distance".
+        } else if touchdown > est["powered_max_touchdown_mps"] {
+            set why to "cannot_slow_to_gear_limit".
+        }
+        global landing_method is "".
+        set result to lex("valid", false, "method", "", "reason", why,
+            "approach", approach, "touchdown", touchdown, "thrust", thrust, "weight", weight,
+            "slope", site["slope"], "roughness", site["roughness"]).
     }
-    local why is "site_not_landable".
-    if site["wet"] { set why to "landing_site_is_water". }
-    else if site["slope"] > 6 or site["roughness"] > 30 { set why to "landing_terrain_too_rough". }
-    else if ship:oxidizer < ox_budget or ship:liquidfuel < lf_budget {
-        set why to "insufficient_powered_landing_propellant".
-    } else if touchdown <= 155 and not powered_roll_fits {
-        set why to "insufficient_surveyed_rollout_distance".
-    } else if touchdown > 155 {
-        set why to "cannot_slow_to_gear_limit".
+    local log_key is ship:body:name.
+    if defined Location { set log_key to log_key + "|" + Location. }
+    local log_estimates is defined flight_log_event.
+    if log_estimates and defined landing_model_logged and landing_model_logged = log_key { set log_estimates to false. }
+    if log_estimates {
+        if defined landing_model_logged { set landing_model_logged to log_key. }
+        else { global landing_model_logged is log_key. }
+        local wet_bit is 0.
+        if site_is_wet { set wet_bit to 1. }
+        local detail is "body=" + ship:body:name + "|method=" + landing_method + "|reason=" + result["reason"] + "|wet=" + wet_bit.
+        set detail to detail + "|brake_specific=" + brake_specific + "|brake_accel=" + brake_accel.
+        set detail to detail + "|nerv_only_s=" + nerv_only_seconds + "|terminal_s=" + terminal_seconds + "|descent_s=" + descent_seconds.
+        set detail to detail + "|lf_budget=" + lf_budget + "|ox_budget=" + ox_budget + "|rocket_units=" + rocket_units.
+        set detail to detail + "|approach=" + approach + "|touchdown=" + touchdown + "|thrust=" + thrust + "|weight=" + weight.
+        local logged is est.
+        if defined landing_model_estimates { set logged to landing_model_estimates. }
+        for logged_key in logged:keys {
+            set detail to detail + "|" + logged_key + "=" + logged[logged_key].
+        }
+        if defined deorbit_config { deorbit_config(). }
+        if defined deorbit_body_estimates {
+            for deorbit_key in deorbit_body_estimates:keys {
+                set detail to detail + "|deorbit_" + deorbit_key + "=" + deorbit_body_estimates[deorbit_key].
+            }
+        }
+        flight_log_event("landing_model_estimates", detail).
     }
-    global landing_method is "".
-    return lex("valid", false, "method", "", "reason", why,
-        "approach", approach, "touchdown", touchdown, "thrust", thrust, "weight", weight,
-        "slope", site["slope"], "roughness", site["roughness"]).
+    return result.
 }
 
 function landing_can_fly_now {

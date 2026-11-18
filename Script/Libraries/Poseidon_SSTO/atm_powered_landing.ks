@@ -5,6 +5,62 @@
 // Touchdown is on the landing gear, upright, at landing_touchdown_speed.
 // Closed-cycle oxidizer is reserved for the final arrest. The NERVs carry
 // the long descent, and RAPIER thrust limits supply only the deficit.
+//
+// These are planning estimates. Replace one only after landing_model_estimates
+// is logged on a Laythe wheeled flight or a Duna powered flight.
+
+if not (defined landing_model_estimates) {
+    global landing_model_estimates is lex(
+        "thrust_attitude_deg", 12,
+        "min_aoa_deg", 12,
+        "sink_arrest_attitude_deg", 22,
+        "max_command_aoa_deg", 30,
+        "glide_angle_deg", 3,
+        "default_descent_vs", -8,
+        "high_descent_agl_m", 8000,
+        "high_descent_vs", -45,
+        "mid_descent_agl_m", 3000,
+        "mid_descent_vs", -18,
+        "low_descent_agl_m", 800,
+        "low_descent_vs", -7,
+        "final_descent_agl_m", 200,
+        "final_descent_vs", -6,
+        "flare_descent_vs", -3,
+        "rapier_always_agl_m", 500,
+        "rapier_align_agl_m", 1600,
+        "rapier_sink_agl_m", 1800,
+        "no_lift_seconds", 30,
+        "propellant_margin", 1.2,
+        "rollout_margin", 1.2,
+        "brake_mu", 0.4,
+        "ox_mixture_fraction", 0.55,
+        "lf_mixture_fraction", 0.45,
+        "lift_support_fraction", 0.75,
+        "support_weight_margin", 1.08,
+        "hover_thrust_fraction", 1.05,
+        "hover_touchdown_mps", 70,
+        "wheeled_max_slope_deg", 2.5,
+        "powered_max_slope_deg", 6,
+        "wheeled_max_roughness_m", 12,
+        "powered_max_roughness_m", 30,
+        "wheeled_max_approach_mps", 165,
+        "powered_max_touchdown_mps", 155,
+        "kerbin_approach_mps", 125,
+        "kerbin_gravity", 9.80665,
+        "sample_min_speed_mps", 40,
+        "sample_min_lift_kn", 1,
+        "wet_terrain_m", 1,
+        "speed_scale_cap", 1.35
+    ).
+}
+
+function landing_estimate {
+    parameter key, fallback.
+    if defined landing_model_estimates and landing_model_estimates:haskey(key) {
+        return landing_model_estimates[key].
+    }
+    return fallback.
+}
 
 function atm_powered_restore_limits {
     for item in atm_land["engines"] {
@@ -93,7 +149,25 @@ function atm_powered_init {
     rcs on.
     flight_log_event("atm_powered_start", "support_speed=" + round(support, 1) +
         "|breathable=" + body_breathable() + "|ox=" + round(ship:oxidizer, 1) +
-        "|mass=" + round(ship:mass, 2)).
+        "|mass=" + round(ship:mass, 2) +
+        "|thrust_attitude_deg=" + landing_estimate("thrust_attitude_deg", 12) +
+        "|min_aoa_deg=" + landing_estimate("min_aoa_deg", 12) +
+        "|sink_arrest_attitude_deg=" + landing_estimate("sink_arrest_attitude_deg", 22) +
+        "|max_command_aoa_deg=" + landing_estimate("max_command_aoa_deg", 30) +
+        "|glide_angle_deg=" + landing_estimate("glide_angle_deg", 3) +
+        "|default_descent_vs=" + landing_estimate("default_descent_vs", -8) +
+        "|high_descent_agl_m=" + landing_estimate("high_descent_agl_m", 8000) +
+        "|high_descent_vs=" + landing_estimate("high_descent_vs", -45) +
+        "|mid_descent_agl_m=" + landing_estimate("mid_descent_agl_m", 3000) +
+        "|mid_descent_vs=" + landing_estimate("mid_descent_vs", -18) +
+        "|low_descent_agl_m=" + landing_estimate("low_descent_agl_m", 800) +
+        "|low_descent_vs=" + landing_estimate("low_descent_vs", -7) +
+        "|final_descent_agl_m=" + landing_estimate("final_descent_agl_m", 200) +
+        "|final_descent_vs=" + landing_estimate("final_descent_vs", -6) +
+        "|flare_descent_vs=" + landing_estimate("flare_descent_vs", -3) +
+        "|rapier_always_agl_m=" + landing_estimate("rapier_always_agl_m", 500) +
+        "|rapier_align_agl_m=" + landing_estimate("rapier_align_agl_m", 1600) +
+        "|rapier_sink_agl_m=" + landing_estimate("rapier_sink_agl_m", 1800)).
 }
 
 function atm_powered_finished {
@@ -145,27 +219,40 @@ function atm_powered_update {
     if ship:status = "LANDED" and ground_speed < 2 { return atm_powered_finished(distance_m). }
     if ship:status = "SPLASHED" { return atm_powered_finished(distance_m). }
 
-    local desired_vs is -8.
-    if agl > 8000 { set desired_vs to -45. }
-    else if agl > 3000 { set desired_vs to -18. }
-    else if agl > 800 { set desired_vs to -7. }
-    else if agl > 200 { set desired_vs to -6. }
-    else { set desired_vs to -3. }
+    local default_vs is landing_estimate("default_descent_vs", -8).
+    local high_agl is landing_estimate("high_descent_agl_m", 8000).
+    local mid_agl is landing_estimate("mid_descent_agl_m", 3000).
+    local low_agl is landing_estimate("low_descent_agl_m", 800).
+    local final_agl is landing_estimate("final_descent_agl_m", 200).
+    local glide_deg is landing_estimate("glide_angle_deg", 3).
+    local min_aoa is landing_estimate("min_aoa_deg", 12).
+    local thrust_attitude is landing_estimate("thrust_attitude_deg", 12).
+    local max_aoa is landing_estimate("max_command_aoa_deg", 30).
+    local sink_attitude is landing_estimate("sink_arrest_attitude_deg", 22).
+    local rapier_always is landing_estimate("rapier_always_agl_m", 500).
+    local rapier_align is landing_estimate("rapier_align_agl_m", 1600).
+    local rapier_sink_agl is landing_estimate("rapier_sink_agl_m", 1800).
+    local desired_vs is default_vs.
+    if agl > high_agl { set desired_vs to landing_estimate("high_descent_vs", -45). }
+    else if agl > mid_agl { set desired_vs to landing_estimate("mid_descent_vs", -18). }
+    else if agl > low_agl { set desired_vs to landing_estimate("low_descent_vs", -7). }
+    else if agl > final_agl { set desired_vs to landing_estimate("final_descent_vs", -6). }
+    else { set desired_vs to landing_estimate("flare_descent_vs", -3). }
     // Fast and already low: do not dive, but do not demand a hover the NERVs
     // cannot pay for. The final arrest is the RAPIER segment below.
-    if ground_speed > support + 35 and agl < 5000 and agl > 400 { set desired_vs to max(desired_vs, -8). }
+    if ground_speed > support + 35 and agl < 5000 and agl > 400 { set desired_vs to max(desired_vs, default_vs). }
     // Follow the threshold approach plane while protecting actual terrain clearance.
-    local profile_height is max(0, remaining) * tan(3).
+    local profile_height is max(0, remaining) * tan(glide_deg).
     local profile_error is ship:altitude - runway_altitude - profile_height.
-    set desired_vs to max(desired_vs, min(15, -ground_speed * tan(3) - profile_error * 0.15)).
+    set desired_vs to max(desired_vs, min(15, -ground_speed * tan(glide_deg) - profile_error * 0.15)).
     if abs(geometry["cross_track"]) > 30 or remaining > aim {
         local clearance_floor is max(8, min(60, profile_height)).
         if abs(geometry["cross_track"]) > 30 { set clearance_floor to 60. }
         if agl < clearance_floor { set desired_vs to max(desired_vs, (clearance_floor - agl) * 0.3). }
     }
     local path_angle is arctan2(ship:verticalspeed, max(1,ground_speed)).
-    local aoa is max(12, min(30, 12 - path_angle)).
-    if ship:verticalspeed < desired_vs - 2 { set aoa to min(30, aoa + desired_vs - ship:verticalspeed). }
+    local aoa is max(min_aoa, min(max_aoa, thrust_attitude - path_angle)).
+    if ship:verticalspeed < desired_vs - 2 { set aoa to min(max_aoa, aoa + desired_vs - ship:verticalspeed). }
 
     local bank_limit is 25.
     if ground_speed < 140 { set bank_limit to 12. }
@@ -181,7 +268,7 @@ function atm_powered_update {
     set dap["aoa"]["target_bank"] to bank.
 
     nervson().
-    local use_rapier is agl < 500 or (agl < 1600 and ground_speed < support + 40).
+    local use_rapier is agl < rapier_always or (agl < rapier_align and ground_speed < support + 40).
     local lift_up is 0.
     if addons:far:available {
         set lift_up to cur_aeroforce_ld()["lift"] * vdot(ship:facing:topvector, local_up).
@@ -198,13 +285,13 @@ function atm_powered_update {
         set use_rapier to true.
         set needed to max(needed, weight - lift_up + ship:mass * sink^2 / (2 * max(1, agl - 5 * sink))).
         if net_accel <= 0 {
-            set dap["aoa"]["target_aoa"] to min(30, max(aoa, 22 - path_angle)).
+            set dap["aoa"]["target_aoa"] to min(max_aoa, max(aoa, sink_attitude - path_angle)).
             set dap["aoa"]["target_bank"] to 0.
         }
     }
     local axial_force is 0.
     if projection > 0 { set axial_force to max(0, needed) / projection. }
-    if ship:verticalspeed < desired_vs - 3 and agl < 1800 { set use_rapier to true. }
+    if ship:verticalspeed < desired_vs - 3 and agl < rapier_sink_agl { set use_rapier to true. }
     local command_fraction is atm_powered_apply_thrust(axial_force, use_rapier).
 
     if agl < 400 and ground_speed < max(150, support + 25) {
