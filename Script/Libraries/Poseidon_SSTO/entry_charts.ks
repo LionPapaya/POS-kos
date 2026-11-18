@@ -1,5 +1,20 @@
 // Passive, one-time chart selection. Never simulate a trajectory or issue controls.
+// The catalog and its PNGs are Kerbin energy/range axes only.
 RUNONCEPATH("0:/Libraries/Poseidon_SSTO/entry_chart_catalog.ks").
+
+// True only while the loaded catalog describes this body. Kerbin keeps the
+// historical pages. Every other body selects nothing from that catalog.
+function entry_charts_available {
+    if defined body_environment_loaded { return body_is_kerbin(). }
+    return ship:body:name = "Kerbin".
+}
+
+// Page slot with no image and no axes. Callers must not plot on these bounds.
+function entry_chart_unloaded_page {
+    parameter page_number.
+    return lex("number",page_number,"loaded",false,"fits",false,"image","",
+        "energy_min",0,"energy_max",0,"range_min",0,"range_max",0).
+}
 
 function entry_chart_extent {
     parameter samples, energy_min, energy_max.
@@ -53,6 +68,12 @@ function entry_chart_choose {
 function entry_chart_select {
     parameter samples, current_energy, current_range.
     local selected_pages is list().
+    if not entry_charts_available() {
+        for page_index in range(0,5) {
+            selected_pages:add(entry_chart_unloaded_page(page_index+1)).
+        }
+        return selected_pages.
+    }
     local first_ceiling is max(290000,current_energy+10000).
     if samples:length > 0 { set first_ceiling to max(first_ceiling,samples[0]["energy"]+10000). }
     local boundaries is list(list(260000,first_ceiling),
