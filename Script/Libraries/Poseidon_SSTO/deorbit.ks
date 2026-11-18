@@ -20,16 +20,68 @@ function deorbit_config {
     // Kerbin keeps the literals above. Other atmospheres scale the corridor
     // with pressure, atmosphere height and body radius.
     if defined body_environment_loaded and ship:body:name <> "Kerbin" and ship:body:atm:exists {
+        // Named copies of the Kerbin corridor above. The Kerbin return path
+        // keeps its own literals. A Laythe or Duna flight replaces these.
+        local kerbin_interface_alt is 60000.
+        local kerbin_atm_height is 70000.
+        local kerbin_min_range is 650000.
+        local kerbin_max_range is 1600000.
+        local kerbin_preferred is 850000.
+        local kerbin_preferred_floor is 750000.
+        local kerbin_preferred_ceiling is 1400000.
+        local kerbin_crossrange is 120000.
+        local crossrange_floor is 0.25.
+        local nonkerbin_min_entry_angle is -30.
+        local periapsis_burial_m is -10000.
+        local periapsis_rise_m is 20000.
+        local periapsis_low_orbit_m is 80000.
+        local periapsis_mid_m is 200000.
+        local periapsis_span_m is 120000.
+        local periapsis_high_span_m is 800000.
+        local periapsis_high_offset_m is 10000.
+        local periapsis_cap_m is 30000.
         local range_scale is body_aero_range_scale().
-        local cross_scale is max(0.25, body_radius_scale()).
-        set interface_altitude to ship:body:atm:height * 60000 / 70000.
-        set min_range to 650000 * range_scale.
-        set max_range to 1600000 * range_scale.
-        set preferred_range to 850000 * range_scale.
-        set preferred_floor to 750000 * range_scale.
-        set preferred_ceiling to 1400000 * range_scale.
-        set max_crossrange to 120000 * cross_scale.
-        set min_entry_angle to -30.
+        local cross_scale is max(crossrange_floor, body_radius_scale()).
+        set interface_altitude to ship:body:atm:height * kerbin_interface_alt / kerbin_atm_height.
+        set min_range to kerbin_min_range * range_scale.
+        set max_range to kerbin_max_range * range_scale.
+        set preferred_range to kerbin_preferred * range_scale.
+        set preferred_floor to kerbin_preferred_floor * range_scale.
+        set preferred_ceiling to kerbin_preferred_ceiling * range_scale.
+        set max_crossrange to kerbin_crossrange * cross_scale.
+        set min_entry_angle to nonkerbin_min_entry_angle.
+        local body_estimates is lex(
+            "kerbin_interface_alt", kerbin_interface_alt,
+            "kerbin_atm_height", kerbin_atm_height,
+            "kerbin_min_range", kerbin_min_range,
+            "kerbin_max_range", kerbin_max_range,
+            "kerbin_preferred", kerbin_preferred,
+            "kerbin_preferred_floor", kerbin_preferred_floor,
+            "kerbin_preferred_ceiling", kerbin_preferred_ceiling,
+            "kerbin_crossrange", kerbin_crossrange,
+            "crossrange_floor", crossrange_floor,
+            "nonkerbin_min_entry_angle", nonkerbin_min_entry_angle,
+            "periapsis_burial_m", periapsis_burial_m,
+            "periapsis_rise_m", periapsis_rise_m,
+            "periapsis_low_orbit_m", periapsis_low_orbit_m,
+            "periapsis_mid_m", periapsis_mid_m,
+            "periapsis_span_m", periapsis_span_m,
+            "periapsis_high_span_m", periapsis_high_span_m,
+            "periapsis_high_offset_m", periapsis_high_offset_m,
+            "periapsis_cap_m", periapsis_cap_m,
+            "range_scale", range_scale,
+            "cross_scale", cross_scale,
+            "interface_altitude", interface_altitude,
+            "min_range", min_range,
+            "max_range", max_range,
+            "preferred_range", preferred_range,
+            "preferred_floor", preferred_floor,
+            "preferred_ceiling", preferred_ceiling,
+            "max_crossrange", max_crossrange,
+            "min_entry_angle", min_entry_angle
+        ).
+        if defined deorbit_body_estimates { set deorbit_body_estimates to body_estimates. }
+        else { global deorbit_body_estimates is body_estimates. }
     }
     return lex("interface_altitude",interface_altitude,
         "min_range",min_range,"max_range",max_range,
@@ -62,15 +114,36 @@ function deorbit_periapsis_for_height {
         return min(30000,10000+20000*(height_m-200000)/800000).
     }
     // Same shape as the Kerbin heuristic, in fractions of that atmosphere.
-    local scale is ship:body:atm:height / 70000.
-    local low_orbit is 80000 * scale.
-    local mid is 200000 * scale.
-    local span is 120000 * scale.
-    local high_span is 800000 * scale.
-    if height_m < mid {
-        return scale * (-10000 + 20000 * max(0, (height_m - low_orbit) / max(1, span))).
+    // Names match deorbit_body_estimates when config has published them.
+    local scale_ref is 70000.
+    local burial is -10000.
+    local rise is 20000.
+    local low_orbit_ref is 80000.
+    local mid_ref is 200000.
+    local span_ref is 120000.
+    local high_span_ref is 800000.
+    local high_offset is 10000.
+    local cap is 30000.
+    if defined deorbit_body_estimates {
+        set scale_ref to deorbit_body_estimates["kerbin_atm_height"].
+        set burial to deorbit_body_estimates["periapsis_burial_m"].
+        set rise to deorbit_body_estimates["periapsis_rise_m"].
+        set low_orbit_ref to deorbit_body_estimates["periapsis_low_orbit_m"].
+        set mid_ref to deorbit_body_estimates["periapsis_mid_m"].
+        set span_ref to deorbit_body_estimates["periapsis_span_m"].
+        set high_span_ref to deorbit_body_estimates["periapsis_high_span_m"].
+        set high_offset to deorbit_body_estimates["periapsis_high_offset_m"].
+        set cap to deorbit_body_estimates["periapsis_cap_m"].
     }
-    return min(30000 * scale, scale * (10000 + 20000 * (height_m - mid) / max(1, high_span))).
+    local scale is ship:body:atm:height / scale_ref.
+    local low_orbit is low_orbit_ref * scale.
+    local mid is mid_ref * scale.
+    local span is span_ref * scale.
+    local high_span is high_span_ref * scale.
+    if height_m < mid {
+        return scale * (burial + rise * max(0, (height_m - low_orbit) / max(1, span))).
+    }
+    return min(cap * scale, scale * (high_offset + rise * (height_m - mid) / max(1, high_span))).
 }
 // Pure math; vectors share an inertial frame, times are seconds, angles degrees.
 function deorbit_arc {
