@@ -2,10 +2,9 @@
 //
 // Configure this before starting POS:
 //   global POS_LOGGING_MODE is "none" | "low" | "medium" | "high".
-//global POS_LOGGING_MODE is "none".
-//global POS_LOGGING_MODE is "low".
-global POS_LOGGING_MODE is "high".
-//global POS_LOGGING_MODE is "high".
+// This file assigns a mode only when the pilot has not set one.  That
+// default is none.  A defined POS_LOGGING_ENABLED true still selects high,
+// and the legacy flag is forced false below so old log statements stay quiet.
 //
 // All normal-flight records use the same CSV schema so the local replay UI
 // can replay either medium (one sample per second) or high (one sample per
