@@ -125,12 +125,25 @@ function landing_survey_seed {
     return best.
 }
 
+// Guessed strips only. Laythe and Duna return named seeds before this runs,
+// so Duna keeps Lowlands and Plains even though its scale is under 0.2.
+// body_aero_range_scale is max(0.12, sqrt(sea-level atm) * hatm / 70000)
+// and multiplies the Kerbin 650-1600 km deorbit corridor. 0.2 sits above
+// that 0.12 floor: below it the corridor is under 130-320 km, too short to
+// aim a site that was never surveyed. Stock Duna is about 0.18 (6.755 kPa,
+// 50 km; Kopernicus kittopia dump). Above 2 atm the same corridor does not
+// describe the entry (Eve is 5 atm, 506.625 kPa), so no strip is installed.
+function landing_atmosphere_rejects_guess {
+    if not body_has_atmosphere() { return false. }
+    if ship:body:atm:sealevelpressure > 2 { return true. }
+    return body_aero_range_scale() < 0.2.
+}
+
 function landing_preset_seeds {
     local name is ship:body:name.
     if name = "Laythe" {
-        // Forum-surveyed equatorial ground: the lagoon plain, then the
-        // south coast of the isolated equatorial island. Survey still picks
-        // the local alignment.
+        // Lyra, KSP forums topic 228110 (15 Jun 2025): lagoon 5 N, 173.9 W,
+        // then the island south coast 0.8 S, 110 E. Survey picks the alignment.
         return list(
             lex("name", "Lagoon", "lat", 5.0, "lng", -173.9, "heading", 90, "length", 2400),
             lex("name", "Island", "lat", -0.8, "lng", 110.0, "heading", 90, "length", 2200)
@@ -142,10 +155,11 @@ function landing_preset_seeds {
             lex("name", "Plains", "lat", -28.5, "lng", 36.0, "heading", 90, "length", 2000)
         ).
     }
+    if landing_atmosphere_rejects_guess() { return list(). }
+    // One surveyed fallback. Latitude 0, longitude 0 is often ocean.
     local under is ship:geoposition.
     return list(
-        lex("name", "Track", "lat", under:lat, "lng", under:lng, "heading", 90, "length", 2000),
-        lex("name", "Equator", "lat", 0, "lng", 0, "heading", 90, "length", 2000)
+        lex("name", "Track", "lat", under:lat, "lng", under:lng, "heading", 90, "length", 2000, "fallback", true)
     ).
 }
 
@@ -381,17 +395,37 @@ function landing_prepare_body {
     print "Surveying " + ship:body:name + " landing sites.".
     local best_name is "".
     local best_score is 1e12.
-    for seed in landing_preset_seeds() {
+    local seeds is landing_preset_seeds().
+    if seeds:length = 0 {
+        local why is "atmosphere is outside the landing corridor".
+        if body_has_atmosphere() {
+            local pressure is ship:body:atm:sealevelpressure.
+            local scale is body_aero_range_scale().
+            if pressure > 2 {
+                set why to "sea-level pressure " + round(pressure, 2) + " atm is above 2 atm".
+            } else {
+                set why to "aero range scale " + round(scale, 3) + " is below 0.2".
+            }
+        }
+        print "  Refused: " + ship:body:name + " " + why + ". No landing site installed.".
+    }
+    for seed in seeds {
         print "  " + seed["name"] + " " + round(seed["lat"], 2) + ", " + round(seed["lng"], 2).
         local strip is landing_survey_seed(seed["lat"], seed["lng"], seed["heading"], seed["length"]).
-        local record is landing_install_strip(seed["name"], strip).
-        local score is strip["roughness"] + strip["slope"] * 40.
-        if strip["wet"] { set score to score + 1000000. }
-        print "    elev " + round(record["elevation"]) + " m, slope " + round(record["slope"], 1) +
-            " deg, rough " + round(record["roughness"]) + " m, hdg " + round(record["heading"]).
-        if score < best_score {
-            set best_score to score.
-            set best_name to seed["name"].
+        local guessed is false.
+        if seed:haskey("fallback") { set guessed to seed["fallback"]. }
+        if guessed and strip["wet"] {
+            print "    Refused: ground under the ship is water. No landing site installed.".
+        } else {
+            local record is landing_install_strip(seed["name"], strip).
+            local score is strip["roughness"] + strip["slope"] * 40.
+            if strip["wet"] { set score to score + 1000000. }
+            print "    elev " + round(record["elevation"]) + " m, slope " + round(record["slope"], 1) +
+                " deg, rough " + round(record["roughness"]) + " m, hdg " + round(record["heading"]).
+            if score < best_score {
+                set best_score to score.
+                set best_name to seed["name"].
+            }
         }
     }
     if best_name <> "" and landing_catalog:haskey(best_name) {
