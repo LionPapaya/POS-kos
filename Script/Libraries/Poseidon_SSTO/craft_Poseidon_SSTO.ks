@@ -895,6 +895,10 @@ Poseidon_SSTO:add("Landing",lex(
     "runway_flare_maximum_sink",7,"runway_flare_acceleration",2,
     "runway_contact_height",1.5,"minimum_rollout_distance",500,
     "centreline_lookahead",400,"centreline_heading_limit",5,"centreline_bank_limit",8,
+    // Ground correction. The 400 m flare lookahead leaves an 11.9 m offset
+    // almost parallel to the runway; 150 m points the nose back at it inside
+    // the 5 degree heading limit.
+    "rollout_centreline_lookahead",150,
     "pitch_gain",2.9,
     // Preflare/flare tracking: support the flight-path angle, damp the
     // measured sink response and prevent rapid unloading (flight 488).
@@ -918,6 +922,15 @@ Poseidon_SSTO:add("Landing",lex(
     // Lower escape speed only in the final metres over the runway itself.
     "touchdown_minimum_speed",110,"touchdown_speed_gate_height",10,
     "touchdown_speed_gate_cross_track",15,
+    // Catalog elevations can sit a few metres above the threshold. Only that
+    // small excess is replaced by the surveyed threshold terrain height.
+    "threshold_altitude_bias",10,
+    // KSC pavement is about 70 m wide. The 15 m value above is the speed-gate
+    // band, not the pavement edge.
+    "pavement_half_width",35,
+    // An 11.9 m offset is not a centered stop. Rollout steering has to remove
+    // it; this is the residual that is still accepted.
+    "stop_cross_track",5,
     "wheel_brake_altitude",10
 )).
 Poseidon_SSTO:add("HacDistance",10000).

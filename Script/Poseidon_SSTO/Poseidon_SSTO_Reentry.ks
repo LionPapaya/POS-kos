@@ -859,12 +859,23 @@ until running = false{
 
       
      if step = "landing"{
+        terminal_route_apply_threshold_altitude().
         set alt_ovr_runway to ship:altitude - runway_altitude.
         local landing_config is AVES["Landing"].
         set dapthrottle to 0.
         gear on.
         if ship:status = "LANDED" or ship:status = "SPLASHED" {
             set landing_ground_contact_seen to true.
+        } else if landing_flare_started and alt:radar <= landing_config["runway_contact_height"] {
+            // A one-tick bounce can miss SHIP:STATUS. Radar over the pavement
+            // is the same contact for the thrust cutoff.
+            local contact_geometry is terminal_route_geometry().
+            if contact_geometry["along_track"] <= 0 and
+               abs(contact_geometry["cross_track"]) <= landing_config["pavement_half_width"] {
+                set landing_ground_contact_seen to true.
+            }
+        }
+        if landing_ground_contact_seen {
             set terminal_route_debug["flare_corridor_active"] to false.
             set landing_preflare_active to false.
             set terminal_route_debug["landing_preflare_active"] to false.
@@ -1016,29 +1027,39 @@ until running = false{
         set dap["aerostr"]["distance_pitch"] to 0.
         // Follow the centreline rather than a runway-end point that moves
         // behind the aircraft. Bounded bank corrects drift during the flare.
+        // On the ground the shorter lookahead keeps that correction from
+        // becoming a runway-heading lock.
+        local centreline_lookahead is landing_config["centreline_lookahead"].
+        if landing_ground_contact_seen {
+            set centreline_lookahead to landing_config["rollout_centreline_lookahead"].
+        }
         local centreline_heading is runway_heading+max(-landing_config["centreline_heading_limit"],
             min(landing_config["centreline_heading_limit"],
-                arctan(terminal_route_debug["cross_track"]/landing_config["centreline_lookahead"]))).
+                arctan(terminal_route_debug["cross_track"]/centreline_lookahead))).
         local centreline_bank is terminal_route_bank_command(centreline_heading,AVES["TerminalRoute"]).
         set dap["aerostr"]["turn_roll"] to max(-landing_config["centreline_bank_limit"],
             min(landing_config["centreline_bank_limit"],centreline_bank)).
         set dap["aerostr"]["turn_heading"] to centreline_heading.
+        // Keep the intercept heading on the ground. Locking the runway heading
+        // holds whatever cross-track the touchdown had (flight 500, 11.9 m).
+        // Wings stay level so the correction is yaw, not bank.
         if landing_ground_contact_seen {
             set dap["aerostr"]["turn_roll"] to 0.
-            set dap["aerostr"]["turn_heading"] to runway_heading.
         }
 
         local landing_speed_scale is terminal_mass_speed_scale(ship:mass,AVES["TerminalRoute"]).
         local speed_assist is terminal_landing_speed_command(ship:airspeed,
             terminal_route["landing_speed_previous"],time:seconds-terminal_route["landing_speed_time"],
             landing_speed_scale,landing_ground_contact_seen,alt_ovr_runway,landing_config,
-            AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"]).
+            AVES["TerminalRoute"]["ApproachSpeed"]["target_speed"],ship:verticalspeed).
         set terminal_route["landing_speed_previous"] to ship:airspeed.
         set terminal_route["landing_speed_time"] to time:seconds.
         set dapthrottle to speed_assist["command"].
         if dapthrottle > 0 {
             rapierson().
             togglerapiermode(body_landing_rapier_command("AIR")).
+        } else if speed_assist["thrust_cutoff"] {
+            rapiersoff().
         }
         set terminal_route_debug["throttle"] to dapthrottle.
         local landing_brake_command is landing_brake_decision(brakes,ship:airspeed,
@@ -1084,12 +1105,18 @@ until running = false{
         if reentry_ground_complete(ship:status,ship:groundspeed) {
             local stop_geometry is terminal_route_geometry().
             local stop_runway_length is calcdistance_m(runway_start,runway_end).
-            local runway_stop_valid is stop_geometry["along_track"] <= 0 and
+            local stop_cross_track is abs(stop_geometry["cross_track"]).
+            // The 15 m speed-gate band is not the pavement. A stop on the
+            // runway outside that band is off centerline, not off the runway.
+            local on_pavement is stop_geometry["along_track"] <= 0 and
                 stop_geometry["along_track"] >= -stop_runway_length and
-                abs(stop_geometry["cross_track"]) <= landing_config["touchdown_speed_gate_cross_track"] and
+                stop_cross_track <= landing_config["pavement_half_width"] and
                 abs(stop_geometry["altitude"]) <= landing_config["touchdown_speed_gate_height"].
+            local centered_stop is stop_cross_track <= landing_config["stop_cross_track"].
+            local runway_stop_valid is on_pavement and centered_stop.
             local landing_result_reason is "landing_complete".
-            if not runway_stop_valid { set landing_result_reason to "off_runway_stop". }
+            if not on_pavement { set landing_result_reason to "off_runway_stop". }
+            else if not centered_stop { set landing_result_reason to "off_centerline_stop". }
             set recovery_result to lex("complete",true,"success",runway_stop_valid,"reason",landing_result_reason).
             flight_log_event("landing_outcome","success="+runway_stop_valid+"|reason="+landing_result_reason+
                 "|along_track="+round(stop_geometry["along_track"],1)+
@@ -1103,6 +1130,7 @@ until running = false{
             }
             set step to "end".
             if runway_stop_valid { log_status("Runway landing completed"). }
+            else if on_pavement { log_status("Runway landing failed: stopped off centerline"). }
             else { log_status("Runway landing failed: stopped outside runway"). }
         }
         } // end landing owner guard
