@@ -157,6 +157,23 @@ function terminal_route_available_runways {
     return available.
 }
 
+// The site table can sit a few metres above the threshold that was surveyed.
+// Use that threshold for the approach and the stop. A larger gap is left
+// alone so an unloaded terrain sample cannot drop the reference to zero.
+function terminal_route_apply_threshold_altitude {
+    if not (defined runway_start) or not (defined runway_altitude) { return. }
+    local surveyed is runway_start:terrainheight.
+    local bias is runway_altitude-surveyed.
+    local limit is AVES["Landing"]["threshold_altitude_bias"].
+    // Ignore sub-metre terrain noise so a later sample cannot walk the
+    // reference downward. A few metres of catalog excess still corrects.
+    if bias > 1 and bias <= limit {
+        flight_log_event("runway_altitude_threshold","catalog="+round(runway_altitude,2)+
+            "|threshold="+round(surveyed,2)+"|bias="+round(bias,2)).
+        set runway_altitude to surveyed.
+    }
+}
+
 // Changing runway direction late in the approach can require a turn through
 // the touchdown area.  Keep the choice available early in TEAM, then make it
 // irrevocable on final or inside the configured terminal envelope.
@@ -196,6 +213,7 @@ function terminal_route_change_runway {
     set runway_start to runways[start_key].
     set runway_end to runways[end_key].
     set runway_altitude to site_altitudes[altitude_key].
+    terminal_route_apply_threshold_altitude().
     set runway_heading to heading_between(runway_start,runway_end).
     set reentry_target to runway_start.
     if ADDONS:TR:available {
@@ -522,7 +540,7 @@ function terminal_brake_timing {
 // crossed. This runs only in the live landing owner, independent of logging.
 function terminal_landing_speed_command {
     parameter measured_speed, previous_speed, sample_dt, speed_scale, on_ground,
-        runway_height, landing_config, reference_speed.
+        runway_height, landing_config, reference_speed, measured_vs is 0.
     local speed_rate is 0.
     if sample_dt > 0 and sample_dt <= 1 and previous_speed >= 0 {
         set speed_rate to max(-landing_config["maximum_deceleration"],
@@ -533,9 +551,14 @@ function terminal_landing_speed_command {
     local speed_throttle is max(0,min(landing_config["maximum_throttle"],
         (target_speed-predicted_speed)*landing_config["speed_gain"])).
     // Height is not wheel contact. A gentle flare can spend several seconds
-    // below 10 m and still needs speed support (flight 491).
-    if on_ground { set speed_throttle to 0. }
-    return lex("command",speed_throttle,"target",target_speed,"predicted",predicted_speed).
+    // below 10 m and still needs speed support while it is still descending
+    // (flight 491). Upward speed in that window is a bounce: do not spend the
+    // remaining liquid fuel into it (flight 500).
+    local thrust_cutoff is on_ground or
+        (measured_vs > 0 and runway_height <= landing_config["wheel_brake_altitude"]).
+    if thrust_cutoff { set speed_throttle to 0. }
+    return lex("command",speed_throttle,"target",target_speed,"predicted",predicted_speed,
+        "thrust_cutoff",thrust_cutoff).
 }
 
 function landing_brake_decision {
@@ -754,14 +777,17 @@ function terminal_fast_turn_command {
 // Profile error alone is expected during preflare. Require both substantial
 // sink and failure to track the requested vertical speed for profile recovery.
 // An exhausted arrest margin is independent: the requested descent itself
-// can be unsafe even while the aircraft tracks it (flight 436).
+// can be unsafe even while the aircraft tracks it (flight 436). That arrest
+// path is only meaningful once the aircraft is on the landing final, and a
+// committed preflare that still has its exit margin suppresses it.
 function terminal_final_descent_recovery {
     parameter phase, profile_error, wanted_vs, measured_vs, config_TR,
-        sink_arrest_margin is 999999, clearance is 999999, contact is false, safe_preflare_commit is false.
+        sink_arrest_margin is 999999, clearance is 999999, contact is false, safe_preflare_commit is false,
+        arrest_allowed is true.
     local config_GA is config_TR["GoAround"].
     local clearance_valid is clearance = 999999 or clearance > config_GA["minimum_altitude"].
     local profile_recovery is profile_error >= config_GA["vertical_profile_error"].
-    local arrest_recovery is not safe_preflare_commit and
+    local arrest_recovery is arrest_allowed and not safe_preflare_commit and
         sink_arrest_margin <= config_GA["vertical_recovery_arrest_margin"] and
         (clearance = 999999 or clearance > config_GA["minimum_altitude"]).
     local tracking_recovery is profile_recovery and
@@ -1574,6 +1600,7 @@ function terminal_route_final_energy_check {
 
 function terminal_route_init {
     parameter force_circuit is false.
+    terminal_route_apply_threshold_altitude().
     local config_TR is AVES["TerminalRoute"].
     local geometry_config is config_TR["Geometry"].
     local arrival_geometry is terminal_route_geometry().
@@ -2351,17 +2378,31 @@ function terminal_route_update {
             "|mass="+round(ship:mass,2)+"|airspeed="+round(ship:airspeed,1)).
     }
     set route["preflare_anticipation_active"] to preflare_anticipation_active.
-    // A fresh, accepted preflare handoff has its own demonstrated shallow-
-    // sink exit margin. Do not reject that valid transfer using the larger
-    // full-stop reserve; unsafe/uncommitted finals retain independent escape.
+    // A committed preflare keeps its own shallow-sink exit margin. Preview
+    // ends once that handoff is armed, so landing_ready from the previous
+    // tick still has to suppress the larger full-stop reserve. An uncommitted
+    // final keeps the independent escape.
     local safe_preflare_commit is false.
-    if preview_enabled and direct_profile["region"] = "preflare" {
+    local committed_preflare is route["landing_ready"] and route["landing_handoff_kind"] = "preflare".
+    if route["phase"] = "final" and not contact and
+       (direct_profile["region"] = "preflare" or committed_preflare) {
         local preflare_capture is terminal_route_preflare_commit_check(route).
-        set safe_preflare_commit to preflare_capture["stable"].
+        if preflare_capture["exit_margin"] >= config_TR["PreflareCommit"]["minimum_exit_margin"] and
+           (preflare_capture["stable"] or committed_preflare) {
+            set safe_preflare_commit to true.
+        }
     }
+    // Phase "final" also covers the steep leg and the turn off base. Sink
+    // arrest belongs only to an aligned preflare or shallow final, still
+    // short of the threshold.
+    local on_landing_final is route["phase"] = "final" and
+        direct_profile["region"] <> "steep" and
+        abs(geometry["cross_track"]) <= config_TR["LandingGate"]["cross_track"] and
+        abs(geometry["heading_error"]) <= config_TR["LandingGate"]["heading_error"] and
+        geometry["along_track"] > 0.
     local descent_recovery_active is terminal_final_descent_recovery(route["phase"],
         direct_profile["altitude"]-ship:altitude,recovery_wanted_vs,ship:verticalspeed,config_TR,
-        sink_arrest_margin,surface_clearance,contact,safe_preflare_commit).
+        sink_arrest_margin,surface_clearance,contact,safe_preflare_commit,on_landing_final).
     if descent_recovery_active {
         if route["descent_recovery_since"] < 0 { set route["descent_recovery_since"] to time:seconds. }
         set route["descent_recovery_elapsed"] to time:seconds-route["descent_recovery_since"].
@@ -2380,7 +2421,8 @@ function terminal_route_update {
             "|arrest_height="+round(sink_arrest["absolute_arrest_height"],1)+
             "|arrest_margin="+round(sink_arrest_margin,1)+"|response_delay="+round(sink_arrest["response_delay"],2)+
             "|vertical_deceleration="+round(sink_arrest["vertical_deceleration"],2)+
-            "|arrest_trigger="+(sink_arrest_margin <= config_TR["GoAround"]["vertical_recovery_arrest_margin"])+
+            "|arrest_trigger="+(on_landing_final and not safe_preflare_commit and sink_arrest_margin <= config_TR["GoAround"]["vertical_recovery_arrest_margin"])+
+            "|on_landing_final="+on_landing_final+
             "|tracking_error="+round(recovery_wanted_vs-ship:verticalspeed,2)+"|safe_preflare_commit="+safe_preflare_commit).
     }
     set route["descent_recovery_active"] to descent_recovery_active.
@@ -2407,7 +2449,8 @@ function terminal_route_update {
         set route["go_around_count"] to route["go_around_count"] + 1.
         set route["go_around_reason"] to "unstable_final".
         if vertical_unstable { set route["go_around_reason"] to "unrecovered_descent". }
-        if vertical_unstable and sink_arrest_margin <= go_around_config["vertical_recovery_arrest_margin"] {
+        if vertical_unstable and on_landing_final and not safe_preflare_commit and
+           sink_arrest_margin <= go_around_config["vertical_recovery_arrest_margin"] {
             set route["go_around_reason"] to "sink_arrest_margin".
         }
         flight_log_event("terminal_go_around","reason="+route["go_around_reason"]+
