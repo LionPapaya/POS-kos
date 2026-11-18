@@ -182,6 +182,11 @@ function return_entry_page {
         list(entry_nominal_traj5_energy_min,entry_nominal_traj5_energy_max,entry_nominal_traj5_range_min,entry_nominal_traj5_range_max)).
     for page_index in range(0,5) {
         if display_mode = "TRAJ "+(page_index+1)+" V/SIT" {
+            // Nominal bounds and catalog PNGs are Kerbin axes. Do not map
+            // another body's energy and range onto them.
+            if not entry_charts_available() {
+                return entry_chart_unloaded_page(page_index+1).
+            }
             if defined entry_chart_selection and entry_chart_selection["ready"] {
                 return entry_chart_selection["pages"][page_index].
             }
@@ -206,6 +211,18 @@ function return_signed_range {
 
 function return_render_entry {
     parameter inputs, page.
+    local chart_loaded is true.
+    if page:haskey("loaded") { set chart_loaded to page["loaded"]. }
+    if not chart_loaded {
+        set return_chart:style:bg to "Libraries/gui_images/ascent_panel.png".
+        set return_title:text to "ENTRY GUIDANCE".
+        set return_state_label:text to "NO BODY CHART".
+        set return_detail:text to "No body chart is loaded".
+        set return_lower:text to "LOWER BANK --". set return_upper:text to "UPPER BANK --".
+        set return_legend:text to "No body chart is loaded".
+        set return_next:text to "NEXT: TEAM interface / "+inputs["mode"].
+        return.
+    }
     local chart_image is "Libraries/gui_images/return_entry_"+page["number"]+".png".
     if page:haskey("image") { set chart_image to page["image"]. }
     set return_chart:style:bg to chart_image.
